@@ -1,0 +1,93 @@
+// Browser-side export: D1 rows + R2 posters  ->  .amc file download.
+//
+// The inverse of import.ts. Fetches the row bundle (no image bytes) plus each
+// poster on demand from R2, rebuilds the in-memory catalog, and serialises it
+// back to the exact binary layout the desktop Ant Movie Catalog expects.
+
+import { serializeCatalog } from "../amc/parser";
+import { rowsToCatalog } from "../amc/mapping";
+import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../amc/mapping";
+
+export interface ExportOptions {
+  tenantId: string;
+  authHeader?: string;
+  onProgress?: (done: number, total: number) => void;
+}
+
+type ExtraRow = ImportResult["extras"][number];
+
+interface ExportBundle {
+  catalog: CatalogRow;
+  customFieldDefs: CustomFieldDefRow[];
+  movies: MovieRow[];
+  extras: ExtraRow[];
+}
+
+function headers(o: ExportOptions): HeadersInit {
+  return o.authHeader ? { authorization: o.authHeader, "x-tenant-id": o.tenantId }
+                      : { "x-tenant-id": o.tenantId };
+}
+
+/** Rebuild an .amc file for `catalogId` and return it as a Blob for download. */
+export async function exportAmcFile(catalogId: string, opts: ExportOptions): Promise<Blob> {
+  const res = await fetch(`/api/catalog/${encodeURIComponent(catalogId)}/export`, {
+    headers: headers(opts),
+  });
+  if (!res.ok) throw new Error(`export bundle fetch failed (${res.status})`);
+  const bundle = (await res.json()) as ExportBundle;
+
+  const extrasByMovie = new Map<string, ExtraRow[]>();
+  for (const e of bundle.extras) {
+    const list = extrasByMovie.get(e.movie_id) ?? [];
+    list.push(e);
+    extrasByMovie.set(e.movie_id, list);
+  }
+
+  // Cache posters so a key shared across rows is only fetched once.
+  const posterCache = new Map<string, Uint8Array>();
+  let fetched = 0;
+  const posterKeys = new Set<string>();
+  for (const mv of bundle.movies) if (mv.poster_key) posterKeys.add(mv.poster_key);
+  for (const e of bundle.extras) if (e.poster_key) posterKeys.add(e.poster_key);
+
+  const getPoster = async (key: string): Promise<Uint8Array> => {
+    const cached = posterCache.get(key);
+    if (cached) return cached;
+    const r = await fetch(`/api/poster?key=${encodeURIComponent(key)}`, { headers: headers(opts) });
+    if (!r.ok) throw new Error(`poster fetch failed (${r.status}) for ${key}`);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    posterCache.set(key, bytes);
+    opts.onProgress?.(++fetched, posterKeys.size);
+    return bytes;
+  };
+
+  const catalog = await rowsToCatalog({
+    catalog: bundle.catalog,
+    customFieldDefs: bundle.customFieldDefs,
+    movies: bundle.movies,
+    extrasByMovie,
+    getPoster,
+  });
+
+  return new Blob([serializeCatalog(catalog)], { type: "application/octet-stream" });
+}
+
+/** Convenience: build the file and trigger a browser download. */
+export async function downloadAmcFile(
+  catalogId: string,
+  filename: string,
+  opts: ExportOptions,
+): Promise<void> {
+  const blob = await exportAmcFile(catalogId, opts);
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename.endsWith(".amc") ? filename : `${filename}.amc`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}

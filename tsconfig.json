@@ -1,0 +1,18 @@
+{
+  // Type-checking config for the whole cf/ port (Worker + browser + shared).
+  // Install deps first:  npm i -D wrangler @cloudflare/workers-types typescript
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["amc/**/*.ts", "worker/**/*.ts", "browser/**/*.ts"]
+}

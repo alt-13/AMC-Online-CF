@@ -1,0 +1,40 @@
+{
+  // AMC Online — Cloudflare Worker (cf-port)
+  //
+  // Deploy:  cd cf && npx wrangler deploy
+  // Local:   cd cf && npx wrangler dev
+  //
+  // Provision the bindings once before first deploy:
+  //   npx wrangler d1 create amc
+  //   npx wrangler r2 bucket create amc-posters
+  //   npx wrangler d1 execute amc --remote --file=schema.sql
+  // then paste the printed database_id below.
+  "name": "amc-online",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "amc",
+      "database_id": "REPLACE_WITH_d1_create_OUTPUT"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "amc-posters"
+    }
+  ],
+
+  // The built Vue frontend is served as static assets; the Worker handles /api/*.
+  "assets": {
+    "directory": "../frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+
+  "observability": { "enabled": true }
+}
