@@ -152,6 +152,40 @@ Build deps not yet added to a `package.json` here: `wrangler`,
 `@cloudflare/workers-types` (for `worker/`), and the DOM lib for `browser/`.
 See `cf/tsconfig.json`.
 
+## Mega import / export (planned)
+
+The self-hosted app syncs the `.amc` to Mega.nz through **MEGAcmd**, a native C++
+binary bundled in the Docker image. A Worker can't run a native binary, and
+doing Mega's crypto in a Worker would fight the CPU/time budget — so on this
+branch Mega belongs **in the browser**, bolted onto the export/import flow that
+already holds the whole `.amc` Blob in memory.
+
+**Can the SDK run in the browser? Yes.** There's no official JS SDK, but the
+community [`megajs`](https://mega.js.org) library is pure JavaScript and runs
+in-browser (load via a `<script>` tag → `window.mega`, or bundle it). It ports
+Mega's crypto: it uses WebCrypto for AES in Node, but because WebCrypto can't
+stream, in the browser it falls back to a pure-JS AES implementation. Mega's API
+sends permissive CORS, so a page on your own origin can log in and transfer
+directly — no proxying through the Worker.
+
+Sketch:
+
+- **Export → Mega:** `downloadAmcFile()` already produces a `Blob`; instead of
+  triggering a download, `new Storage({email, password}).upload(name, buffer)`.
+- **Import ← Mega:** `File.fromURL(link).downloadBuffer()` (or list the account
+  and pick a file) → feed the bytes to `importAmcFile()` exactly like an upload.
+
+Two things to settle before shipping it:
+
+1. **File fingerprint.** The desktop MEGAsync client refuses files that lack the
+   fingerprint attribute ("file fingerprint missing") — this is exactly why the
+   self-hosted app dropped rclone for MEGAcmd. Verify `megajs` writes a
+   fingerprint on upload; if not, compute and set it, or accept that only the
+   web client / this app can read what we upload.
+2. **Credentials.** Do the login in the browser and never send the Mega password
+   to the Worker. Prefer a per-session Mega login over storing credentials; if
+   they must persist, that's the user's own device, not our D1.
+
 ## Still to port (not blocking the data path)
 
 - **Movie create / renumber.** The `_stored_number` series-remapping logic in
