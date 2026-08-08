@@ -17,6 +17,36 @@ export interface Env {
   DB: D1Database;
   R2: R2Bucket;
   ASSETS: Fetcher;
+  /** HS256 / PBKDF2 secret. Set with: wrangler secret put AUTH_SECRET */
+  AUTH_SECRET: string;
+}
+
+// --- users -----------------------------------------------------------------
+
+export interface UserRow {
+  id: string;
+  email: string;
+  email_lower: string;
+  password_hash: string;
+  created_at: number;
+}
+
+export async function getUserByEmail(env: Env, email: string): Promise<UserRow | null> {
+  return env.DB.prepare(`SELECT * FROM users WHERE email_lower = ?`)
+    .bind(email.trim().toLowerCase())
+    .first<UserRow>();
+}
+
+export async function getUserById(env: Env, id: string): Promise<UserRow | null> {
+  return env.DB.prepare(`SELECT * FROM users WHERE id = ?`).bind(id).first<UserRow>();
+}
+
+export async function insertUser(env: Env, u: UserRow): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO users (id, email, email_lower, password_hash, created_at) VALUES (?,?,?,?,?)`,
+  )
+    .bind(u.id, u.email, u.email_lower, u.password_hash, u.created_at)
+    .run();
 }
 
 // --- catalogs --------------------------------------------------------------

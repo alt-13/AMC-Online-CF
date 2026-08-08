@@ -28,6 +28,73 @@ export function session(): { tenantId: string; authHeader?: string } {
   return { tenantId: _tenantId, authHeader: _authHeader };
 }
 
+// --- auth ------------------------------------------------------------------
+//
+// register/login return { access_token, tenant_id } and set an httpOnly refresh
+// cookie (scoped to /api/auth). We stash the access token in-memory and mirror
+// it into the session so import/export/CRUD all authenticate. The refresh
+// cookie survives a reload; call restoreSession() on app boot to swap it for a
+// fresh access token without re-prompting.
+
+interface AuthResponse {
+  access_token: string;
+  tenant_id: string;
+}
+
+async function authPost(path: string, body?: unknown): Promise<AuthResponse> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "include", // send/receive the refresh cookie
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg = `${path} -> ${res.status}`;
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j.error) msg = j.error;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(msg);
+  }
+  return res.json() as Promise<AuthResponse>;
+}
+
+function adoptSession(r: AuthResponse): AuthResponse {
+  setSession(r.tenant_id, `Bearer ${r.access_token}`);
+  return r;
+}
+
+export const auth = {
+  register: (email: string, password: string) =>
+    authPost("/api/auth/register", { email, password }).then(adoptSession),
+
+  login: (emailOrUsername: string, password: string) =>
+    authPost("/api/auth/login", { email: emailOrUsername, password }).then(adoptSession),
+
+  /** Swap the httpOnly refresh cookie for a fresh access token. Returns false
+   *  when there is no valid session (fresh visitor or expired refresh). */
+  restoreSession: async (): Promise<boolean> => {
+    try {
+      adoptSession(await authPost("/api/auth/refresh"));
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  logout: async (): Promise<void> => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    } finally {
+      setSession("default", undefined);
+    }
+  },
+
+  isAuthenticated: (): boolean => _authHeader !== undefined,
+};
+
 function headers(extra: Record<string, string> = {}): HeadersInit {
   const h: Record<string, string> = { "x-tenant-id": _tenantId, ...extra };
   if (_authHeader) h.authorization = _authHeader;
@@ -74,5 +141,15 @@ export const cf = {
     if (!res.ok && res.status !== 204) throw new Error(`delete movie -> ${res.status}`);
   },
 
+  // NOTE: /api/poster is Bearer-gated, so a bare <img src="/api/poster?..."> will
+  // 401 — an <img> can't send an Authorization header. Use posterObjectUrl() to
+  // fetch the bytes with the session header and bind the returned object URL to
+  // the <img>. Remember to URL.revokeObjectURL() when the element goes away.
   posterUrl: (key: string) => `/api/poster?key=${encodeURIComponent(key)}`,
+
+  posterObjectUrl: async (key: string): Promise<string> => {
+    const res = await fetch(`/api/poster?key=${encodeURIComponent(key)}`, { headers: headers() });
+    if (!res.ok) throw new Error(`poster -> ${res.status}`);
+    return URL.createObjectURL(await res.blob());
+  },
 };

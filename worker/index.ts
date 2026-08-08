@@ -1,6 +1,7 @@
 // AMC Online — Cloudflare Worker entry point (cf-port).
 //
 // Responsibilities, deliberately narrow:
+//   * auth (register / login / refresh / logout) — WebCrypto, see auth.ts
 //   * CRUD over D1 (catalog / movies / extras metadata)
 //   * store & stream posters from R2
 //   * accept an import commit (rows produced in the browser)
@@ -13,40 +14,29 @@
 import type { Env } from "./db";
 import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../amc/mapping";
 import * as db from "./db";
+import * as auth from "./auth";
 
 type ExtraRow = ImportResult["extras"][number];
 
 // --- tiny helpers ----------------------------------------------------------
 
-const json = (data: unknown, status = 200): Response =>
+const json = (data: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
   });
 
 const err = (status: number, message: string): Response => json({ error: message }, status);
-
-/**
- * Tenant resolution. The auth layer is not yet ported (see CF-PORT.md); until
- * it is, the tenant comes from a header so the multi-tenant data model can be
- * exercised end-to-end. Swap this for a verified JWT `sub` claim.
- */
-function tenant(req: Request): string {
-  return req.headers.get("x-tenant-id") || "default";
-}
 
 // --- request router --------------------------------------------------------
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
-    const { pathname } = url;
 
-    if (!pathname.startsWith("/api/")) {
-      // Static SPA assets (built frontend) — configured in wrangler.jsonc.
-      return env.ASSETS.fetch(req);
+    if (!url.pathname.startsWith("/api/")) {
+      return env.ASSETS.fetch(req); // built SPA
     }
-
     try {
       return await route(req, env, url);
     } catch (e) {
@@ -58,19 +48,30 @@ export default {
 async function route(req: Request, env: Env, url: URL): Promise<Response> {
   const p = url.pathname;
   const m = req.method;
-  const t = tenant(req);
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // ---- public auth routes -------------------------------------------------
+  if (p.startsWith("/api/auth/")) {
+    return authRoute(req, env, p, m, nowSec);
+  }
+
+  // ---- everything below requires a valid access token; tenant == user id --
+  const t = await auth.authenticate(env.AUTH_SECRET, req, nowSec);
+  if (!t) return err(401, "unauthorized");
+
   const seg = p.split("/").filter(Boolean); // ["api", ...]
 
-  // GET /api/poster?key=...  — stream a poster from R2
+  // GET /api/poster?key=...  — stream a poster from R2 (tenant-scoped)
   if (p === "/api/poster" && m === "GET") {
     const key = url.searchParams.get("key");
     if (!key) return err(400, "missing key");
+    if (!key.startsWith(`${t}/`)) return err(403, "forbidden");
     const obj = await env.R2.get(key);
     if (!obj) return err(404, "poster not found");
     return new Response(obj.body, {
       headers: {
         "content-type": obj.httpMetadata?.contentType || "image/jpeg",
-        "cache-control": "public, max-age=31536000, immutable",
+        "cache-control": "private, max-age=31536000, immutable",
         etag: obj.httpEtag,
       },
     });
@@ -106,7 +107,7 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     const body = (await req.json()) as { movies: MovieRow[]; extras: ExtraRow[] };
     await db.insertMovies(env, body.movies);
     await db.insertExtras(env, body.extras);
-    await db.touchCatalog(env, catalogId, cat.updated_at);
+    await db.touchCatalog(env, catalogId, Date.now());
     return json({ inserted: body.movies.length });
   }
 
@@ -176,6 +177,78 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
 
   return err(404, "not found");
 }
+
+// --- auth routes -----------------------------------------------------------
+
+async function authRoute(
+  req: Request,
+  env: Env,
+  p: string,
+  m: string,
+  nowSec: number,
+): Promise<Response> {
+  // POST /api/auth/register  { email, password }
+  if (p === "/api/auth/register" && m === "POST") {
+    const { email, password } = (await req.json()) as { email?: string; password?: string };
+    if (!email || !password || password.length < 8) {
+      return err(400, "email and password (min 8 chars) required");
+    }
+    if (await db.getUserByEmail(env, email)) return err(409, "email already registered");
+    const user: db.UserRow = {
+      id: crypto.randomUUID(),
+      email: email.trim(),
+      email_lower: email.trim().toLowerCase(),
+      password_hash: await auth.hashPassword(password),
+      created_at: Date.now(),
+    };
+    await db.insertUser(env, user);
+    return issueTokens(env, user.id, nowSec, 201);
+  }
+
+  // POST /api/auth/login  { username|email, password }
+  if (p === "/api/auth/login" && m === "POST") {
+    const body = (await req.json()) as { email?: string; username?: string; password?: string };
+    const email = body.email ?? body.username ?? "";
+    const user = await db.getUserByEmail(env, email);
+    // Verify even on unknown user to keep timing uniform.
+    const ok = user
+      ? await auth.verifyPassword(body.password ?? "", user.password_hash)
+      : await auth.verifyPassword(body.password ?? "", DUMMY_HASH);
+    if (!user || !ok) return err(401, "invalid credentials");
+    return issueTokens(env, user.id, nowSec);
+  }
+
+  // POST /api/auth/refresh  (refresh token in httpOnly cookie)
+  if (p === "/api/auth/refresh" && m === "POST") {
+    const token = auth.readRefreshCookie(req);
+    if (!token) return err(401, "no session");
+    const payload = await auth.verifyJwt(env.AUTH_SECRET, token, "refresh", nowSec);
+    if (!payload) return err(401, "invalid session");
+    // Rotate: hand back a fresh access token (and slide the refresh cookie).
+    return issueTokens(env, payload.sub, nowSec);
+  }
+
+  // POST /api/auth/logout
+  if (p === "/api/auth/logout" && m === "POST") {
+    return json({ ok: true }, 200, { "set-cookie": auth.clearRefreshCookie() });
+  }
+
+  return err(404, "not found");
+}
+
+async function issueTokens(env: Env, userId: string, nowSec: number, status = 200): Promise<Response> {
+  const [access, refresh] = await Promise.all([
+    auth.createAccessToken(env.AUTH_SECRET, userId, nowSec),
+    auth.createRefreshToken(env.AUTH_SECRET, userId, nowSec),
+  ]);
+  return json({ access_token: access, tenant_id: userId }, status, {
+    "set-cookie": auth.refreshCookie(refresh),
+  });
+}
+
+/** A valid-format hash so login timing is identical for unknown emails. */
+const DUMMY_HASH =
+  "pbkdf2-sha256$100000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 /** Fetch a movie only if it belongs to a catalog owned by this tenant. */
 async function ownedMovie(env: Env, tenantId: string, id: string): Promise<MovieRow | null> {

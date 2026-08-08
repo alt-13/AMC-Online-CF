@@ -15,6 +15,16 @@
 
 PRAGMA foreign_keys = ON;
 
+-- Accounts. `id` doubles as the tenant_id used across catalogs + R2 key prefixes.
+-- Passwords are PBKDF2-SHA256 (WebCrypto) — never bcrypt — see cf/worker/auth.ts.
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,             -- uuid == tenant_id
+  email         TEXT NOT NULL,
+  email_lower   TEXT NOT NULL UNIQUE,         -- case-insensitive login key
+  password_hash TEXT NOT NULL,               -- pbkdf2-sha256$iters$salt$key
+  created_at    INTEGER NOT NULL
+);
+
 -- One row per uploaded .amc library (a "catalog"), owned by a tenant.
 CREATE TABLE IF NOT EXISTS catalogs (
   id                  TEXT PRIMARY KEY,          -- uuid
