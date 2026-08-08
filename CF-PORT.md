@@ -45,6 +45,9 @@ touches at most a handful of D1 rows and one poster — so 128 MB is never in pl
 | `worker/db.ts` | Worker | prepared-statement D1 helpers |
 | `browser/import.ts` | browser | `importAmcFile(file, opts)` — parse, upload posters, chunked row commit |
 | `browser/export.ts` | browser | `exportAmcFile` / `downloadAmcFile` — fetch bundle, rebuild, download |
+| `frontend/api.ts` | browser | thin metadata client + session (tenant/auth) + re-exports import/export |
+| `frontend/CatalogImport.vue` | browser | drag/drop upload with poster+row progress; emits the new catalog id |
+| `frontend/CatalogsView.vue` | browser | top-level screen: import, list libraries, export any back to `.amc` |
 | `wrangler.jsonc` | — | Worker config (D1 + R2 + static-asset bindings) |
 
 ## Data-model decisions
