@@ -47,12 +47,22 @@ export async function loginToMega(creds: MegaCredentials): Promise<Storage> {
   return storage;
 }
 
+// Anything we can upload into: the account (uploads to root) or a folder node.
+// Both expose `.upload(opts, source).complete` at runtime; megajs's folder type
+// declares only a Writable return, so we describe the shape we actually use.
+type Uploader = {
+  upload(opts: unknown, source?: unknown): { complete: Promise<unknown> };
+};
+
 /**
  * Upload bytes to Mega WITH a correct fingerprint so the desktop client accepts
  * the file. `attributes.c` is the piece megajs would otherwise omit.
+ *
+ * `target` is the account (upload to root) or a folder node from folderAt/
+ * ensureFolderAt (upload into that folder).
  */
 export async function uploadToMega(
-  storage: Storage,
+  target: Storage | MegaFile,
   name: string,
   bytes: Uint8Array,
   mtimeSec: number = Math.floor(Date.now() / 1000),
@@ -61,16 +71,117 @@ export async function uploadToMega(
   // megajs's uploadOpts type omits `attributes`, but at runtime it merges any
   // caller-supplied attributes before packing (it only forces `.n = name`), so
   // our `c` fingerprint survives. Cast past the too-narrow type.
-  const opts = { name, size: bytes.byteLength, attributes: { c } } as unknown as {
-    name: string;
-    size: number;
-  };
+  const opts = { name, size: bytes.byteLength, attributes: { c } };
   // megajs's buffer param is typed BufferString (Buffer | string); a Uint8Array
-  // works at runtime. Cast via megajs's own param type so no `Buffer` global is
-  // referenced (this module targets the browser).
-  const source = bytes as unknown as NonNullable<Parameters<Storage["upload"]>[1]>;
-  const file = await storage.upload(opts, source).complete;
+  // works at runtime. No `Buffer` global is referenced (this module targets the
+  // browser).
+  const file = await (target as unknown as Uploader).upload(opts, bytes).complete;
   return file as unknown as MegaFile;
+}
+
+// --- paths -----------------------------------------------------------------
+//
+// Mega has real folders, so a catalog can live at e.g. "/Backups/movies.amc",
+// not just the account root. A path is "/"-separated; a trailing ".amc" segment
+// is treated as the filename, everything before it as the folder chain.
+
+export interface AmcPath {
+  /** folder names from the root, in order (empty = the account root) */
+  segments: string[];
+  /** the ".amc" filename if the path named one, else null */
+  filename: string | null;
+}
+
+/** Parse a "/Folder/Sub/file.amc"-style path (leading/trailing slashes ok). */
+export function splitAmcPath(path: string): AmcPath {
+  const parts = path
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length && parts[parts.length - 1].toLowerCase().endsWith(".amc")) {
+    const filename = parts.pop() as string;
+    return { segments: parts, filename };
+  }
+  return { segments: parts, filename: null };
+}
+
+/** Walk existing folders to the one named by `segments`; null if any is missing. */
+export function folderAt(storage: Storage, segments: string[]): MegaFile | null {
+  let node: MegaFile = storage.root as unknown as MegaFile;
+  for (const seg of segments) {
+    const children = (node.children ?? []) as MegaFile[];
+    const next = children.find((c) => c.directory && (c.name ?? "") === seg);
+    if (!next) return null;
+    node = next;
+  }
+  return node;
+}
+
+/** Like folderAt, but creates any missing folders along the way. */
+export async function ensureFolderAt(storage: Storage, segments: string[]): Promise<MegaFile> {
+  let node: MegaFile = storage.root as unknown as MegaFile;
+  for (const seg of segments) {
+    const children = (node.children ?? []) as MegaFile[];
+    let next = children.find((c) => c.directory && (c.name ?? "") === seg) ?? null;
+    if (!next) {
+      next = (await (node as unknown as { mkdir(name: string): Promise<MegaFile> }).mkdir(
+        seg,
+      )) as MegaFile;
+    }
+    node = next;
+  }
+  return node;
+}
+
+/** List `.amc` files at a folder path ("" = root). `deep` recurses subfolders. */
+export function listAmcFiles(storage: Storage, path = "", deep = false): MegaFile[] {
+  const { segments } = splitAmcPath(path);
+  const folder = folderAt(storage, segments);
+  if (!folder) return [];
+  const pool = deep
+    ? ((folder.children ?? []) as MegaFile[]).concat(collectDeep(folder))
+    : ((folder.children ?? []) as MegaFile[]);
+  const seen = new Set<string>();
+  return pool.filter((f) => {
+    if (f.directory || !(f.name ?? "").toLowerCase().endsWith(".amc")) return false;
+    const id = f.nodeId ?? f.name ?? "";
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function collectDeep(folder: MegaFile): MegaFile[] {
+  const out: MegaFile[] = [];
+  for (const c of (folder.children ?? []) as MegaFile[]) {
+    if (c.directory) {
+      out.push(...((c.children ?? []) as MegaFile[]), ...collectDeep(c));
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolve a full path ("/Folder/file.amc") to a single file node. Falls back to
+ * a deep search by filename anywhere in the account when the exact folder path
+ * has no match. Returns null if nothing matches.
+ */
+export function resolveAmcFile(storage: Storage, path: string): MegaFile | null {
+  const { segments, filename } = splitAmcPath(path);
+  if (!filename) return null;
+  const folder = folderAt(storage, segments);
+  if (folder) {
+    const hit = ((folder.children ?? []) as MegaFile[]).find(
+      (f) => !f.directory && (f.name ?? "") === filename,
+    );
+    if (hit) return hit;
+  }
+  // Not at that exact path — search the whole account for the filename.
+  const found = storage.find(
+    (f) => !f.directory && (f.name ?? "") === filename,
+    true,
+  ) as unknown as MegaFile | null;
+  return found ?? null;
 }
 
 /** Find a file by name at the account root (first match). */

@@ -166,7 +166,25 @@ routes it through the polyfilled path.
 Build deps still not added for the Worker itself: `wrangler` and
 `@cloudflare/workers-types` (for `worker/`). See `cf/tsconfig.json`.
 
-## Mega import / export (planned)
+## Mega import / export
+
+**Status: implemented** — `browser/mega.ts` (login, fingerprinted upload/download,
+folder-path helpers), `frontend/mega.ts` (bridge to import/export + a persisted
+path setting), and `MegaSync.vue` (connect + list + import) with a per-catalog
+"→ Mega" push button in `CatalogsView.vue`. Both concerns below (fingerprint,
+credentials) are handled: the fingerprint is computed client-side
+(`mega-fingerprint.ts`) and injected as `attributes.c`; login happens in the
+browser and the password is never sent to the Worker.
+
+The `.amc` needn't sit at the account root: the location is a `"/"`-path
+(`megaSettings.path`, persisted in `localStorage`) that can name a folder to
+list/push into (`/Backups`) or one specific file (`/Backups/movies.amc`);
+`resolveAmcFile` deep-searches by filename as a fallback. Bind the path input in
+`MegaSync.vue` — the CF port has no standalone settings page yet, so the path
+setting lives in the Mega panel. Tests: `mega-paths.test.ts` (path parsing +
+navigation), `mega-fingerprint.test.ts`, and the gated `mega.integration.test.ts`.
+
+The original sketch, for reference:
 
 The self-hosted app syncs the `.amc` to Mega.nz through **MEGAcmd**, a native C++
 binary bundled in the Docker image. A Worker can't run a native binary, and

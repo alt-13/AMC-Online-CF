@@ -34,8 +34,25 @@
 
     <!-- connected -->
     <div v-else class="connected">
+      <label class="pathrow">
+        <span class="plabel">.amc path</span>
+        <input
+          v-model="path"
+          type="text"
+          placeholder="/Backups/movies.amc — or /Backups, or blank for root"
+          spellcheck="false"
+          autocapitalize="off"
+          @keyup.enter="applyPath"
+          @blur="applyPath"
+        />
+      </label>
+      <label class="deeprow">
+        <input type="checkbox" v-model="deep" @change="refresh" />
+        search subfolders
+      </label>
+
       <div class="bar">
-        <button class="btn ghost" :disabled="busy" @click="refresh">Refresh</button>
+        <button class="btn ghost" :disabled="busy" @click="applyPath">Refresh</button>
         <button class="btn ghost" @click="disconnect">Disconnect</button>
       </div>
 
@@ -48,7 +65,9 @@
           </button>
         </li>
       </ul>
-      <p v-else class="hint">No <code>.amc</code> files at your Mega account root.</p>
+      <p v-else class="hint">
+        No <code>.amc</code> files {{ path ? `at "${path}"` : "at your Mega account root" }}.
+      </p>
     </div>
 
     <p v-if="error" class="err">{{ error }}</p>
@@ -59,6 +78,8 @@
 import { ref } from "vue";
 import {
   megaState as state,
+  megaSettings,
+  setMegaPath,
   megaConnect,
   megaDisconnect,
   megaListAmc,
@@ -75,6 +96,8 @@ const error = ref("");
 const files = ref<MegaAmcFile[]>([]);
 const importing = ref<string | null>(null);
 const importLabel = ref("Import");
+const path = ref(megaSettings.path);
+const deep = ref(false);
 
 async function connect() {
   busy.value = true;
@@ -99,10 +122,18 @@ function disconnect() {
 function refresh() {
   error.value = "";
   try {
-    files.value = megaListAmc();
+    files.value = megaListAmc(path.value, deep.value);
   } catch (e) {
     error.value = msg(e);
   }
+}
+
+/** Persist the path setting, then re-list from it. */
+function applyPath() {
+  const next = path.value.trim();
+  path.value = next;
+  setMegaPath(next);
+  refresh();
 }
 
 async function pull(f: MegaAmcFile) {
@@ -166,6 +197,17 @@ function msg(e: unknown): string {
 }
 .hint { flex-basis: 100%; margin: 0; font-size: 0.72rem; color: var(--c-muted, #7e7a90); }
 .hint code { background: var(--c-elevated, #1f1f38); padding: 0 0.3rem; border-radius: 4px; }
+.pathrow { display: flex; flex-direction: column; gap: 0.2rem; }
+.plabel { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--c-muted, #7e7a90); }
+.pathrow input {
+  padding: 0.4rem 0.6rem;
+  background: var(--c-elevated, #1f1f38);
+  border: 1px solid var(--c-border, #2a2a48);
+  border-radius: 6px;
+  color: var(--c-text, #e8e0d5);
+  font-size: 0.85rem;
+}
+.deeprow { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
 .bar { display: flex; gap: 0.5rem; }
 .files { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; margin: 0.4rem 0 0; padding: 0; }
 .frow { display: flex; align-items: center; gap: 0.6rem; }
