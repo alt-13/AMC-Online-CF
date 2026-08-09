@@ -35,16 +35,20 @@
     <!-- connected -->
     <div v-else class="connected">
       <label class="pathrow">
-        <span class="plabel">.amc path</span>
+        <span class="plabel">.amc file path</span>
         <input
           v-model="path"
           type="text"
-          placeholder="/Backups/movies.amc — or /Backups, or blank for root"
+          placeholder="/Backups/movies.amc — full path to the file (a folder or blank also works)"
           spellcheck="false"
           autocapitalize="off"
           @keyup.enter="applyPath"
           @blur="applyPath"
         />
+        <span class="phelp">
+          Point this at a specific file (recommended). Import reads it; push writes
+          back to exactly this path.
+        </span>
       </label>
       <label class="deeprow">
         <input type="checkbox" v-model="deep" @change="refresh" />
@@ -199,6 +203,7 @@ function msg(e: unknown): string {
 .hint code { background: var(--c-elevated, #1f1f38); padding: 0 0.3rem; border-radius: 4px; }
 .pathrow { display: flex; flex-direction: column; gap: 0.2rem; }
 .plabel { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--c-muted, #7e7a90); }
+.phelp { font-size: 0.7rem; color: var(--c-muted, #7e7a90); }
 .pathrow input {
   padding: 0.4rem 0.6rem;
   background: var(--c-elevated, #1f1f38);
