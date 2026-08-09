@@ -10,6 +10,7 @@
     <h2 class="title">Your libraries</h2>
 
     <CatalogImport @imported="onImported" />
+    <MegaSync @imported="onImported" />
 
     <div v-if="loading" class="muted">Loading…</div>
     <div v-else-if="!catalogs.length" class="muted">
@@ -23,6 +24,14 @@
           <span class="sub">v{{ (c.version / 10).toFixed(1) }} · updated {{ fmt(c.updated_at) }}</span>
         </div>
         <div class="actions">
+          <button
+            v-if="megaState.connected"
+            class="btn ghost"
+            :disabled="pushingId === c.id"
+            @click="onPush(c)"
+          >
+            {{ pushingId === c.id ? pushLabel : "→ Mega" }}
+          </button>
           <button
             class="btn"
             :disabled="exportingId === c.id"
@@ -41,13 +50,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import CatalogImport from "./CatalogImport.vue";
+import MegaSync from "./MegaSync.vue";
 import { cf, downloadAmcFile, session, type CatalogRow } from "./api";
+import { megaState, megaPush } from "./mega";
 
 const catalogs = ref<CatalogRow[]>([]);
 const loading = ref(true);
 const error = ref("");
 const exportingId = ref<string | null>(null);
 const exportLabel = ref("Export .amc");
+const pushingId = ref<string | null>(null);
+const pushLabel = ref("→ Mega");
 
 async function refresh() {
   loading.value = true;
@@ -82,6 +95,25 @@ async function onExport(c: CatalogRow) {
   } finally {
     exportingId.value = null;
     exportLabel.value = "Export .amc";
+  }
+}
+
+async function onPush(c: CatalogRow) {
+  if (pushingId.value) return;
+  pushingId.value = c.id;
+  pushLabel.value = "Building…";
+  error.value = "";
+  try {
+    await megaPush(c.id, c.name || "catalog", (d, t) => {
+      pushLabel.value = t ? `Posters ${d}/${t}` : "Uploading…";
+    });
+    pushLabel.value = "Done ✓";
+    await new Promise((r) => setTimeout(r, 1200));
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    pushingId.value = null;
+    pushLabel.value = "→ Mega";
   }
 }
 
@@ -125,6 +157,8 @@ onMounted(refresh);
   font-size: 0.82rem;
   cursor: pointer;
 }
+.btn.ghost { background: transparent; color: var(--c-gold, #c9a84c); border: 1px solid var(--c-border, #2a2a48); }
 .btn:disabled { opacity: 0.7; cursor: default; }
+.actions { display: flex; gap: 0.5rem; align-items: center; }
 .err { color: var(--c-danger, #e05252); font-size: 0.82rem; }
 </style>

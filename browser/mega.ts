@@ -58,10 +58,18 @@ export async function uploadToMega(
   mtimeSec: number = Math.floor(Date.now() / 1000),
 ): Promise<MegaFile> {
   const c = computeFingerprint(bytes, mtimeSec);
-  const file = await storage.upload(
-    { name, size: bytes.byteLength, attributes: { c } },
-    bytes as unknown as Buffer,
-  ).complete;
+  // megajs's uploadOpts type omits `attributes`, but at runtime it merges any
+  // caller-supplied attributes before packing (it only forces `.n = name`), so
+  // our `c` fingerprint survives. Cast past the too-narrow type.
+  const opts = { name, size: bytes.byteLength, attributes: { c } } as unknown as {
+    name: string;
+    size: number;
+  };
+  // megajs's buffer param is typed BufferString (Buffer | string); a Uint8Array
+  // works at runtime. Cast via megajs's own param type so no `Buffer` global is
+  // referenced (this module targets the browser).
+  const source = bytes as unknown as NonNullable<Parameters<Storage["upload"]>[1]>;
+  const file = await storage.upload(opts, source).complete;
   return file as unknown as MegaFile;
 }
 
@@ -75,7 +83,9 @@ export function findInMega(storage: Storage, name: string): MegaFile | null {
 export async function downloadFromMega(fileOrLink: MegaFile | string): Promise<CloudFile> {
   const file = typeof fileOrLink === "string" ? MegaFile.fromURL(fileOrLink) : fileOrLink;
   if (typeof fileOrLink === "string") await file.loadAttributes();
-  const buf = await file.downloadBuffer({});
+  // downloadBuffer is typed Buffer (Node), but in the browser megajs returns a
+  // Uint8Array-compatible value; treat it as one so no `Buffer` global is needed.
+  const buf = (await file.downloadBuffer({})) as unknown as Uint8Array;
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   return { name: file.name ?? "", bytes, mtimeSec: file.timestamp };
 }
