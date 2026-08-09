@@ -138,19 +138,33 @@ All routes except `/api/auth/*` require `Authorization: Bearer <access_token>`.
 
 ```sh
 cd cf
-npx wrangler d1 create amc                 # paste database_id into wrangler.jsonc
+npm install                                  # frontend + worker build deps
+npx wrangler d1 create amc                  # paste database_id into wrangler.jsonc
 npx wrangler r2 bucket create amc-posters
 npx wrangler d1 execute amc --remote --file=schema.sql
 npx wrangler secret put AUTH_SECRET          # JWT/PBKDF2 signing secret
-(cd ../frontend && npm ci && npm run build) # builds frontend/dist for the assets binding
+npm run build                                # vite -> cf/dist (the assets binding)
 npx wrangler deploy
 ```
 
-Dev: `npx wrangler dev` (uses local D1 + R2 emulation).
+Dev: run `npx wrangler dev` (local D1 + R2 emulation, serves /api on :8787) and
+`npm run dev` (vite on :5173, proxies /api to :8787) side by side.
 
-Build deps not yet added to a `package.json` here: `wrangler`,
-`@cloudflare/workers-types` (for `worker/`), and the DOM lib for `browser/`.
-See `cf/tsconfig.json`.
+The frontend is a self-contained vite app in `cf/` (`vite.config.ts`, `index.html`,
+`frontend/main.ts` -> `CatalogsView.vue`). `npm run build` emits `cf/dist`, which
+`wrangler.jsonc` serves as static assets while the Worker handles `/api/*`.
+
+**megajs needs a Node polyfill in the browser build.** megajs is browser-capable
+but its bundle reaches for `Buffer` (AES + attribute packing) and touches
+`process`/`global`. `vite.config.ts` wires `vite-plugin-node-polyfills`
+(`include: ["buffer","process"]`, `globals` for Buffer/global/process) plus
+`define: { global: "globalThis" }` so login and the fingerprinted upload/download
+run. Without it you get `Buffer is not defined` at runtime (often only in dev,
+where esbuild pre-bundles megajs unpolyfilled). `optimizeDeps.include: ["megajs"]`
+routes it through the polyfilled path.
+
+Build deps still not added for the Worker itself: `wrangler` and
+`@cloudflare/workers-types` (for `worker/`). See `cf/tsconfig.json`.
 
 ## Mega import / export (planned)
 

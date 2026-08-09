@@ -30,8 +30,9 @@
   ],
 
   // The built Vue frontend is served as static assets; the Worker handles /api/*.
+  // Built by `npm run build` in cf/ (vite.config.ts) -> cf/dist.
   "assets": {
-    "directory": "../frontend/dist",
+    "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
