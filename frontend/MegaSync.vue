@@ -12,8 +12,20 @@
       <span v-if="state.connected" class="conn">· {{ state.email }}</span>
     </div>
 
+    <!-- reconnecting from a stored credential -->
+    <p v-if="!state.connected && reconnecting" class="hint">Reconnecting to Mega…</p>
+
     <!-- connect -->
-    <form v-if="!state.connected" class="form" @submit.prevent="connect">
+    <form v-else-if="!state.connected" class="form" @submit.prevent="connect">
+      <label class="providerrow">
+        <span class="plabel">cloud service</span>
+        <select v-model="settings.provider" class="provider">
+          <option value="mega">Mega.nz</option>
+          <option value="drive" disabled>Google Drive (soon)</option>
+          <option value="dropbox" disabled>Dropbox (soon)</option>
+          <option value="s3" disabled>S3 (soon)</option>
+        </select>
+      </label>
       <input
         v-model="email"
         type="email"
@@ -29,7 +41,15 @@
         required
       />
       <button class="btn" :disabled="busy">{{ busy ? "Connecting…" : "Connect" }}</button>
-      <p class="hint">Stays in this browser tab — never saved, never sent to the server.</p>
+      <label class="rememberrow">
+        <input type="checkbox" v-model="remember" />
+        keep me signed in on this account (stored encrypted)
+      </label>
+      <p class="hint">
+        {{ remember
+          ? "Saved encrypted to your own server so you don't log in again — decrypted only in this browser to connect."
+          : "Stays in this browser tab only — never saved, never sent to the server." }}
+      </p>
     </form>
 
     <!-- connected -->
@@ -58,6 +78,9 @@
       <div class="bar">
         <button class="btn ghost" :disabled="busy" @click="applyPath">Refresh</button>
         <button class="btn ghost" @click="disconnect">Disconnect</button>
+        <button v-if="settings.hasCredential" class="btn ghost" @click="forget">
+          Forget saved login
+        </button>
       </div>
 
       <ul v-if="files.length" class="files">
@@ -79,12 +102,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import {
   megaState as state,
-  megaSettings,
-  setMegaPath,
+  megaSettings as settings,
+  saveMegaPath,
+  loadCloudConfig,
   megaConnect,
+  megaAutoConnect,
+  megaForgetCredential,
   megaDisconnect,
   megaListAmc,
   megaPull,
@@ -95,19 +121,37 @@ const emit = defineEmits<{ imported: [catalogId: string] }>();
 
 const email = ref("");
 const password = ref("");
+const remember = ref(false);
 const busy = ref(false);
+const reconnecting = ref(false);
 const error = ref("");
 const files = ref<MegaAmcFile[]>([]);
 const importing = ref<string | null>(null);
 const importLabel = ref("Import");
-const path = ref(megaSettings.path);
+const path = ref(settings.path);
 const deep = ref(false);
+
+// On load: fetch this user's saved config, then auto-reconnect if a credential
+// is stored — so a remembered user never has to log in again.
+onMounted(async () => {
+  await loadCloudConfig();
+  path.value = settings.path;
+  remember.value = settings.hasCredential;
+  if (settings.hasCredential && !state.connected) {
+    reconnecting.value = true;
+    try {
+      if (await megaAutoConnect()) refresh();
+    } finally {
+      reconnecting.value = false;
+    }
+  }
+});
 
 async function connect() {
   busy.value = true;
   error.value = "";
   try {
-    await megaConnect({ email: email.value, password: password.value });
+    await megaConnect({ email: email.value, password: password.value }, remember.value);
     password.value = ""; // don't keep it in a reactive field longer than needed
     refresh();
   } catch (e) {
@@ -123,6 +167,16 @@ function disconnect() {
   error.value = "";
 }
 
+async function forget() {
+  error.value = "";
+  try {
+    await megaForgetCredential();
+    remember.value = false;
+  } catch (e) {
+    error.value = msg(e);
+  }
+}
+
 function refresh() {
   error.value = "";
   try {
@@ -132,11 +186,16 @@ function refresh() {
   }
 }
 
-/** Persist the path setting, then re-list from it. */
-function applyPath() {
+/** Persist the path (per-user, server-side), then re-list from it. */
+async function applyPath() {
   const next = path.value.trim();
   path.value = next;
-  setMegaPath(next);
+  error.value = "";
+  try {
+    await saveMegaPath(next);
+  } catch (e) {
+    error.value = msg(e);
+  }
   refresh();
 }
 
@@ -213,6 +272,16 @@ function msg(e: unknown): string {
   font-size: 0.85rem;
 }
 .deeprow { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
+.providerrow { display: flex; flex-direction: column; gap: 0.2rem; flex-basis: 100%; }
+.provider {
+  padding: 0.4rem 0.6rem;
+  background: var(--c-elevated, #1f1f38);
+  border: 1px solid var(--c-border, #2a2a48);
+  border-radius: 6px;
+  color: var(--c-text, #e8e0d5);
+  font-size: 0.85rem;
+}
+.rememberrow { flex-basis: 100%; display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
 .bar { display: flex; gap: 0.5rem; }
 .files { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; margin: 0.4rem 0 0; padding: 0; }
 .frow { display: flex; align-items: center; gap: 0.6rem; }

@@ -8,6 +8,6 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["browser/**/*.test.ts"],
+    include: ["browser/**/*.test.ts", "worker/**/*.test.ts"],
   },
 });

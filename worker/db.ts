@@ -49,6 +49,36 @@ export async function insertUser(env: Env, u: UserRow): Promise<void> {
     .run();
 }
 
+// --- user cloud config -----------------------------------------------------
+
+export interface UserCloudRow {
+  user_id: string;
+  provider: string;
+  path: string;
+  credential: string | null; // base64(iv‖AES-GCM ct), NULL if none
+  updated_at: number;
+}
+
+export async function getUserCloud(env: Env, userId: string): Promise<UserCloudRow | null> {
+  return env.DB.prepare(`SELECT * FROM user_cloud WHERE user_id = ?`)
+    .bind(userId)
+    .first<UserCloudRow>();
+}
+
+export async function upsertUserCloud(env: Env, row: UserCloudRow): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO user_cloud (user_id, provider, path, credential, updated_at)
+       VALUES (?,?,?,?,?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       provider   = excluded.provider,
+       path       = excluded.path,
+       credential = excluded.credential,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(row.user_id, row.provider, row.path, row.credential, row.updated_at)
+    .run();
+}
+
 // --- catalogs --------------------------------------------------------------
 
 export async function listCatalogs(env: Env, tenantId: string): Promise<CatalogRow[]> {

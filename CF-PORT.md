@@ -170,19 +170,50 @@ Build deps still not added for the Worker itself: `wrangler` and
 
 **Status: implemented** — `browser/mega.ts` (login, fingerprinted upload/download,
 folder-path helpers), `frontend/mega.ts` (bridge to import/export + a persisted
-path setting), and `MegaSync.vue` (connect + list + import) with a per-catalog
-"→ Mega" push button in `CatalogsView.vue`. Both concerns below (fingerprint,
-credentials) are handled: the fingerprint is computed client-side
-(`mega-fingerprint.ts`) and injected as `attributes.c`; login happens in the
-browser and the password is never sent to the Worker.
+path setting), and `MegaSync.vue` (provider picker + connect + list + import) with
+a per-catalog "→ Mega" push button in `CatalogsView.vue`. Both concerns below
+(fingerprint, credentials) are handled: the fingerprint is computed client-side
+(`mega-fingerprint.ts`) and injected as `attributes.c`; login always happens in
+the browser (megajs's crypto can't live in a Worker), and the plaintext password
+is never handled server-side except to encrypt it (see credential storage below).
 
 The `.amc` needn't sit at the account root: the location is a `"/"`-path
-(`megaSettings.path`, persisted in `localStorage`) that can name a folder to
-list/push into (`/Backups`) or one specific file (`/Backups/movies.amc`);
-`resolveAmcFile` deep-searches by filename as a fallback. Bind the path input in
-`MegaSync.vue` — the CF port has no standalone settings page yet, so the path
-setting lives in the Mega panel. Tests: `mega-paths.test.ts` (path parsing +
-navigation), `mega-fingerprint.test.ts`, and the gated `mega.integration.test.ts`.
+(`megaSettings.path`) that can name a folder to list/push into (`/Backups`) or one
+specific file (`/Backups/movies.amc`); `resolveAmcFile` deep-searches by filename
+as a fallback. Bind the path input in `MegaSync.vue` — the CF port has no
+standalone settings page yet, so the config lives in the Mega panel. Tests:
+`mega-paths.test.ts` (path parsing + navigation), `mega-fingerprint.test.ts`, and
+the gated `mega.integration.test.ts`.
+
+### Cloud config + credential storage (per user)
+
+Provider, `.amc` path, and an optional saved credential live server-side per user
+in the `user_cloud` table — not in `localStorage`, so they follow the account
+across browsers. The Worker exposes three authenticated routes (`worker/index.ts`),
+all keyed on the JWT's user id:
+
+- `GET  /api/cloud` → `{ provider, path, hasCredential }` — never returns the secret.
+- `PUT  /api/cloud` → save `provider`/`path`; `credential` omitted/`""` = keep,
+  `null` = forget, a string = encrypt + store.
+- `POST /api/cloud/connect` → hands back the **decrypted** credential (404 if none),
+  the one call that does so — for the browser to log in with.
+
+Credentials are encrypted at rest with **AES-256-GCM** (`worker/crypto.ts`,
+mirroring the pm project's SMTP-password pattern): an HKDF-SHA-256 key derived from
+`env.AUTH_SECRET` with a per-purpose `info` label, a random 12-byte IV per record,
+stored as `base64(iv‖ciphertext+tag)`. Tests in `worker/crypto.test.ts`
+(round-trip, no plaintext leak, distinct IVs, GCM auth rejects a wrong secret).
+
+**Trust model.** "Self-hosting" here means each person deploys the app to their
+*own* Cloudflare account — single-operator, single-user. The `AUTH_SECRET` holder
+is therefore the same person as the account owner, so server-side encrypt-at-rest
+is honest: it protects the credential against a D1 dump or console exposure, and
+the decrypted secret only ever round-trips back to that same user's browser (it
+has to — megajs runs there). Mega has no OAuth/JWT, so the stored blob is
+`{email,password}` JSON; when Drive/Dropbox/S3 land they should use scoped OAuth
+refresh tokens instead. The `remember` checkbox is opt-in — unchecked, the session
+stays in tab memory only and nothing is persisted. `MegaSync.vue` auto-reconnects
+on load when a credential is stored, and offers a "Forget saved login" button.
 
 The original sketch, for reference:
 
@@ -214,9 +245,9 @@ Two things to settle before shipping it:
    self-hosted app dropped rclone for MEGAcmd. Verify `megajs` writes a
    fingerprint on upload; if not, compute and set it, or accept that only the
    web client / this app can read what we upload.
-2. **Credentials.** Do the login in the browser and never send the Mega password
-   to the Worker. Prefer a per-session Mega login over storing credentials; if
-   they must persist, that's the user's own device, not our D1.
+2. **Credentials.** Settled — see "Cloud config + credential storage" above. Login
+   is always in the browser; the password reaches the Worker only to be AES-256-GCM
+   encrypted at rest (opt-in), never stored in plaintext.
 
 ## Still to port (not blocking the data path)
 

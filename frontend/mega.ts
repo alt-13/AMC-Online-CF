@@ -14,7 +14,7 @@
 // S3 later, ideally via OAuth so credentials never touch the app at all.
 
 import { reactive } from "vue";
-import { exportAmcFile, importAmcFile, session } from "./api";
+import { exportAmcFile, importAmcFile, session, cloud } from "./api";
 import {
   loginToMega,
   uploadToMega,
@@ -40,44 +40,90 @@ export const megaState = reactive({
   email: "",
 });
 
-// --- settings (persisted) --------------------------------------------------
+// --- settings (persisted per-user, server-side) ----------------------------
 //
-// The `.amc` location on Mega. May be a folder ("/Backups") to list/push into,
-// or a full path to one file ("/Backups/movies.amc"). Persisted in localStorage
-// so it survives reloads — it's a preference, not a secret (unlike the password).
-
-const PATH_KEY = "amc.mega.path";
-
-function loadPath(): string {
-  try {
-    return localStorage.getItem(PATH_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
+// provider + the `.amc` path ("/Backups/movies.amc", a folder, or "" for root)
+// are stored per user in D1 (not secrets). The Mega credential, if the user opts
+// to be remembered, is stored ENCRYPTED at rest by the Worker (worker/crypto.ts)
+// and only ever handed back to this browser to log in with — never to the
+// desktop-less "server operator", because in the self-hosting model the operator
+// IS the user. See CF-PORT.md "Mega import/export".
 
 /** Reactive Mega settings; bind the path input to `megaSettings.path`. */
-export const megaSettings = reactive({ path: loadPath() });
+export const megaSettings = reactive({
+  provider: "mega",
+  path: "",
+  hasCredential: false, // a stored (encrypted) credential exists server-side
+  loaded: false, // config has been fetched from the server this session
+});
 
-/** Set and persist the `.amc` path/folder. */
-export function setMegaPath(path: string): void {
-  megaSettings.path = path;
+/** Load provider/path/hasCredential from the server (requires a logged-in app
+ *  session). Safe to call repeatedly; swallows errors so the UI still renders. */
+export async function loadCloudConfig(): Promise<void> {
   try {
-    localStorage.setItem(PATH_KEY, path);
+    const c = await cloud.get();
+    megaSettings.provider = c.provider || "mega";
+    megaSettings.path = c.path;
+    megaSettings.hasCredential = c.hasCredential;
   } catch {
-    /* private mode / storage disabled — keep it in memory only */
+    /* not authenticated yet / offline — leave defaults */
+  } finally {
+    megaSettings.loaded = true;
   }
 }
 
-/** Log in to Mega in the browser and keep the session for this tab only. */
-export async function megaConnect(creds: MegaCredentials): Promise<void> {
+/** Persist provider + `.amc` path (never touches the credential). */
+export async function saveMegaPath(path: string): Promise<void> {
+  megaSettings.path = path;
+  const c = await cloud.save({ provider: megaSettings.provider, path });
+  megaSettings.hasCredential = c.hasCredential;
+}
+
+/**
+ * Log in to Mega in the browser and keep the session for this tab. If `remember`
+ * is set, the credential is sent once to the Worker to be encrypted-at-rest so
+ * future sessions can auto-reconnect (see megaAutoConnect).
+ */
+export async function megaConnect(creds: MegaCredentials, remember = false): Promise<void> {
   const s = await loginToMega(creds);
   storage = s;
   megaState.connected = true;
   megaState.email = creds.email;
+  if (remember) {
+    const c = await cloud.save({
+      provider: "mega",
+      path: megaSettings.path,
+      credential: JSON.stringify({ email: creds.email, password: creds.password }),
+    });
+    megaSettings.hasCredential = c.hasCredential;
+  }
 }
 
-/** Drop the in-memory Mega session. */
+/**
+ * Try to reconnect using the stored (encrypted) credential, so the user doesn't
+ * have to log in again. Returns false when nothing is stored or login fails.
+ */
+export async function megaAutoConnect(): Promise<boolean> {
+  try {
+    const { credential } = await cloud.connect();
+    const creds = JSON.parse(credential) as MegaCredentials;
+    const s = await loginToMega(creds);
+    storage = s;
+    megaState.connected = true;
+    megaState.email = creds.email;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Forget the stored credential (clears it server-side). */
+export async function megaForgetCredential(): Promise<void> {
+  await cloud.save({ credential: null });
+  megaSettings.hasCredential = false;
+}
+
+/** Drop the in-memory Mega session (keeps any stored credential). */
 export function megaDisconnect(): void {
   storage = null;
   megaState.connected = false;

@@ -15,6 +15,7 @@ import type { Env } from "./db";
 import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../amc/mapping";
 import * as db from "./db";
 import * as auth from "./auth";
+import { encryptSecret, decryptSecret } from "./crypto";
 
 type ExtraRow = ImportResult["extras"][number];
 
@@ -114,6 +115,61 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
   // GET /api/catalogs  — list this tenant's catalogs
   if (p === "/api/catalogs" && m === "GET") {
     return json(await db.listCatalogs(env, t));
+  }
+
+  // ---- cloud sync config (provider + .amc path + encrypted credential) ----
+  //
+  // GET returns the config WITHOUT the secret (a `hasCredential` flag instead),
+  // exactly like pm's email settings. The decrypted credential is only ever
+  // handed back by the explicit POST /api/cloud/connect below.
+  if (p === "/api/cloud" && m === "GET") {
+    const row = await db.getUserCloud(env, t);
+    return json({
+      provider: row?.provider ?? "mega",
+      path: row?.path ?? "",
+      hasCredential: !!row?.credential,
+    });
+  }
+
+  // PUT /api/cloud  { provider?, path?, credential? }
+  //   credential omitted / ""  -> keep the stored one (pm's "empty = keep")
+  //   credential === null       -> clear it ("forget saved login")
+  //   credential is a string    -> encrypt and store it
+  if (p === "/api/cloud" && m === "PUT") {
+    const body = (await req.json()) as {
+      provider?: string;
+      path?: string;
+      credential?: string | null;
+    };
+    const existing = await db.getUserCloud(env, t);
+    let credential: string | null;
+    if (body.credential === undefined || body.credential === "") {
+      credential = existing?.credential ?? null;
+    } else if (body.credential === null) {
+      credential = null;
+    } else {
+      credential = await encryptSecret(body.credential, env.AUTH_SECRET);
+    }
+    const provider = body.provider ?? existing?.provider ?? "mega";
+    const path = body.path ?? existing?.path ?? "";
+    await db.upsertUserCloud(env, {
+      user_id: t,
+      provider,
+      path,
+      credential,
+      updated_at: Date.now(),
+    });
+    return json({ provider, path, hasCredential: !!credential });
+  }
+
+  // POST /api/cloud/connect — hand back the DECRYPTED credential so the browser
+  // can log in to the provider (megajs runs in the browser, never the Worker).
+  // Access-token gated; 404 when nothing is stored.
+  if (p === "/api/cloud/connect" && m === "POST") {
+    const row = await db.getUserCloud(env, t);
+    if (!row?.credential) return err(404, "no stored credential");
+    const credential = await decryptSecret(row.credential, env.AUTH_SECRET);
+    return json({ provider: row.provider, path: row.path, credential });
   }
 
   // GET /api/catalog/:id/info

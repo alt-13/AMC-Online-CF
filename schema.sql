@@ -141,6 +141,23 @@ CREATE TABLE IF NOT EXISTS movie_extras (
 );
 CREATE INDEX IF NOT EXISTS idx_extras_movie ON movie_extras (movie_id);
 
+-- Per-user cloud-sync config: which provider, where the .amc lives, and an
+-- OPTIONAL credential encrypted at rest. provider + path are not secrets. The
+-- credential is AES-256-GCM (WebCrypto HKDF off AUTH_SECRET, see worker/crypto.ts)
+-- — never plaintext — mirroring how the pm project stores SMTP passwords.
+--
+-- Self-hosting model: each deployment is ONE person's own Cloudflare account, so
+-- the AUTH_SECRET holder and the cloud-account owner are the same party. This
+-- keeps the credential out of D1 dumps/consoles; it is not a defense against the
+-- operator (who is the user). One row per user.
+CREATE TABLE IF NOT EXISTS user_cloud (
+  user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  provider   TEXT NOT NULL DEFAULT 'mega',   -- 'mega' (drive/dropbox/s3 later)
+  path       TEXT NOT NULL DEFAULT '',       -- e.g. /Backups/movies.amc
+  credential TEXT,                            -- base64(iv‖AES-GCM ct), NULL if none
+  updated_at INTEGER NOT NULL
+);
+
 -- Full-text search over the fields people actually search. Populate on import
 -- and keep in sync on edit; optional but cheap and keeps search off the hot path.
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5 (

@@ -153,3 +153,43 @@ export const cf = {
     return URL.createObjectURL(await res.blob());
   },
 };
+
+// --- cloud sync config -----------------------------------------------------
+//
+// Per-user provider + .amc path + an OPTIONAL credential encrypted at rest by
+// the Worker (see worker/crypto.ts). `get` never returns the secret — only a
+// `hasCredential` flag; `connect` is the explicit call that hands the decrypted
+// credential back so the browser can log in to the provider.
+
+export interface CloudConfig {
+  provider: string;
+  path: string;
+  hasCredential: boolean;
+}
+
+export const cloud = {
+  get: () => jget<CloudConfig>("/api/cloud"),
+
+  /** Save provider/path and, optionally, the credential:
+   *  omit / "" = keep stored, `null` = forget it, a string = encrypt + store. */
+  save: async (patch: {
+    provider?: string;
+    path?: string;
+    credential?: string | null;
+  }): Promise<CloudConfig> => {
+    const res = await fetch("/api/cloud", {
+      method: "PUT",
+      headers: headers({ "content-type": "application/json" }),
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`save cloud config -> ${res.status}`);
+    return res.json() as Promise<CloudConfig>;
+  },
+
+  /** Fetch the DECRYPTED credential (provider-specific JSON) to log in with. */
+  connect: async (): Promise<{ provider: string; path: string; credential: string }> => {
+    const res = await fetch("/api/cloud/connect", { method: "POST", headers: headers() });
+    if (!res.ok) throw new Error(`cloud connect -> ${res.status}`);
+    return res.json() as Promise<{ provider: string; path: string; credential: string }>;
+  },
+};
