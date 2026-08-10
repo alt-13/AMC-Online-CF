@@ -19,8 +19,135 @@ import type {
 } from "./types";
 import { HEADER_LEN, HEADERS } from "./types";
 
-const td = new TextDecoder("utf-8"); // non-fatal: never throws on bad bytes
 const te = new TextEncoder();
+// Strict decoder: throws on any byte that isn't well-formed UTF-8, so we can tell
+// clean strings apart from legacy ANSI ones and only pay for escaping when needed.
+const tdStrict = new TextDecoder("utf-8", { fatal: true });
+
+// ---------------------------------------------------------------------------
+// String codec — byte-exact for BOTH UTF-8 and legacy non-UTF-8 (ANSI) strings
+// ---------------------------------------------------------------------------
+// Strings written by the Delphi/desktop app are Windows-1252 (ANSI) bytes, not
+// UTF-8; a plain TextDecoder("utf-8") replaces every bad byte with U+FFFD, which
+// would corrupt those catalogs on export. We mirror the Python backend's
+// `bytes.decode("utf-8", errors="surrogateescape")`: valid UTF-8 decodes normally,
+// and any byte that isn't well-formed UTF-8 is preserved as a lone low surrogate
+// U+DC80..U+DCFF. encodeAmcString reverses it exactly, so a parse → serialize
+// round-trip is byte-identical no matter the original encoding.
+
+const SURROGATE_BASE = 0xdc00; // byte b (>=0x80) escapes to U+DC00 | b
+
+/** Decode a Pascal string's bytes, preserving non-UTF-8 bytes losslessly. */
+export function decodeAmcString(bytes: Uint8Array): string {
+  try {
+    return tdStrict.decode(bytes); // fast path: clean UTF-8 / ASCII
+  } catch {
+    return decodeSurrogateEscape(bytes);
+  }
+}
+
+/** Re-encode a string produced by decodeAmcString back to its exact bytes. */
+export function encodeAmcString(s: string): Uint8Array {
+  // Fast path: no escaped bytes means it's ordinary text — let TextEncoder do it.
+  let hasEscape = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xdc80 && c <= 0xdcff) {
+      hasEscape = true;
+      break;
+    }
+  }
+  if (!hasEscape) return te.encode(s);
+
+  const out: number[] = [];
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!;
+    if (cp >= 0xdc80 && cp <= 0xdcff) {
+      out.push(cp & 0xff); // a surrogate-escaped raw byte
+    } else {
+      const b = te.encode(ch);
+      for (let i = 0; i < b.length; i++) out.push(b[i]);
+    }
+  }
+  return new Uint8Array(out);
+}
+
+/**
+ * UTF-8 decode with Python-style surrogateescape: each byte belonging to an
+ * ill-formed "maximal subpart" (Unicode Table 3-7) becomes U+DC00|byte instead
+ * of U+FFFD, so the bytes survive a round-trip. Only invoked once a strict decode
+ * has already failed.
+ */
+function decodeSurrogateEscape(bytes: Uint8Array): string {
+  let out = "";
+  let i = 0;
+  const n = bytes.length;
+  const escape = (b: number): string => String.fromCharCode(SURROGATE_BASE | b);
+
+  while (i < n) {
+    const b0 = bytes[i];
+    if (b0 <= 0x7f) {
+      out += String.fromCharCode(b0);
+      i += 1;
+      continue;
+    }
+
+    // Expected sequence length + the valid range of the FIRST continuation byte
+    // (the second byte's range varies by lead; the rest are always 0x80..0xBF).
+    let len = 0;
+    let lo = 0x80;
+    let hi = 0xbf;
+    if (b0 >= 0xc2 && b0 <= 0xdf) len = 2;
+    else if (b0 === 0xe0) (len = 3), (lo = 0xa0);
+    else if (b0 >= 0xe1 && b0 <= 0xec) len = 3;
+    else if (b0 === 0xed) (len = 3), (hi = 0x9f);
+    else if (b0 >= 0xee && b0 <= 0xef) len = 3;
+    else if (b0 === 0xf0) (len = 4), (lo = 0x90);
+    else if (b0 >= 0xf1 && b0 <= 0xf3) len = 4;
+    else if (b0 === 0xf4) (len = 4), (hi = 0x8f);
+    else {
+      // Invalid lead byte (0x80..0xC1, 0xF5..0xFF): escape just this one.
+      out += escape(b0);
+      i += 1;
+      continue;
+    }
+
+    // Walk continuation bytes; the first has its own [lo,hi], the rest 0x80..0xBF.
+    let k = 1;
+    let ok = true;
+    for (; k < len; k++) {
+      const b = bytes[i + k];
+      const clo = k === 1 ? lo : 0x80;
+      const chi = k === 1 ? hi : 0xbf;
+      if (b === undefined || b < clo || b > chi) {
+        ok = false;
+        break;
+      }
+    }
+
+    if (!ok) {
+      // Escape the maximal valid subpart (the k bytes matched so far, k>=1).
+      for (let j = 0; j < k; j++) out += escape(bytes[i + j]);
+      i += k;
+      continue;
+    }
+
+    // Well-formed: decode the code point.
+    let cp: number;
+    if (len === 2) cp = ((b0 & 0x1f) << 6) | (bytes[i + 1] & 0x3f);
+    else if (len === 3)
+      cp = ((b0 & 0x0f) << 12) | ((bytes[i + 1] & 0x3f) << 6) | (bytes[i + 2] & 0x3f);
+    else
+      cp =
+        ((b0 & 0x07) << 18) |
+        ((bytes[i + 1] & 0x3f) << 12) |
+        ((bytes[i + 2] & 0x3f) << 6) |
+        (bytes[i + 3] & 0x3f);
+    out += String.fromCodePoint(cp);
+    i += len;
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Low-level reader (mirrors Delphi ReadString / ReadInteger / ReadBoolean)
@@ -75,7 +202,7 @@ class ByteReader {
     this.need(n, "string data");
     const slice = this.data.subarray(this.pos, this.pos + n);
     this.pos += n;
-    return td.decode(slice);
+    return decodeAmcString(slice);
   }
 
   /** Pascal length-prefixed raw block (embedded JPEG) — no decode. */
@@ -127,7 +254,7 @@ class ByteWriter {
   }
 
   str(s: string): void {
-    const b = te.encode(s);
+    const b = encodeAmcString(s);
     this.u32(b.length);
     this.push(b);
   }
@@ -487,11 +614,11 @@ export function serializeCatalog(catalog: AMCCatalog): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
-// Round-trip caveat
+// Round-trip note (resolved)
 // ---------------------------------------------------------------------------
-// Python's parser uses errors="surrogateescape" to round-trip strings that are
-// not valid UTF-8. JS has no direct equivalent; TextDecoder("utf-8") replaces
-// invalid sequences with U+FFFD, so a re-serialize of a non-UTF-8 string would
-// not be byte-identical. In practice .amc strings are UTF-8 (or plain ASCII).
-// If a corpus turns up Latin-1 catalogs, swap the string codec to a byte-exact
-// scheme (store originals as bytes, decode lazily for display).
+// Legacy catalogs from the Delphi app store strings as Windows-1252 (ANSI), not
+// UTF-8. decodeAmcString/encodeAmcString above mirror Python's
+// errors="surrogateescape": clean UTF-8 decodes normally, non-UTF-8 bytes are
+// preserved as lone low surrogates (U+DC80..U+DCFF) and re-emitted verbatim, so
+// parse → serialize is byte-identical regardless of the source encoding. See the
+// legacy-ANSI cases in parser.test.ts.

@@ -258,7 +258,9 @@ Two things to settle before shipping it:
 - **Scripts / IFS transpiler, settings, Syncthing/Mega sync.** Out of scope for
   the core "upload → edit → export" loop; export-to-cloud-storage can hang off
   `browser/export.ts` (write the Blob to Drive/Mega/S3 instead of downloading).
-- **Non-UTF-8 strings.** The Python parser uses `surrogateescape` to round-trip
-  Windows-1252 bytes. `TextDecoder("utf-8")` is lossy on those; the fixture is
-  clean UTF-8. If real files carry ANSI text, add a latin-1 decode path mirroring
-  `_s()` in `movies.py` before this ships against legacy catalogs.
+- **Non-UTF-8 (legacy ANSI) strings — done.** `decodeAmcString`/`encodeAmcString`
+  in `parser.ts` mirror Python's `errors="surrogateescape"`: clean UTF-8 decodes
+  normally, non-UTF-8 bytes survive as lone low surrogates (U+DC80..U+DCFF) and are
+  re-emitted verbatim, so a Windows-1252 catalog round-trips byte-for-byte. The
+  maximal-subpart logic (Unicode Table 3-7) is verified against a CPython oracle in
+  `amc/parser.test.ts`.
