@@ -1,6 +1,9 @@
 {
   // AMC Online — Cloudflare Worker (cf-port)
   //
+  // First time?  cd cf && ./setup.sh   — provisions everything below, prompts
+  //   for the secrets, and deploys. The manual steps here are the fallback.
+  //
   // Deploy:  cd cf && npx wrangler deploy
   // Local:   cd cf && npx wrangler dev
   //
