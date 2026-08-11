@@ -121,6 +121,23 @@ async function jget<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Re-encode any browser-decodable image blob to JPEG bytes via a canvas.
+ *  A passthrough for images already JPEG would still need decoding to strip
+ *  odd color profiles, so we always round-trip through the canvas. */
+async function toJpeg(blob: Blob, quality = 0.9): Promise<Uint8Array> {
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas 2d context unavailable");
+    ctx.drawImage(bitmap, 0, 0);
+    const out = await canvas.convertToBlob({ type: "image/jpeg", quality });
+    return new Uint8Array(await out.arrayBuffer());
+  } finally {
+    bitmap.close();
+  }
+}
+
 // --- catalog + movie metadata ----------------------------------------------
 
 export interface CatalogInfo extends CatalogRow {
@@ -155,6 +172,41 @@ export const cf = {
     if (!res.ok && res.status !== 204) throw new Error(`delete movie -> ${res.status}`);
   },
 
+  /** Create a movie in a catalog. The Worker assigns the next on-disk number;
+   *  pass any editable columns to prefill (e.g. an OMDb patch). */
+  createMovie: async (catalogId: string, patch: Partial<MovieRow> = {}): Promise<MovieRow> => {
+    const res = await fetch(`/api/catalog/${encodeURIComponent(catalogId)}/movies`, {
+      method: "POST",
+      headers: headers({ "content-type": "application/json" }),
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`create movie -> ${res.status}`);
+    return res.json() as Promise<MovieRow>;
+  },
+
+  /**
+   * Set a movie's poster from an image URL. The heavy lifting stays in the
+   * browser (consistent with import/export): the Worker only proxies the fetch
+   * to dodge the IMDb CDN's missing CORS headers, then a canvas re-encodes the
+   * image to JPEG (the format .amc embeds) before it's stored in R2.
+   */
+  setPictureFromUrl: async (movie: MovieRow, imageUrl: string): Promise<MovieRow> => {
+    const proxied = await fetch(`/api/proxy-image?url=${encodeURIComponent(imageUrl)}`, {
+      headers: headers(),
+    });
+    if (!proxied.ok) throw new Error(`fetch image -> ${proxied.status}`);
+    const jpeg = await toJpeg(await proxied.blob());
+
+    const key = movie.poster_key ?? `${_tenantId}/${movie.catalog_id}/${movie.id}.jpg`;
+    const put = await fetch("/api/import/poster", {
+      method: "PUT",
+      headers: headers({ "x-poster-key": key, "content-type": "application/octet-stream" }),
+      body: jpeg,
+    });
+    if (!put.ok) throw new Error(`store poster -> ${put.status}`);
+    return cf.updateMovie(movie.id, { poster_key: key, pic_path: ".jpg" });
+  },
+
   // NOTE: /api/poster is Bearer-gated, so a bare <img src="/api/poster?..."> will
   // 401 — an <img> can't send an Authorization header. Use posterObjectUrl() to
   // fetch the bytes with the session header and bind the returned object URL to
@@ -165,6 +217,52 @@ export const cf = {
     const res = await fetch(`/api/poster?key=${encodeURIComponent(key)}`, { headers: headers() });
     if (!res.ok) throw new Error(`poster -> ${res.status}`);
     return URL.createObjectURL(await res.blob());
+  },
+};
+
+// --- OMDb / IMDb lookup ----------------------------------------------------
+//
+// The only metadata source kept for the POC. `search` returns pick-list rows;
+// `fetch` returns a { patch, poster_url } — apply `patch` to the movie via
+// updateMovie, then hand `poster_url` to setPictureFromUrl for the artwork.
+
+export interface OmdbSuggestion {
+  label: string;
+  tt: string;
+  url: string;
+}
+
+export interface OmdbResult {
+  patch: Partial<MovieRow>;
+  poster_url: string;
+}
+
+export const omdb = {
+  search: (query: string) =>
+    jget<OmdbSuggestion[]>(`/api/omdb/search?q=${encodeURIComponent(query)}`),
+
+  fetch: (ttOrUrl: string) =>
+    jget<OmdbResult>(`/api/omdb/fetch?i=${encodeURIComponent(ttOrUrl)}`),
+};
+
+// --- app settings (field visibility + search field) ------------------------
+
+export interface AppSettings {
+  field_visibility: { desktop: Record<string, boolean>; mobile: Record<string, boolean> };
+  search_field: string;
+}
+
+export const settings = {
+  get: () => jget<AppSettings>("/api/settings"),
+
+  save: async (s: AppSettings): Promise<AppSettings> => {
+    const res = await fetch("/api/settings", {
+      method: "PUT",
+      headers: headers({ "content-type": "application/json" }),
+      body: JSON.stringify(s),
+    });
+    if (!res.ok) throw new Error(`save settings -> ${res.status}`);
+    return res.json() as Promise<AppSettings>;
   },
 };
 

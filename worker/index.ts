@@ -16,6 +16,8 @@ import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../a
 import * as db from "./db";
 import * as auth from "./auth";
 import { encryptSecret, decryptSecret } from "./crypto";
+import { searchImdb, fetchOmdb, extractTt } from "./omdb";
+import { newMovieRow } from "./movie-new";
 
 type ExtraRow = ImportResult["extras"][number];
 
@@ -170,6 +172,87 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     if (!row?.credential) return err(404, "no stored credential");
     const credential = await decryptSecret(row.credential, env.AUTH_SECRET);
     return json({ provider: row.provider, path: row.path, credential });
+  }
+
+  // ---- app settings (field visibility + search field) --------------------
+  // Stored as one opaque JSON blob per user, exactly like pm's settings.json.
+  const DEFAULT_SETTINGS = { field_visibility: { desktop: {}, mobile: {} }, search_field: "" };
+  if (p === "/api/settings" && m === "GET") {
+    const raw = await db.getUserSettings(env, t);
+    if (!raw) return json(DEFAULT_SETTINGS);
+    try {
+      return json({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) });
+    } catch {
+      return json(DEFAULT_SETTINGS);
+    }
+  }
+  if (p === "/api/settings" && m === "PUT") {
+    const body = await req.json();
+    await db.upsertUserSettings(env, t, JSON.stringify(body), Date.now());
+    return json(body);
+  }
+
+  // ---- OMDb / IMDb lookup (the only metadata source kept for the POC) ------
+  // Search needs no key; fetch needs env.OMDB_API_KEY. Both run as plain
+  // fetch() in the Worker — no script runner, no transpiler.
+  if (p === "/api/omdb/search" && m === "GET") {
+    const q = url.searchParams.get("q");
+    if (!q) return err(400, "missing q");
+    return json(await searchImdb(q));
+  }
+  if (p === "/api/omdb/fetch" && m === "GET") {
+    const arg = url.searchParams.get("i") ?? "";
+    const tt = extractTt(arg);
+    if (!tt) return err(400, "missing or invalid tt-id");
+    if (!env.OMDB_API_KEY) return err(503, "OMDb API key not configured (set OMDB_API_KEY)");
+    try {
+      return json(await fetchOmdb(tt, env.OMDB_API_KEY));
+    } catch (e) {
+      return err(502, e instanceof Error ? e.message : "OMDb fetch failed");
+    }
+  }
+
+  // GET /api/proxy-image?url=  — server-side image fetch so the browser can
+  // re-encode a poster it otherwise can't read (IMDb CDN sends no CORS headers).
+  // The browser canvas does the JPEG normalisation; the Worker is a dumb proxy.
+  if (p === "/api/proxy-image" && m === "GET") {
+    const src = url.searchParams.get("url") ?? "";
+    let target: URL;
+    try {
+      target = new URL(src);
+    } catch {
+      return err(400, "invalid url");
+    }
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      return err(400, "only http(s) urls allowed");
+    }
+    const up = await fetch(target.toString(), {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: "https://www.imdb.com/",
+      },
+    });
+    if (!up.ok) return err(502, `image fetch failed (${up.status})`);
+    return new Response(up.body, {
+      headers: {
+        "content-type": up.headers.get("content-type") || "image/jpeg",
+        "cache-control": "private, max-age=3600",
+      },
+    });
+  }
+
+  // POST /api/catalog/:id/movies  — create a blank/patched movie, next number.
+  if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "movies" && m === "POST") {
+    const cat = await db.getCatalog(env, t, seg[2]);
+    if (!cat) return err(404, "catalog not found");
+    const patch = (await req.json().catch(() => ({}))) as Partial<MovieRow>;
+    const num = await db.nextMovieNumber(env, cat.id);
+    const row = newMovieRow(crypto.randomUUID(), cat.id, num, patch, Date.now());
+    await db.insertMovies(env, [row]);
+    await db.touchCatalog(env, cat.id, Date.now());
+    return json(row, 201);
   }
 
   // GET /api/catalog/:id/info

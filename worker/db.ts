@@ -19,6 +19,9 @@ export interface Env {
   ASSETS: Fetcher;
   /** HS256 / PBKDF2 secret. Set with: wrangler secret put AUTH_SECRET */
   AUTH_SECRET: string;
+  /** OMDb API key for the movie-lookup feature. Optional; set with:
+   *  wrangler secret put OMDB_API_KEY  (get a free key at omdbapi.com). */
+  OMDB_API_KEY?: string;
 }
 
 // --- users -----------------------------------------------------------------
@@ -83,6 +86,30 @@ export async function upsertUserCloud(env: Env, row: UserCloudRow): Promise<void
        updated_at = excluded.updated_at`,
   )
     .bind(row.user_id, row.provider, row.path, row.credential, row.updated_at)
+    .run();
+}
+
+// --- user settings ---------------------------------------------------------
+
+/** Raw settings JSON for a user, or null if they've never saved any. */
+export async function getUserSettings(env: Env, userId: string): Promise<string | null> {
+  const row = await env.DB.prepare(`SELECT data FROM user_settings WHERE user_id = ?`)
+    .bind(userId)
+    .first<{ data: string }>();
+  return row?.data ?? null;
+}
+
+export async function upsertUserSettings(
+  env: Env,
+  userId: string,
+  data: string,
+  now: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_id, data, updated_at) VALUES (?,?,?)
+     ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+  )
+    .bind(userId, data, now)
     .run();
 }
 
@@ -205,6 +232,15 @@ export async function insertExtras(env: Env, extras: ExtraRow[]): Promise<void> 
       ),
     ),
   );
+}
+
+/** The next free on-disk `number` for a catalog (MAX + 1, or 1 when empty).
+ *  Guarantees the UNIQUE(catalog_id, number) constraint holds for a new row. */
+export async function nextMovieNumber(env: Env, catalogId: string): Promise<number> {
+  const row = await env.DB.prepare(`SELECT MAX(number) AS mx FROM movies WHERE catalog_id = ?`)
+    .bind(catalogId)
+    .first<{ mx: number | null }>();
+  return (row?.mx ?? 0) + 1;
 }
 
 export async function listMovies(env: Env, catalogId: string): Promise<MovieRow[]> {

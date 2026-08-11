@@ -158,6 +158,16 @@ CREATE TABLE IF NOT EXISTS user_cloud (
   updated_at INTEGER NOT NULL
 );
 
+-- Per-user app settings (field visibility per surface + the search field).
+-- Stored as one opaque JSON blob, mirroring the pm project's settings.json:
+--   { "field_visibility": { "desktop": {col:bool}, "mobile": {col:bool} },
+--     "search_field": "" }        -- "" = all, a column name, or "custom:TAG"
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  data       TEXT NOT NULL DEFAULT '{}',
+  updated_at INTEGER NOT NULL
+);
+
 -- Full-text search over the fields people actually search. Populate on import
 -- and keep in sync on edit; optional but cheap and keeps search off the hot path.
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5 (

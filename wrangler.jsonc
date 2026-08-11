@@ -9,6 +9,11 @@
   //   npx wrangler r2 bucket create amc-posters
   //   npx wrangler d1 execute amc --remote --file=schema.sql
   // then paste the printed database_id below.
+  //
+  // Secrets (not in this file):
+  //   npx wrangler secret put AUTH_SECRET     (required — JWT/PBKDF2 key)
+  //   npx wrangler secret put OMDB_API_KEY    (optional — enables movie lookup;
+  //                                            free key at omdbapi.com/apikey.aspx)
   "name": "amc-online",
   "main": "worker/index.ts",
   "compatibility_date": "2025-01-01",

@@ -257,13 +257,31 @@ Two things to settle before shipping it:
 
 ## Still to port (not blocking the data path)
 
-- **Movie create / renumber.** The `_stored_number` series-remapping logic in
-  `movies.py` isn't ported yet; import/edit/export of existing movies is.
-- **Picture-from-URL & JPEG normalisation.** `_to_jpeg` used Pillow; in the
-  browser use a `<canvas>`, or accept non-JPEG and convert client-side.
-- **Scripts / IFS transpiler, settings, Syncthing/Mega sync.** Out of scope for
-  the core "upload → edit → export" loop; export-to-cloud-storage can hang off
-  `browser/export.ts` (write the Blob to Drive/Mega/S3 instead of downloading).
+- **Movie create / renumber — done.** `POST /api/catalog/:id/movies` assigns the
+  next on-disk `number` (`db.nextMovieNumber`) and fills schema defaults
+  (`worker/movie-new.ts`). The Delphi `_stored_number` split is gone by
+  construction: the CF schema already separates identity (`id`, uuid PK) from the
+  on-disk `number`, so there is nothing to remap.
+- **Picture-from-URL & JPEG normalisation — done.** `GET /api/proxy-image` is a
+  dumb server-side fetch (IMDb `Referer` + Chrome UA) that dodges the CDN's
+  missing CORS headers; the browser then re-encodes to JPEG via an
+  `OffscreenCanvas` (`cf.setPictureFromUrl` in `frontend/api.ts`) before the
+  bytes land in R2 — image work stays in the browser, like import/export.
+- **OMDb / IMDb lookup — done (the only metadata source kept for the POC).**
+  `GET /api/omdb/search` (IMDb suggestion API, no key) and `GET /api/omdb/fetch`
+  (omdbapi.com, needs `OMDB_API_KEY`) run as plain `fetch()` in the Worker —
+  `worker/omdb.ts`, field mapping unit-tested in `omdb.test.ts`. Fetch returns
+  `{ patch, poster_url }`: apply the patch via `updateMovie`, then feed
+  `poster_url` to `setPictureFromUrl`.
+- **Field-visibility settings — done.** `GET`/`PUT /api/settings` persist one
+  opaque JSON blob per user (`user_settings` table) — `{ field_visibility:
+  { desktop, mobile }, search_field }` — mirroring pm's `settings.json`.
+- **`.ifs` web-scraping scripts — dropped, not ported.** The WebSocket runner +
+  IFS transpiler + Python subprocess machinery is out of scope; OMDb above
+  replaces it as a native lookup. (The `excluded_in_scripts` *data* column stays
+  — it's part of the on-disk custom-field format, unrelated to the runner.)
+- **Cloud sync (Mega).** See `MegaSync.vue` / `browser/mega.ts` — export-to-cloud
+  hangs off `browser/export.ts` (write the Blob to Mega instead of downloading).
 - **Non-UTF-8 (legacy ANSI) strings — done.** `decodeAmcString`/`encodeAmcString`
   in `parser.ts` mirror Python's `errors="surrogateescape"`: clean UTF-8 decodes
   normally, non-UTF-8 bytes survive as lone low surrogates (U+DC80..U+DCFF) and are
