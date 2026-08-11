@@ -42,15 +42,24 @@ touches at most a handful of D1 rows and one poster — so 128 MB is never in pl
 | `amc/parser.ts` | browser | `parseCatalog` / `serializeCatalog` — dependency-free, byte-exact |
 | `amc/mapping.ts` | shared | `catalogToRows` (import) / `rowsToCatalog` (export); the poster→R2 split |
 | `amc/index.ts` | — | barrel exports |
-| `schema.sql` | D1 | tables: `users`, `catalogs`, `custom_field_defs`, `movies`, `movie_extras`, `movies_fts` |
-| `worker/index.ts` | Worker | `/api/*` router: auth + CRUD + import commit + export bundle + poster stream |
+| `schema.sql` | D1 | tables: `users`, `catalogs`, `custom_field_defs`, `movies`, `movie_extras`, `movies_fts`, `user_cloud`, `user_settings` |
+| `worker/index.ts` | Worker | `/api/*` router: auth + CRUD + create + import commit + export bundle + poster stream + cloud + omdb + settings + proxy-image |
 | `worker/auth.ts` | Worker | WebCrypto PBKDF2 password hashing + HS256 JWT + refresh cookie |
+| `worker/crypto.ts` | Worker | AES-256-GCM encrypt/decrypt for saved cloud credentials (HKDF key off `AUTH_SECRET`) |
+| `worker/omdb.ts` | Worker | native IMDb-suggest search + omdbapi.com fetch (needs `OMDB_API_KEY`); pure parsers unit-tested |
+| `worker/movie-new.ts` | Worker | `newMovieRow` — build a full movie row (schema defaults + patch) for next-number create |
 | `worker/db.ts` | Worker | prepared-statement D1 helpers |
 | `browser/import.ts` | browser | `importAmcFile(file, opts)` — parse, upload posters, chunked row commit |
 | `browser/export.ts` | browser | `exportAmcFile` / `downloadAmcFile` — fetch bundle, rebuild, download |
-| `frontend/api.ts` | browser | auth (register/login/refresh/logout) + session + metadata client + re-exports import/export |
+| `frontend/api.ts` | browser | auth + session + metadata client (incl. create/setPictureFromUrl) + omdb + settings + cloud + re-exports import/export |
+| `frontend/fields.ts` | browser | shared field metadata (sections, labels, Delphi-date + colour-tag + custom-value helpers) — no store |
 | `frontend/CatalogImport.vue` | browser | drag/drop upload with poster+row progress; emits the new catalog id |
-| `frontend/CatalogsView.vue` | browser | top-level screen: import, list libraries, export any back to `.amc` |
+| `frontend/CatalogsView.vue` | browser | top-level screen: import, list libraries, export/→Mega, drill into a library |
+| `frontend/MovieListView.vue` | browser | poster grid for one catalog: search, create, field-settings; drill into a movie |
+| `frontend/MovieDetail.vue` | browser | edit one movie: poster (upload/URL/OMDb), every field (visibility-aware), custom fields, delete |
+| `frontend/OmdbDialog.vue` | browser | search IMDb, pick a title, fetch OMDb metadata → emit patch + poster URL |
+| `frontend/SettingsDialog.vue` | browser | per-user field visibility (desktop/mobile) + search field; persists to `user_settings` |
+| `setup.sh` | — | one-shot bootstrap: provision D1+R2, inject db id, apply schema, set secrets via stdin, deploy |
 | `wrangler.jsonc` | — | Worker config (D1 + R2 + static-asset bindings) |
 
 ## Data-model decisions
@@ -135,12 +144,31 @@ All routes except `/api/auth/*` require `Authorization: Bearer <access_token>`.
 | `GET /api/catalog/:id/info` | catalog header + defs + movie count |
 | `GET /api/catalog/:id/movies` | movie grid metadata |
 | `GET /api/catalog/:id/export` | full row bundle (poster keys, no bytes) |
+| `POST /api/catalog/:id/movies` | create a movie: next on-disk `number` + schema defaults + patch |
 | `GET /api/movies/:id` | movie detail + extras |
 | `PUT /api/movies/:id` | patch scalar movie columns |
 | `DELETE /api/movies/:id` | delete movie (+ its R2 posters) |
 | `GET /api/poster?key=` | stream a poster from R2 (tenant-scoped; fetch with the auth header, not a bare `<img src>` — see `posterObjectUrl`) |
+| `GET /api/omdb/search?q=` | IMDb title suggestions (no key) |
+| `GET /api/omdb/fetch?i=` | fetch one title's OMDb metadata → `{ patch, poster_url }` (needs `OMDB_API_KEY`; 503 if unset) |
+| `GET /api/proxy-image?url=` | server-side image fetch (IMDb `Referer` + Chrome UA) to dodge CDN CORS, for poster-from-URL |
+| `GET /api/settings` / `PUT /api/settings` | per-user field-visibility + search-field JSON blob (`user_settings`) |
 
 ## Deploy
+
+**One command on a fresh account:**
+
+```sh
+cd cf && ./setup.sh
+```
+
+`setup.sh` logs in if needed, creates the D1 database + R2 bucket, **writes the
+`database_id` into `wrangler.jsonc`**, applies `schema.sql`, sets `AUTH_SECRET`
+(random-generated on Enter) and the optional `OMDB_API_KEY` **via stdin — never
+the dashboard**, then builds the frontend and deploys. It's re-runnable (existing
+resources are detected and skipped), so it doubles as a rotate-a-secret tool.
+
+The equivalent manual steps:
 
 ```sh
 cd cf
@@ -148,10 +176,15 @@ npm install                                  # frontend + worker build deps
 npx wrangler d1 create amc                  # paste database_id into wrangler.jsonc
 npx wrangler r2 bucket create amc-posters
 npx wrangler d1 execute amc --remote --file=schema.sql
-npx wrangler secret put AUTH_SECRET          # JWT/PBKDF2 signing secret
+npx wrangler secret put AUTH_SECRET          # JWT/PBKDF2 signing secret (required)
+npx wrangler secret put OMDB_API_KEY         # optional — enables movie lookup
 npm run build                                # vite -> cf/dist (the assets binding)
 npx wrangler deploy
 ```
+
+Only `AUTH_SECRET` and `OMDB_API_KEY` are true secrets (encrypted secret store,
+set via stdin). The D1 `database_id` is not sensitive — it lives in the committed
+`wrangler.jsonc` and is useless without your account credentials.
 
 Dev: run `npx wrangler dev` (local D1 + R2 emulation, serves /api on :8787) and
 `npm run dev` (vite on :5173, proxies /api to :8787) side by side.
@@ -256,6 +289,13 @@ Two things to settle before shipping it:
    encrypted at rest (opt-in), never stored in plaintext.
 
 ## Still to port (not blocking the data path)
+
+The four "done" items below now ship with a **browser edit UI**, not just an API:
+`CatalogsView` drills into `MovieListView` (poster grid + search + create +
+field-settings) and then `MovieDetail` (per-field editor honouring the visibility
+settings, poster via upload/URL/OMDb, custom fields, delete). `OmdbDialog` and
+`SettingsDialog` back the lookup and settings. Field metadata is shared through
+`frontend/fields.ts`.
 
 - **Movie create / renumber — done.** `POST /api/catalog/:id/movies` assigns the
   next on-disk `number` (`db.nextMovieNumber`) and fills schema defaults
