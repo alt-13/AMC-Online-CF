@@ -6,7 +6,10 @@
   or drop it into App.vue for the CF deployment.
 -->
 <template>
-  <div class="catalogs">
+  <!-- drilled into one library -->
+  <MovieListView v-if="openCatalog" :catalog="openCatalog" @back="openCatalog = null" />
+
+  <div v-else class="catalogs">
     <h2 class="title">Your libraries</h2>
 
     <CatalogImport @imported="onImported" />
@@ -18,7 +21,7 @@
     </div>
 
     <ul v-else class="list">
-      <li v-for="c in catalogs" :key="c.id" class="row">
+      <li v-for="c in catalogs" :key="c.id" class="row" @click="openCatalog = c">
         <div class="info">
           <span class="name">{{ c.name || "(untitled)" }}</span>
           <span class="sub">v{{ (c.version / 10).toFixed(1) }} · updated {{ fmt(c.updated_at) }}</span>
@@ -28,14 +31,14 @@
             v-if="megaState.connected"
             class="btn ghost"
             :disabled="pushingId === c.id"
-            @click="onPush(c)"
+            @click.stop="onPush(c)"
           >
             {{ pushingId === c.id ? pushLabel : "→ Mega" }}
           </button>
           <button
             class="btn"
             :disabled="exportingId === c.id"
-            @click="onExport(c)"
+            @click.stop="onExport(c)"
           >
             {{ exportingId === c.id ? exportLabel : "Export .amc" }}
           </button>
@@ -51,10 +54,12 @@
 import { onMounted, ref } from "vue";
 import CatalogImport from "./CatalogImport.vue";
 import MegaSync from "./MegaSync.vue";
+import MovieListView from "./MovieListView.vue";
 import { cf, downloadAmcFile, session, type CatalogRow } from "./api";
 import { megaState, megaPush } from "./mega";
 
 const catalogs = ref<CatalogRow[]>([]);
+const openCatalog = ref<CatalogRow | null>(null);
 const loading = ref(true);
 const error = ref("");
 const exportingId = ref<string | null>(null);
@@ -143,7 +148,9 @@ onMounted(refresh);
   background: var(--c-card, #181828);
   border: 1px solid var(--c-border, #2a2a48);
   border-radius: var(--radius, 8px);
+  cursor: pointer;
 }
+.row:hover { border-color: var(--c-gold, #c9a84c); }
 .info { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
 .name { font-weight: 600; color: var(--c-text, #e8e0d5); }
 .sub { font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
