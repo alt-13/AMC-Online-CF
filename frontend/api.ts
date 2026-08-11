@@ -67,6 +67,20 @@ function adoptSession(r: AuthResponse): AuthResponse {
 }
 
 export const auth = {
+  /** First-run probe: true when no account exists yet, so the gate should offer
+   *  "create account" instead of "sign in". Mirrors pm's `/setup`. Fails closed
+   *  (false → show login) if the endpoint is unreachable. */
+  needsSetup: async (): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/auth/status", { credentials: "include" });
+      if (!res.ok) return false;
+      const j = (await res.json()) as { needs_setup?: boolean };
+      return j.needs_setup === true;
+    } catch {
+      return false;
+    }
+  },
+
   register: (email: string, password: string) =>
     authPost("/api/auth/register", { email, password }).then(adoptSession),
 

@@ -41,6 +41,13 @@ export async function getUserById(env: Env, id: string): Promise<UserRow | null>
   return env.DB.prepare(`SELECT * FROM users WHERE id = ?`).bind(id).first<UserRow>();
 }
 
+/** How many accounts exist. 0 means first-run: registration is open to create
+ *  the single operator account (see the pm-style bootstrap in worker/index.ts). */
+export async function countUsers(env: Env): Promise<number> {
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 export async function insertUser(env: Env, u: UserRow): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO users (id, email, email_lower, password_hash, created_at) VALUES (?,?,?,?,?)`,

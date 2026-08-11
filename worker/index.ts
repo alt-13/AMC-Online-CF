@@ -243,8 +243,17 @@ async function authRoute(
   m: string,
   nowSec: number,
 ): Promise<Response> {
+  // GET /api/auth/status  -> { needs_setup }  (public; no account yet == first run)
+  if (p === "/api/auth/status" && m === "GET") {
+    return json({ needs_setup: (await db.countUsers(env)) === 0 });
+  }
+
   // POST /api/auth/register  { email, password }
+  // pm-style bootstrap: registration is ONLY open on first run (no user yet).
+  // This is a single-operator self-host — one CF account == one user — so once
+  // that account exists the door closes and everyone else just logs in.
   if (p === "/api/auth/register" && m === "POST") {
+    if ((await db.countUsers(env)) > 0) return err(403, "registration is closed");
     const { email, password } = (await req.json()) as { email?: string; password?: string };
     if (!email || !password || password.length < 8) {
       return err(400, "email and password (min 8 chars) required");

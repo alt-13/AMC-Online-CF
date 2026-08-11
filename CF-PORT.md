@@ -73,9 +73,8 @@ single hash blows the Workers Free-plan **10 ms CPU/request** budget, so it can'
 port as-is. Two options were considered:
 
 - **Cloudflare Access** — a real auth mechanism, but it gates the app behind a
-  Zero-Trust org + identity provider *you* administer. Right for a private,
-  single-operator deploy; wrong for the stated goal of a generic app strangers
-  can self-serve sign up to.
+  Zero-Trust org + identity provider *you* administer. Overkill for a generic app
+  each person deploys to their own Cloudflare account.
 - **WebCrypto** (what `root/pm` ships, and what we use): PBKDF2-SHA256 runs in
   native code and HMAC (for JWTs) is microseconds — both comfortably under
   budget without dropping to an insecure round count.
@@ -96,8 +95,14 @@ Implementation (`worker/auth.ts`):
 
 Every `/api/*` route except `/api/auth/*` requires a valid Bearer access token;
 the resolved `sub` replaces the old `x-tenant-id` header. The single-operator
-**trusted-IP bypass** from the Unraid app is intentionally dropped — a shared
-multi-tenant deploy can't blanket-trust an IP.
+**trusted-IP bypass** from the Unraid app is intentionally dropped.
+
+**Bootstrap (pm-style).** Registration is *first-run only*: `POST /api/auth/register`
+succeeds while the `users` table is empty and returns **403** afterwards. Each
+person self-hosts on their own Cloudflare account, so one deploy == one operator ==
+one account. `GET /api/auth/status` reports `{ needs_setup }` so the browser gate
+shows "create account" on first run and "sign in" forever after. Cloud credentials
+are linked to that account via the `user_cloud` table.
 
 Set the signing secret before first deploy: `wrangler secret put AUTH_SECRET`.
 
@@ -118,7 +123,8 @@ All routes except `/api/auth/*` require `Authorization: Bearer <access_token>`.
 
 | Method & path | Purpose |
 |---|---|
-| `POST /api/auth/register` | create account, return access token + set refresh cookie |
+| `GET /api/auth/status` | `{ needs_setup }` — true only on first run (no account yet) |
+| `POST /api/auth/register` | first-run only: create the account, return access token + set refresh cookie (403 once one exists) |
 | `POST /api/auth/login` | verify credentials, return access token + set refresh cookie |
 | `POST /api/auth/refresh` | swap refresh cookie for a fresh access token |
 | `POST /api/auth/logout` | clear the refresh cookie |
