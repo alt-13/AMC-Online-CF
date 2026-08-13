@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS catalogs (
   cfp_gui_properties  TEXT NOT NULL DEFAULT '',  -- v4.0+ header blob (opaque)
   -- Stable origin key for cloud pulls (e.g. "mega:<folder>:<file>.amc"). NULL for
   -- direct file uploads. Lets re-pulling the same .amc replace its catalog instead
-  -- of piling up duplicates. Existing DBs: ALTER TABLE catalogs ADD COLUMN source_ref TEXT;
+  -- of piling up duplicates.
   source_ref          TEXT,
   created_at          INTEGER NOT NULL,          -- epoch ms
   updated_at          INTEGER NOT NULL
