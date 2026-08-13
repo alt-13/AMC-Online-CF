@@ -23,9 +23,21 @@ export function setSession(tenantId: string, authHeader?: string): void {
   _authHeader = authHeader;
 }
 
-/** Options object the import/export helpers expect. */
-export function session(): { tenantId: string; authHeader?: string } {
-  return { tenantId: _tenantId, authHeader: _authHeader };
+/**
+ * Options object the import/export helpers expect.
+ *
+ * `fetcher` matters: import/export are the two LONG flows (one request per
+ * poster), so they can easily outlive the ~1h access token. Handing them the
+ * live `authedFetch` — rather than only the token string, which would be frozen
+ * at call time — means each of their requests reads the current token and
+ * transparently refreshes on a 401 instead of failing halfway through.
+ */
+export function session(): {
+  tenantId: string;
+  authHeader?: string;
+  fetcher: AuthedFetch;
+} {
+  return { tenantId: _tenantId, authHeader: _authHeader, fetcher: authedFetch };
 }
 
 // --- auth ------------------------------------------------------------------
@@ -119,6 +131,13 @@ function headers(extra: Record<string, string> = {}): HeadersInit {
 // refresh cookie for a fresh token (once, deduped across concurrent calls) and
 // retry, so a tab left open past the TTL keeps working instead of erroring out.
 let refreshing: Promise<boolean> | null = null;
+
+/** fetch() that adds the current auth headers and retries once after a refresh. */
+export type AuthedFetch = (
+  path: string,
+  init?: RequestInit,
+  extra?: Record<string, string>,
+) => Promise<Response>;
 
 async function authedFetch(path: string, init: RequestInit = {}, extra: Record<string, string> = {}): Promise<Response> {
   const send = () => fetch(path, { ...init, headers: headers(extra) });

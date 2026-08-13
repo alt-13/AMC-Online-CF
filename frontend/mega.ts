@@ -210,10 +210,18 @@ export async function megaPull(
   return importAmcFile(blob, { ...session(), onProgress, sourceRef: megaSourceRef(node) });
 }
 
-/** Stable "same file" key for a Mega node: `mega:<parentFolderHandle>:<name>`. */
-function megaSourceRef(node: MegaFile): string {
-  const parent = (node as unknown as { parent?: { nodeId?: string } }).parent?.nodeId ?? "";
-  return `mega:${parent}:${node.name ?? ""}`;
+/**
+ * Stable "same file" key for a Mega node: `mega:<parentFolderHandle>:<name>`.
+ *
+ * Returns null when either part is missing. That matters: the key decides which
+ * catalogs a re-pull DELETES, and a partial key like `mega::movies.amc` would
+ * collide across every same-named .amc in different folders — superseding the
+ * wrong library. Failing to null just leaves a duplicate, which is recoverable.
+ */
+function megaSourceRef(node: MegaFile): string | null {
+  const parent = node.parent?.nodeId;
+  const name = node.name;
+  return parent && name ? `mega:${parent}:${name}` : null;
 }
 
 /**

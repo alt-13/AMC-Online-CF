@@ -8,10 +8,24 @@ import { serializeCatalog } from "../amc/parser";
 import { rowsToCatalog } from "../amc/mapping";
 import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../amc/mapping";
 
+/** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
+export type AuthedFetch = (
+  path: string,
+  init?: RequestInit,
+  extra?: Record<string, string>,
+) => Promise<Response>;
+
 export interface ExportOptions {
   tenantId: string;
   authHeader?: string;
   onProgress?: (done: number, total: number) => void;
+  /**
+   * Request function to use. Export fetches one poster per movie, so a big
+   * catalog can run past the access-token TTL; the app passes its `authedFetch`,
+   * which reads the CURRENT token per request and refreshes on a 401. Falls back
+   * to plain fetch with the (frozen) `authHeader` for tests/standalone use.
+   */
+  fetcher?: AuthedFetch;
 }
 
 type ExtraRow = ImportResult["extras"][number];
@@ -28,11 +42,15 @@ function headers(o: ExportOptions): HeadersInit {
                       : { "x-tenant-id": o.tenantId };
 }
 
+/** The caller's authed fetch, or a plain-fetch fallback using `authHeader`. */
+function requester(o: ExportOptions): AuthedFetch {
+  return o.fetcher ?? ((path, init = {}) => fetch(path, { ...init, headers: headers(o) }));
+}
+
 /** Rebuild an .amc file for `catalogId` and return it as a Blob for download. */
 export async function exportAmcFile(catalogId: string, opts: ExportOptions): Promise<Blob> {
-  const res = await fetch(`/api/catalog/${encodeURIComponent(catalogId)}/export`, {
-    headers: headers(opts),
-  });
+  const send = requester(opts);
+  const res = await send(`/api/catalog/${encodeURIComponent(catalogId)}/export`);
   if (!res.ok) throw new Error(`export bundle fetch failed (${res.status})`);
   const bundle = (await res.json()) as ExportBundle;
 
@@ -53,7 +71,7 @@ export async function exportAmcFile(catalogId: string, opts: ExportOptions): Pro
   const getPoster = async (key: string): Promise<Uint8Array> => {
     const cached = posterCache.get(key);
     if (cached) return cached;
-    const r = await fetch(`/api/poster?key=${encodeURIComponent(key)}`, { headers: headers(opts) });
+    const r = await send(`/api/poster?key=${encodeURIComponent(key)}`);
     if (!r.ok) throw new Error(`poster fetch failed (${r.status}) for ${key}`);
     const bytes = new Uint8Array(await r.arrayBuffer());
     posterCache.set(key, bytes);
