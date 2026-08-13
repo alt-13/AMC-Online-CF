@@ -42,7 +42,7 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
       const res = await fetch("/api/import/poster", {
         method: "PUT",
         headers: headers(opts, { "x-poster-key": key, "content-type": "application/octet-stream" }),
-        body: data,
+        body: data as BodyInit,
       });
       if (!res.ok) throw new Error(`poster upload failed (${res.status}) for ${key}`);
       opts.onProgress?.(++posterCount, catalog.movies.length, "posters");

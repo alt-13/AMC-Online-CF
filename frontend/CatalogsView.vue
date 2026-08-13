@@ -42,6 +42,13 @@
           >
             {{ exportingId === c.id ? exportLabel : "Export .amc" }}
           </button>
+          <button
+            class="btn ghost danger"
+            :disabled="deletingId === c.id"
+            @click.stop="onDelete(c)"
+          >
+            {{ deletingId === c.id ? "Deleting…" : "Delete" }}
+          </button>
         </div>
       </li>
     </ul>
@@ -66,6 +73,7 @@ const exportingId = ref<string | null>(null);
 const exportLabel = ref("Export .amc");
 const pushingId = ref<string | null>(null);
 const pushLabel = ref("→ Mega");
+const deletingId = ref<string | null>(null);
 
 async function refresh() {
   loading.value = true;
@@ -122,6 +130,23 @@ async function onPush(c: CatalogRow) {
   }
 }
 
+async function onDelete(c: CatalogRow) {
+  if (deletingId.value) return;
+  if (!confirm(`Delete "${c.name || "(untitled)"}" and all its movies and posters? This cannot be undone.`)) {
+    return;
+  }
+  deletingId.value = c.id;
+  error.value = "";
+  try {
+    await cf.deleteCatalog(c.id);
+    await refresh();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    deletingId.value = null;
+  }
+}
+
 function fmt(ms: number): string {
   try {
     return new Date(ms).toLocaleDateString();
@@ -165,6 +190,8 @@ onMounted(refresh);
   cursor: pointer;
 }
 .btn.ghost { background: transparent; color: var(--c-gold, #c9a84c); border: 1px solid var(--c-border, #2a2a48); }
+.btn.ghost.danger { color: var(--c-danger, #e05252); }
+.btn.ghost.danger:hover { border-color: var(--c-danger, #e05252); }
 .btn:disabled { opacity: 0.7; cursor: default; }
 .actions { display: flex; gap: 0.5rem; align-items: center; }
 .err { color: var(--c-danger, #e05252); font-size: 0.82rem; }

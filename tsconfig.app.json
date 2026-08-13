@@ -1,0 +1,32 @@
+{
+  // Type-checking config for the browser app: frontend/*.ts plus the browser/amc
+  // modules they import. Kept separate from tsconfig.json because the app targets
+  // the DOM — it must NOT see the Worker globals from @cloudflare/workers-types.
+  //
+  // Checked with plain `tsc`. Deep type-checking of .vue SFC internals needs
+  // vue-tsc, which cannot yet run against the native TypeScript 7 compiler this
+  // repo pins (it shells into typescript/lib/tsc, unexported in TS7). Until that
+  // lands, .vue imports resolve through frontend/vue-shim.d.ts and the ~700 lines
+  // of frontend/*.ts logic (api/auth/mega/fields) are fully checked here.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "jsx": "preserve",
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "frontend/**/*.ts",
+    "browser/**/*.ts",
+    "amc/**/*.ts"
+  ],
+  "exclude": ["**/*.test.ts", "dist", "node_modules"]
+}

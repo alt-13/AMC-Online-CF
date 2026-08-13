@@ -14,5 +14,6 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["amc/**/*.ts", "worker/**/*.ts", "browser/**/*.ts"]
+  "include": ["amc/**/*.ts", "worker/**/*.ts", "browser/**/*.ts"],
+  "exclude": ["**/*.test.ts", "dist", "node_modules"]
 }

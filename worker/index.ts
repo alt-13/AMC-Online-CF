@@ -31,6 +31,11 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
 
 const err = (status: number, message: string): Response => json({ error: message }, status);
 
+/** Key used to encrypt/decrypt stored cloud credentials: a dedicated
+ *  ENCRYPTION_SECRET if provided, else AUTH_SECRET (so existing deploys keep
+ *  working, but rotating AUTH_SECRET no longer bricks saved credentials). */
+const cryptoSecret = (env: Env): string => env.ENCRYPTION_SECRET || env.AUTH_SECRET;
+
 // --- request router --------------------------------------------------------
 
 export default {
@@ -43,7 +48,9 @@ export default {
     try {
       return await route(req, env, url);
     } catch (e) {
-      return err(500, e instanceof Error ? e.message : "internal error");
+      // Log the detail (observability is on) but don't leak internals to clients.
+      console.error("unhandled route error", e);
+      return err(500, "internal error");
     }
   },
 };
@@ -69,12 +76,21 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     const key = url.searchParams.get("key");
     if (!key) return err(400, "missing key");
     if (!key.startsWith(`${t}/`)) return err(403, "forbidden");
-    const obj = await env.R2.get(key);
+    // Poster keys are reused when a poster is replaced (same movie id), so the
+    // object is NOT immutable — revalidate via ETag rather than caching for a
+    // year. If-None-Match lets R2 answer 304 without re-streaming the bytes.
+    const inm = req.headers.get("if-none-match");
+    const obj = await env.R2.get(key, inm ? { onlyIf: { etagDoesNotMatch: inm } } : undefined);
     if (!obj) return err(404, "poster not found");
+    const cache = "private, max-age=0, must-revalidate";
+    if (!("body" in obj) || obj.body === undefined) {
+      // etag matched — R2 returned metadata only.
+      return new Response(null, { status: 304, headers: { etag: obj.httpEtag, "cache-control": cache } });
+    }
     return new Response(obj.body, {
       headers: {
         "content-type": obj.httpMetadata?.contentType || "image/jpeg",
-        "cache-control": "private, max-age=31536000, immutable",
+        "cache-control": cache,
         etag: obj.httpEtag,
       },
     });
@@ -96,8 +112,11 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       customFieldDefs: CustomFieldDefRow[];
     };
     if (body.catalog.tenant_id !== t) return err(403, "tenant mismatch");
+    // Trust the server-verified catalog id for the child rows, never the body:
+    // a client could otherwise point customFieldDefs at another tenant's catalog.
+    const defs = (body.customFieldDefs ?? []).map((d) => ({ ...d, catalog_id: body.catalog.id }));
     await db.insertCatalog(env, body.catalog);
-    await db.insertCustomFieldDefs(env, body.customFieldDefs);
+    await db.insertCustomFieldDefs(env, defs);
     return json({ catalogId: body.catalog.id }, 201);
   }
 
@@ -108,10 +127,15 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     const cat = await db.getCatalog(env, t, catalogId);
     if (!cat) return err(404, "catalog not found");
     const body = (await req.json()) as { movies: MovieRow[]; extras: ExtraRow[] };
-    await db.insertMovies(env, body.movies);
-    await db.insertExtras(env, body.extras);
+    // Pin every movie to the verified catalog and every extra to a movie in this
+    // same chunk — never trust the catalog_id/movie_id the client put on the rows.
+    const movies = (body.movies ?? []).map((mv) => ({ ...mv, catalog_id: cat.id }));
+    const movieIds = new Set(movies.map((mv) => mv.id));
+    const extras = (body.extras ?? []).filter((e) => movieIds.has(e.movie_id));
+    await db.insertMovies(env, movies);
+    await db.insertExtras(env, extras);
     await db.touchCatalog(env, catalogId, Date.now());
-    return json({ inserted: body.movies.length });
+    return json({ inserted: movies.length });
   }
 
   // GET /api/catalogs  — list this tenant's catalogs
@@ -150,7 +174,7 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     } else if (body.credential === null) {
       credential = null;
     } else {
-      credential = await encryptSecret(body.credential, env.AUTH_SECRET);
+      credential = await encryptSecret(body.credential, cryptoSecret(env));
     }
     const provider = body.provider ?? existing?.provider ?? "mega";
     const path = body.path ?? existing?.path ?? "";
@@ -170,7 +194,15 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
   if (p === "/api/cloud/connect" && m === "POST") {
     const row = await db.getUserCloud(env, t);
     if (!row?.credential) return err(404, "no stored credential");
-    const credential = await decryptSecret(row.credential, env.AUTH_SECRET);
+    let credential: string;
+    try {
+      credential = await decryptSecret(row.credential, cryptoSecret(env));
+    } catch {
+      // The key changed (e.g. AUTH_SECRET was rotated with no ENCRYPTION_SECRET),
+      // so the stored blob can't be read. Tell the client to re-enter it rather
+      // than 500 forever with an opaque AES-GCM error.
+      return err(409, "stored credential can no longer be decrypted — please reconnect and re-save it");
+    }
     return json({ provider: row.provider, path: row.path, credential });
   }
 
@@ -235,9 +267,16 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       },
     });
     if (!up.ok) return err(502, `image fetch failed (${up.status})`);
+    // This endpoint is authenticated but still a proxy — only let images through,
+    // and cap the size so it can't be used to relay arbitrary large payloads.
+    const ct = up.headers.get("content-type") || "";
+    if (!ct.startsWith("image/")) return err(415, "not an image");
+    const len = Number(up.headers.get("content-length") ?? "0");
+    const MAX_BYTES = 25 * 1024 * 1024;
+    if (len > MAX_BYTES) return err(413, "image too large");
     return new Response(up.body, {
       headers: {
-        "content-type": up.headers.get("content-type") || "image/jpeg",
+        "content-type": ct,
         "cache-control": "private, max-age=3600",
       },
     });
@@ -273,6 +312,17 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json(await db.listMovies(env, cat.id));
   }
 
+  // DELETE /api/catalog/:id  — drop a catalog, its rows, and its R2 posters.
+  if (seg[0] === "api" && seg[1] === "catalog" && seg[2] && !seg[3] && m === "DELETE") {
+    const cat = await db.getCatalog(env, t, seg[2]);
+    if (!cat) return err(404, "catalog not found");
+    const keys = await db.allPosterKeys(env, cat.id);
+    // R2.delete takes at most 1000 keys per call.
+    for (let i = 0; i < keys.length; i += 1000) await env.R2.delete(keys.slice(i, i + 1000));
+    await db.deleteCatalog(env, cat.id);
+    return new Response(null, { status: 204 });
+  }
+
   // GET /api/catalog/:id/export  — full row bundle for the browser rebuild
   if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "export" && m === "GET") {
     const cat = await db.getCatalog(env, t, seg[2]);
@@ -298,6 +348,13 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       const movie = await ownedMovie(env, t, id);
       if (!movie) return err(404, "movie not found");
       const patch = (await req.json()) as Partial<MovieRow>;
+      // Keep sort_title consistent with the titles even for clients that don't
+      // send it (the grid orders by it). Derive from the patch overlaid on the row.
+      if (("original_title" in patch || "translated_title" in patch) && !("sort_title" in patch)) {
+        const translated = patch.translated_title ?? movie.translated_title;
+        const original = patch.original_title ?? movie.original_title;
+        patch.sort_title = (translated || original).toLowerCase();
+      }
       await db.updateMovie(env, id, patch);
       const updated = await db.getMovie(env, id);
       return json(updated);

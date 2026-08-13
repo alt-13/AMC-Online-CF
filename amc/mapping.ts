@@ -279,8 +279,6 @@ export interface ExportSources {
   getPoster: (key: string) => Promise<Uint8Array>;
 }
 
-const noPic = () => ({ picPath: "", picData: new Uint8Array(0) });
-
 /**
  * Rebuild the in-memory AMCCatalog from D1 rows + R2 posters, ready for
  * serializeCatalog(). Custom values are re-expanded to positional order using

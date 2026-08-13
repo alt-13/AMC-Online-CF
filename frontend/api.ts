@@ -115,8 +115,23 @@ function headers(extra: Record<string, string> = {}): HeadersInit {
   return h;
 }
 
+// The access token lives ~1h; on a 401 we transparently swap the httpOnly
+// refresh cookie for a fresh token (once, deduped across concurrent calls) and
+// retry, so a tab left open past the TTL keeps working instead of erroring out.
+let refreshing: Promise<boolean> | null = null;
+
+async function authedFetch(path: string, init: RequestInit = {}, extra: Record<string, string> = {}): Promise<Response> {
+  const send = () => fetch(path, { ...init, headers: headers(extra) });
+  let res = await send();
+  if (res.status === 401 && _authHeader) {
+    refreshing ??= auth.restoreSession().finally(() => (refreshing = null));
+    if (await refreshing) res = await send();
+  }
+  return res;
+}
+
 async function jget<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: headers() });
+  const res = await authedFetch(path);
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -155,31 +170,32 @@ export const cf = {
   getMovie: (id: string) => jget<MovieRow & { extras: unknown[] }>(`/api/movies/${encodeURIComponent(id)}`),
 
   updateMovie: async (id: string, patch: Partial<MovieRow>): Promise<MovieRow> => {
-    const res = await fetch(`/api/movies/${encodeURIComponent(id)}`, {
+    const res = await authedFetch(`/api/movies/${encodeURIComponent(id)}`, {
       method: "PUT",
-      headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify(patch),
-    });
+    }, { "content-type": "application/json" });
     if (!res.ok) throw new Error(`update movie -> ${res.status}`);
     return res.json() as Promise<MovieRow>;
   },
 
   deleteMovie: async (id: string): Promise<void> => {
-    const res = await fetch(`/api/movies/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      headers: headers(),
-    });
+    const res = await authedFetch(`/api/movies/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (!res.ok && res.status !== 204) throw new Error(`delete movie -> ${res.status}`);
+  },
+
+  /** Delete a catalog and all its posters. */
+  deleteCatalog: async (id: string): Promise<void> => {
+    const res = await authedFetch(`/api/catalog/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 204) throw new Error(`delete catalog -> ${res.status}`);
   },
 
   /** Create a movie in a catalog. The Worker assigns the next on-disk number;
    *  pass any editable columns to prefill (e.g. an OMDb patch). */
   createMovie: async (catalogId: string, patch: Partial<MovieRow> = {}): Promise<MovieRow> => {
-    const res = await fetch(`/api/catalog/${encodeURIComponent(catalogId)}/movies`, {
+    const res = await authedFetch(`/api/catalog/${encodeURIComponent(catalogId)}/movies`, {
       method: "POST",
-      headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify(patch),
-    });
+    }, { "content-type": "application/json" });
     if (!res.ok) throw new Error(`create movie -> ${res.status}`);
     return res.json() as Promise<MovieRow>;
   },
@@ -191,18 +207,15 @@ export const cf = {
    * image to JPEG (the format .amc embeds) before it's stored in R2.
    */
   setPictureFromUrl: async (movie: MovieRow, imageUrl: string): Promise<MovieRow> => {
-    const proxied = await fetch(`/api/proxy-image?url=${encodeURIComponent(imageUrl)}`, {
-      headers: headers(),
-    });
+    const proxied = await authedFetch(`/api/proxy-image?url=${encodeURIComponent(imageUrl)}`);
     if (!proxied.ok) throw new Error(`fetch image -> ${proxied.status}`);
     const jpeg = await toJpeg(await proxied.blob());
 
     const key = movie.poster_key ?? `${_tenantId}/${movie.catalog_id}/${movie.id}.jpg`;
-    const put = await fetch("/api/import/poster", {
+    const put = await authedFetch("/api/import/poster", {
       method: "PUT",
-      headers: headers({ "x-poster-key": key, "content-type": "application/octet-stream" }),
-      body: jpeg,
-    });
+      body: jpeg as BodyInit,
+    }, { "x-poster-key": key, "content-type": "application/octet-stream" });
     if (!put.ok) throw new Error(`store poster -> ${put.status}`);
     return cf.updateMovie(movie.id, { poster_key: key, pic_path: ".jpg" });
   },
@@ -214,7 +227,7 @@ export const cf = {
   posterUrl: (key: string) => `/api/poster?key=${encodeURIComponent(key)}`,
 
   posterObjectUrl: async (key: string): Promise<string> => {
-    const res = await fetch(`/api/poster?key=${encodeURIComponent(key)}`, { headers: headers() });
+    const res = await authedFetch(`/api/poster?key=${encodeURIComponent(key)}`);
     if (!res.ok) throw new Error(`poster -> ${res.status}`);
     return URL.createObjectURL(await res.blob());
   },
@@ -256,11 +269,10 @@ export const settings = {
   get: () => jget<AppSettings>("/api/settings"),
 
   save: async (s: AppSettings): Promise<AppSettings> => {
-    const res = await fetch("/api/settings", {
+    const res = await authedFetch("/api/settings", {
       method: "PUT",
-      headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify(s),
-    });
+    }, { "content-type": "application/json" });
     if (!res.ok) throw new Error(`save settings -> ${res.status}`);
     return res.json() as Promise<AppSettings>;
   },
@@ -289,18 +301,17 @@ export const cloud = {
     path?: string;
     credential?: string | null;
   }): Promise<CloudConfig> => {
-    const res = await fetch("/api/cloud", {
+    const res = await authedFetch("/api/cloud", {
       method: "PUT",
-      headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify(patch),
-    });
+    }, { "content-type": "application/json" });
     if (!res.ok) throw new Error(`save cloud config -> ${res.status}`);
     return res.json() as Promise<CloudConfig>;
   },
 
   /** Fetch the DECRYPTED credential (provider-specific JSON) to log in with. */
   connect: async (): Promise<{ provider: string; path: string; credential: string }> => {
-    const res = await fetch("/api/cloud/connect", { method: "POST", headers: headers() });
+    const res = await authedFetch("/api/cloud/connect", { method: "POST" });
     if (!res.ok) throw new Error(`cloud connect -> ${res.status}`);
     return res.json() as Promise<{ provider: string; path: string; credential: string }>;
   },

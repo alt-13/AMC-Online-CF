@@ -268,7 +268,7 @@ class ByteWriter {
     this.push(b);
   }
 
-  toUint8Array(): Uint8Array {
+  toUint8Array(): Uint8Array<ArrayBuffer> {
     const out = new Uint8Array(this.len);
     let off = 0;
     for (const p of this.parts) {
@@ -584,10 +584,16 @@ export function parseCatalog(bytes: Uint8Array): AMCCatalog {
   return catalog;
 }
 
-export function serializeCatalog(catalog: AMCCatalog): Uint8Array {
+export function serializeCatalog(catalog: AMCCatalog): Uint8Array<ArrayBuffer> {
   const v = catalog.version;
   const hdr = HEADERS[v];
   if (!hdr) throw new Error(`Unsupported AMC version: ${v}`);
+  // The write path mirrors the Python backend and targets v3.5+ only: it never
+  // emits the pre-3.5 ICQ field. Serialising a v3.1/v3.3 catalog would write a
+  // 3.1/3.3 header over a 3.5-shaped body — a corrupt file. Refuse instead.
+  if (v < 35) {
+    throw new Error(`Cannot export AMC version ${(v / 10).toFixed(1)} — only 3.5+ is supported for writing`);
+  }
 
   const w = new ByteWriter();
   w.bytes(new TextEncoder().encode(hdr)); // header is pure ASCII → 65 bytes

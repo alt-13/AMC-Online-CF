@@ -88,7 +88,7 @@ export function newMovieRow(
 
   for (const col of CREATABLE) {
     if (col in patch && patch[col] !== undefined) {
-      (row as Record<string, unknown>)[col] = patch[col];
+      (row as unknown as Record<string, unknown>)[col] = patch[col];
     }
   }
   if (!("date" in patch) || patch.date === undefined) row.date = todayDelphi(nowMs);

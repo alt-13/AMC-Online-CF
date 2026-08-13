@@ -7,13 +7,21 @@
 # schema, sets the secrets (piped via stdin — never the dashboard), and deploys.
 #
 # Re-runnable: existing resources are detected and skipped, so it's safe to run
-# again to rotate a secret or finish a half-done setup.
+# again to finish a half-done setup or rotate a secret.
+#
+# ROTATION CAVEAT: stored Mega credentials are encrypted with ENCRYPTION_SECRET
+# (which falls back to AUTH_SECRET when unset). Rotate the secret that encrypts
+# them and every saved credential becomes undecryptable — the app now surfaces
+# that as a 409 asking the user to reconnect, rather than a silent 500. Setting a
+# dedicated ENCRYPTION_SECRET below lets you rotate AUTH_SECRET (JWT signing) on
+# its own without touching stored credentials.
 #
 # Usage:  cd cf && ./setup.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
-WRANGLER="npx --yes wrangler"
+# Pinned to the v4 line so a future major can't silently change deploy behaviour.
+WRANGLER="npx --yes wrangler@4"
 DB_NAME="amc"
 BUCKET_NAME="amc-posters"
 
@@ -61,6 +69,23 @@ gen="$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)"
 read -r -p "AUTH_SECRET (Enter = generate a random 32-byte key): " auth_secret || true
 put_secret AUTH_SECRET "${auth_secret:-$gen}"
 [ -z "${auth_secret:-}" ] && echo "  (generated — you never need to see it; it stays in Cloudflare)"
+
+# ENCRYPTION_SECRET: encrypts stored Mega credentials. Kept separate from
+# AUTH_SECRET so JWT-signing can be rotated without bricking saved credentials.
+# Only set it the FIRST time — re-running and generating a new one would make
+# existing credentials undecryptable (users then get a 409 asking to reconnect).
+enc_gen="$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)"
+read -r -p "ENCRYPTION_SECRET (Enter = generate; leave unset to reuse AUTH_SECRET): " enc_secret || true
+if [ -n "${enc_secret:-}" ]; then
+  put_secret ENCRYPTION_SECRET "$enc_secret"
+else
+  read -r -p "  No value entered — generate a dedicated one now? [y/N]: " enc_yn || true
+  case "${enc_yn:-}" in
+    [yY]*) put_secret ENCRYPTION_SECRET "$enc_gen"
+           echo "  (generated — set once; do not rotate or stored credentials become unreadable)" ;;
+    *)     echo "  ENCRYPTION_SECRET skipped (credentials will be encrypted under AUTH_SECRET)" ;;
+  esac
+fi
 
 # OMDB_API_KEY: optional. Blank Enter skips it.
 read -r -p "OMDB_API_KEY (optional, Enter to skip — free key at omdbapi.com): " omdb_key || true

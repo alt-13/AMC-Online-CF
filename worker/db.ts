@@ -19,6 +19,10 @@ export interface Env {
   ASSETS: Fetcher;
   /** HS256 / PBKDF2 secret. Set with: wrangler secret put AUTH_SECRET */
   AUTH_SECRET: string;
+  /** Optional separate key for encrypting stored cloud credentials. Falls back
+   *  to AUTH_SECRET when unset. Set one if you ever rotate AUTH_SECRET so stored
+   *  Mega credentials survive the rotation. wrangler secret put ENCRYPTION_SECRET */
+  ENCRYPTION_SECRET?: string;
   /** OMDb API key for the movie-lookup feature. Optional; set with:
    *  wrangler secret put OMDB_API_KEY  (get a free key at omdbapi.com). */
   OMDB_API_KEY?: string;
@@ -152,6 +156,30 @@ export async function touchCatalog(env: Env, id: string, now: number): Promise<v
   await env.DB.prepare(`UPDATE catalogs SET updated_at = ? WHERE id = ?`).bind(now, id).run();
 }
 
+/** Every R2 poster key referenced by a catalog (movie + extra posters), so the
+ *  caller can clean R2 before dropping the rows. */
+export async function allPosterKeys(env: Env, catalogId: string): Promise<string[]> {
+  const movieKeys = await env.DB.prepare(
+    `SELECT poster_key AS k FROM movies WHERE catalog_id = ? AND poster_key IS NOT NULL`,
+  )
+    .bind(catalogId)
+    .all<{ k: string }>();
+  const extraKeys = await env.DB.prepare(
+    `SELECT e.poster_key AS k FROM movie_extras e
+       JOIN movies m ON m.id = e.movie_id
+      WHERE m.catalog_id = ? AND e.poster_key IS NOT NULL`,
+  )
+    .bind(catalogId)
+    .all<{ k: string }>();
+  return [...(movieKeys.results ?? []), ...(extraKeys.results ?? [])].map((r) => r.k);
+}
+
+/** Delete a catalog. movies + custom_field_defs + extras cascade via FK;
+ *  posters in R2 are cleaned by the caller first. */
+export async function deleteCatalog(env: Env, id: string): Promise<void> {
+  await env.DB.prepare(`DELETE FROM catalogs WHERE id = ?`).bind(id).run();
+}
+
 // --- custom field defs -----------------------------------------------------
 
 export async function insertCustomFieldDefs(
@@ -212,7 +240,7 @@ export async function insertMovies(env: Env, movies: MovieRow[]): Promise<void> 
     `INSERT INTO movies (${MOVIE_COLS.join(",")}) VALUES (${placeholders})`,
   );
   await env.DB.batch(
-    movies.map((m) => stmt.bind(...MOVIE_COLS.map((c) => (m as Record<string, unknown>)[c]))),
+    movies.map((m) => stmt.bind(...MOVIE_COLS.map((c) => (m as unknown as Record<string, unknown>)[c]))),
   );
 }
 

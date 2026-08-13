@@ -151,18 +151,25 @@ async function refresh() {
   void loadThumbs();
 }
 
-// Lazily resolve poster object URLs (bounded — the grid is one catalog).
+// Resolve poster object URLs with bounded concurrency so a large catalog doesn't
+// fire one serial fetch after another (thousands of round-trips) or all at once.
 async function loadThumbs() {
-  for (const m of movies.value) {
-    if (!m.poster_key || thumbs[m.id]) continue;
-    try {
-      const url = await cf.posterObjectUrl(m.poster_key);
-      thumbs[m.id] = url;
-      objectUrls.push(url);
-    } catch {
-      /* skip */
+  const pending = movies.value.filter((m) => m.poster_key && !thumbs[m.id]);
+  const CONCURRENCY = 6;
+  let i = 0;
+  async function worker() {
+    while (i < pending.length) {
+      const m = pending[i++];
+      try {
+        const url = await cf.posterObjectUrl(m.poster_key!);
+        thumbs[m.id] = url;
+        objectUrls.push(url);
+      } catch {
+        /* skip */
+      }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker));
 }
 
 async function onCreate(patch: Partial<MovieRow> = {}) {

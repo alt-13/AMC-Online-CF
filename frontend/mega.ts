@@ -203,7 +203,7 @@ export async function megaPull(
   onProgress?: (done: number, total: number, phase: "posters" | "rows") => void,
 ): Promise<string> {
   const file = await downloadFromMega(node);
-  const blob = new Blob([file.bytes], { type: "application/octet-stream" });
+  const blob = new Blob([file.bytes as BlobPart], { type: "application/octet-stream" });
   return importAmcFile(blob, { ...session(), onProgress });
 }
 
