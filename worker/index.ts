@@ -138,6 +138,17 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ inserted: movies.length });
   }
 
+  // POST /api/import/abort?catalogId=  — roll back a failed/partial import: drop
+  // the catalog rows (if the catalog row was created) and sweep every R2 poster
+  // under this catalog's prefix, including ones uploaded before any row existed.
+  // Always tenant-scoped (`${t}/…`), so it can only ever touch the caller's data.
+  if (p === "/api/import/abort" && m === "POST") {
+    const catalogId = url.searchParams.get("catalogId");
+    if (!catalogId) return err(400, "missing catalogId");
+    await purgeCatalog(env, t, catalogId);
+    return new Response(null, { status: 204 });
+  }
+
   // GET /api/catalogs  — list this tenant's catalogs
   if (p === "/api/catalogs" && m === "GET") {
     return json(await db.listCatalogs(env, t));
@@ -305,33 +316,68 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ ...cat, movie_count: count?.n ?? 0, custom_field_defs: defs });
   }
 
-  // GET /api/catalog/:id/movies  — list metadata for the movie grid
+  // GET /api/catalog/:id/movies?limit=&offset=  — one page of grid metadata.
+  // Always bounded so a huge catalog can't blow the D1 response / Worker memory;
+  // the client walks pages using `total`. Defaults to a full first page.
   if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "movies" && m === "GET") {
     const cat = await db.getCatalog(env, t, seg[2]);
     if (!cat) return err(404, "catalog not found");
-    return json(await db.listMovies(env, cat.id));
+    const MAX = 1000;
+    const limit = Math.min(MAX, Math.max(1, Number(url.searchParams.get("limit")) || 500));
+    const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
+    const [movies, total] = await Promise.all([
+      db.listMovies(env, cat.id, { limit, offset }),
+      db.countMovies(env, cat.id),
+    ]);
+    return json({ movies, total, limit, offset });
   }
 
   // DELETE /api/catalog/:id  — drop a catalog, its rows, and its R2 posters.
   if (seg[0] === "api" && seg[1] === "catalog" && seg[2] && !seg[3] && m === "DELETE") {
     const cat = await db.getCatalog(env, t, seg[2]);
     if (!cat) return err(404, "catalog not found");
-    const keys = await db.allPosterKeys(env, cat.id);
-    // R2.delete takes at most 1000 keys per call.
-    for (let i = 0; i < keys.length; i += 1000) await env.R2.delete(keys.slice(i, i + 1000));
-    await db.deleteCatalog(env, cat.id);
+    await purgeCatalog(env, t, cat.id);
     return new Response(null, { status: 204 });
   }
 
-  // GET /api/catalog/:id/export  — full row bundle for the browser rebuild
+  // POST /api/catalog/:id/supersede  — after a cloud re-pull finishes, drop every
+  // OTHER catalog that shares this one's source_ref (the older copies of the same
+  // .amc). Runs only once the new import is complete, so a failed pull never
+  // destroys the previous copy — worst case you briefly keep a duplicate.
+  if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "supersede" && m === "POST") {
+    const cat = await db.getCatalog(env, t, seg[2]);
+    if (!cat) return err(404, "catalog not found");
+    if (!cat.source_ref) return json({ superseded: 0 });
+    const dupes = await db.catalogsBySource(env, t, cat.source_ref);
+    let superseded = 0;
+    for (const d of dupes) {
+      if (d.id === cat.id) continue;
+      await purgeCatalog(env, t, d.id);
+      superseded += 1;
+    }
+    return json({ superseded });
+  }
+
+  // GET /api/catalog/:id/export  — full row bundle for the browser rebuild.
+  // Reads movies + extras in bounded pages (never one unbounded query) and
+  // reassembles the whole set the export format needs.
   if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "export" && m === "GET") {
     const cat = await db.getCatalog(env, t, seg[2]);
     if (!cat) return err(404, "catalog not found");
-    const [customFieldDefs, movies, extras] = await Promise.all([
-      db.getCustomFieldDefs(env, cat.id),
-      db.listMovies(env, cat.id),
-      db.getAllExtras(env, cat.id),
-    ]);
+    const PAGE = 500;
+    const customFieldDefs = await db.getCustomFieldDefs(env, cat.id);
+    const movies: MovieRow[] = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const chunk = await db.listMovies(env, cat.id, { limit: PAGE, offset });
+      movies.push(...chunk);
+      if (chunk.length < PAGE) break;
+    }
+    const extras: ExtraRow[] = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const chunk = await db.getAllExtras(env, cat.id, { limit: PAGE, offset });
+      extras.push(...chunk);
+      if (chunk.length < PAGE) break;
+    }
     return json({ catalog: cat, customFieldDefs, movies, extras });
   }
 
@@ -454,6 +500,24 @@ async function issueTokens(env: Env, userId: string, nowSec: number, status = 20
 /** A valid-format hash so login timing is identical for unknown emails. */
 const DUMMY_HASH =
   "pbkdf2-sha256$100000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+/**
+ * Drop a catalog's rows (movies/defs/extras cascade) and sweep every R2 poster
+ * under its tenant-scoped prefix — including posters uploaded before any row
+ * existed. Idempotent, and the `${tenantId}/` prefix means it can only ever
+ * touch the caller's own objects.
+ */
+async function purgeCatalog(env: Env, tenantId: string, catalogId: string): Promise<void> {
+  const cat = await db.getCatalog(env, tenantId, catalogId);
+  if (cat) await db.deleteCatalog(env, cat.id);
+  const prefix = `${tenantId}/${catalogId}/`;
+  let cursor: string | undefined;
+  do {
+    const listed = await env.R2.list({ prefix, cursor });
+    if (listed.objects.length) await env.R2.delete(listed.objects.map((o) => o.key));
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
+}
 
 /** Fetch a movie only if it belongs to a catalog owned by this tenant. */
 async function ownedMovie(env: Env, tenantId: string, id: string): Promise<MovieRow | null> {

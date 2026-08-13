@@ -142,40 +142,38 @@ export async function insertCatalog(env: Env, c: CatalogRow): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO catalogs
        (id, tenant_id, version, name, mail, site, description,
-        cfp_column_settings, cfp_gui_properties, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        cfp_column_settings, cfp_gui_properties, source_ref, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
   )
     .bind(
       c.id, c.tenant_id, c.version, c.name, c.mail, c.site, c.description,
-      c.cfp_column_settings, c.cfp_gui_properties, c.created_at, c.updated_at,
+      c.cfp_column_settings, c.cfp_gui_properties, c.source_ref ?? null,
+      c.created_at, c.updated_at,
     )
     .run();
+}
+
+/** Other catalogs of this tenant that share a cloud origin key — the ones a
+ *  fresh re-pull supersedes. `sourceRef` is never NULL here (uploads have none). */
+export async function catalogsBySource(
+  env: Env,
+  tenantId: string,
+  sourceRef: string,
+): Promise<CatalogRow[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT * FROM catalogs WHERE tenant_id = ? AND source_ref = ?`,
+  )
+    .bind(tenantId, sourceRef)
+    .all<CatalogRow>();
+  return results ?? [];
 }
 
 export async function touchCatalog(env: Env, id: string, now: number): Promise<void> {
   await env.DB.prepare(`UPDATE catalogs SET updated_at = ? WHERE id = ?`).bind(now, id).run();
 }
 
-/** Every R2 poster key referenced by a catalog (movie + extra posters), so the
- *  caller can clean R2 before dropping the rows. */
-export async function allPosterKeys(env: Env, catalogId: string): Promise<string[]> {
-  const movieKeys = await env.DB.prepare(
-    `SELECT poster_key AS k FROM movies WHERE catalog_id = ? AND poster_key IS NOT NULL`,
-  )
-    .bind(catalogId)
-    .all<{ k: string }>();
-  const extraKeys = await env.DB.prepare(
-    `SELECT e.poster_key AS k FROM movie_extras e
-       JOIN movies m ON m.id = e.movie_id
-      WHERE m.catalog_id = ? AND e.poster_key IS NOT NULL`,
-  )
-    .bind(catalogId)
-    .all<{ k: string }>();
-  return [...(movieKeys.results ?? []), ...(extraKeys.results ?? [])].map((r) => r.k);
-}
-
 /** Delete a catalog. movies + custom_field_defs + extras cascade via FK;
- *  posters in R2 are cleaned by the caller first. */
+ *  posters in R2 are cleaned by the caller (purgeCatalog sweeps them by prefix). */
 export async function deleteCatalog(env: Env, id: string): Promise<void> {
   await env.DB.prepare(`DELETE FROM catalogs WHERE id = ?`).bind(id).run();
 }
@@ -271,13 +269,37 @@ export async function nextMovieNumber(env: Env, catalogId: string): Promise<numb
   return (row?.mx ?? 0) + 1;
 }
 
-export async function listMovies(env: Env, catalogId: string): Promise<MovieRow[]> {
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM movies WHERE catalog_id = ? ORDER BY sort_title`,
-  )
-    .bind(catalogId)
-    .all<MovieRow>();
+export interface Page {
+  limit?: number;
+  offset?: number;
+}
+
+export async function listMovies(
+  env: Env,
+  catalogId: string,
+  page: Page = {},
+): Promise<MovieRow[]> {
+  // `, id` is a stable tiebreak so LIMIT/OFFSET paging never skips or repeats a
+  // row when several share a sort_title.
+  let sql = `SELECT * FROM movies WHERE catalog_id = ? ORDER BY sort_title, id`;
+  const binds: unknown[] = [catalogId];
+  if (page.limit != null) {
+    sql += ` LIMIT ?`;
+    binds.push(page.limit);
+    if (page.offset != null) {
+      sql += ` OFFSET ?`;
+      binds.push(page.offset);
+    }
+  }
+  const { results } = await env.DB.prepare(sql).bind(...binds).all<MovieRow>();
   return results ?? [];
+}
+
+export async function countMovies(env: Env, catalogId: string): Promise<number> {
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM movies WHERE catalog_id = ?`)
+    .bind(catalogId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
 
 export async function getMovie(env: Env, id: string): Promise<MovieRow | null> {
@@ -293,14 +315,24 @@ export async function getExtras(env: Env, movieId: string): Promise<ExtraRow[]> 
   return results ?? [];
 }
 
-export async function getAllExtras(env: Env, catalogId: string): Promise<ExtraRow[]> {
-  const { results } = await env.DB.prepare(
-    `SELECT e.* FROM movie_extras e
+export async function getAllExtras(
+  env: Env,
+  catalogId: string,
+  page: Page = {},
+): Promise<ExtraRow[]> {
+  let sql = `SELECT e.* FROM movie_extras e
        JOIN movies m ON m.id = e.movie_id
-      WHERE m.catalog_id = ? ORDER BY e.movie_id, e.ordinal`,
-  )
-    .bind(catalogId)
-    .all<ExtraRow>();
+      WHERE m.catalog_id = ? ORDER BY e.movie_id, e.ordinal`;
+  const binds: unknown[] = [catalogId];
+  if (page.limit != null) {
+    sql += ` LIMIT ?`;
+    binds.push(page.limit);
+    if (page.offset != null) {
+      sql += ` OFFSET ?`;
+      binds.push(page.offset);
+    }
+  }
+  const { results } = await env.DB.prepare(sql).bind(...binds).all<ExtraRow>();
   return results ?? [];
 }
 

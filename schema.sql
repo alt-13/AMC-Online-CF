@@ -36,10 +36,15 @@ CREATE TABLE IF NOT EXISTS catalogs (
   description         TEXT NOT NULL DEFAULT '',
   cfp_column_settings TEXT NOT NULL DEFAULT '',  -- v4.0+ header blob (opaque)
   cfp_gui_properties  TEXT NOT NULL DEFAULT '',  -- v4.0+ header blob (opaque)
+  -- Stable origin key for cloud pulls (e.g. "mega:<folder>:<file>.amc"). NULL for
+  -- direct file uploads. Lets re-pulling the same .amc replace its catalog instead
+  -- of piling up duplicates. Existing DBs: ALTER TABLE catalogs ADD COLUMN source_ref TEXT;
+  source_ref          TEXT,
   created_at          INTEGER NOT NULL,          -- epoch ms
   updated_at          INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_catalogs_tenant ON catalogs (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_catalogs_source ON catalogs (tenant_id, source_ref);
 
 -- Custom field definitions (catalog header, v4.0+). `ordinal` is authoritative:
 -- per-movie custom values are stored positionally in the binary, so export must

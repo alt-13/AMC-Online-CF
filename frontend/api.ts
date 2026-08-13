@@ -165,7 +165,25 @@ export const cf = {
 
   catalogInfo: (id: string) => jget<CatalogInfo>(`/api/catalog/${encodeURIComponent(id)}/info`),
 
-  listMovies: (id: string) => jget<MovieRow[]>(`/api/catalog/${encodeURIComponent(id)}/movies`),
+  // Walk the server's bounded pages and return the full list, so callers keep the
+  // simple "all movies in memory" model (instant client-side search) while the
+  // Worker never runs one unbounded query.
+  listMovies: async (
+    id: string,
+    onProgress?: (loaded: number, total: number) => void,
+  ): Promise<MovieRow[]> => {
+    const PAGE = 500;
+    const all: MovieRow[] = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const res = await jget<{ movies: MovieRow[]; total: number }>(
+        `/api/catalog/${encodeURIComponent(id)}/movies?limit=${PAGE}&offset=${offset}`,
+      );
+      all.push(...res.movies);
+      onProgress?.(all.length, res.total);
+      if (res.movies.length < PAGE || all.length >= res.total) break;
+    }
+    return all;
+  },
 
   getMovie: (id: string) => jget<MovieRow & { extras: unknown[] }>(`/api/movies/${encodeURIComponent(id)}`),
 

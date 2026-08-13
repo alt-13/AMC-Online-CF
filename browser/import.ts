@@ -17,6 +17,13 @@ export interface ImportOptions {
   chunkSize?: number;
   /** Progress callback: (done, total, phase). */
   onProgress?: (done: number, total: number, phase: "posters" | "rows") => void;
+  /**
+   * Stable origin key for a cloud pull (e.g. "mega:<folder>:<file>.amc"). When
+   * set, once the import succeeds every older catalog with the same key is
+   * dropped, so re-pulling the same file replaces rather than duplicates it.
+   * Omitted for direct file uploads.
+   */
+  sourceRef?: string | null;
 }
 
 function headers(o: ImportOptions, extra: Record<string, string> = {}): HeadersInit {
@@ -33,51 +40,89 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
   const bytes = new Uint8Array(await file.arrayBuffer());
   const catalog = parseCatalog(bytes);
 
-  // Flatten to rows; each poster is PUT to R2 as it is encountered.
-  let posterCount = 0;
-  const rows: ImportResult = await catalogToRows(catalog, opts.tenantId, {
-    newId: () => crypto.randomUUID(),
-    now: () => Date.now(),
-    putPoster: async (data, key) => {
-      const res = await fetch("/api/import/poster", {
-        method: "PUT",
-        headers: headers(opts, { "x-poster-key": key, "content-type": "application/octet-stream" }),
-        body: data as BodyInit,
-      });
-      if (!res.ok) throw new Error(`poster upload failed (${res.status}) for ${key}`);
-      opts.onProgress?.(++posterCount, catalog.movies.length, "posters");
-      return key;
-    },
-  });
+  // Fix the catalog id up front so a failure anywhere below — even during the
+  // poster phase — can be rolled back by its prefix. Import is otherwise a
+  // sequence of independent requests with no server-side transaction.
+  const catalogId = crypto.randomUUID();
 
-  // 1. Create the catalog + custom field definitions.
-  const created = await fetch("/api/import/catalog", {
-    method: "POST",
-    headers: headers(opts, { "content-type": "application/json" }),
-    body: JSON.stringify({ catalog: rows.catalog, customFieldDefs: rows.customFieldDefs }),
-  });
-  if (!created.ok) throw new Error(`catalog create failed (${created.status})`);
-  const { catalogId } = (await created.json()) as { catalogId: string };
+  try {
+    // Flatten to rows; each poster is PUT to R2 as it is encountered.
+    let posterCount = 0;
+    const rows: ImportResult = await catalogToRows(
+      catalog,
+      opts.tenantId,
+      {
+        newId: () => crypto.randomUUID(),
+        now: () => Date.now(),
+        putPoster: async (data, key) => {
+          const res = await fetch("/api/import/poster", {
+            method: "PUT",
+            headers: headers(opts, { "x-poster-key": key, "content-type": "application/octet-stream" }),
+            body: data as BodyInit,
+          });
+          if (!res.ok) throw new Error(`poster upload failed (${res.status}) for ${key}`);
+          opts.onProgress?.(++posterCount, catalog.movies.length, "posters");
+          return key;
+        },
+      },
+      catalogId,
+      opts.sourceRef ?? null,
+    );
 
-  // 2. Insert movies in chunks, carrying each chunk's extras alongside.
-  const extrasByMovie = new Map<string, ImportResult["extras"]>();
-  for (const e of rows.extras) {
-    const list = extrasByMovie.get(e.movie_id) ?? [];
-    list.push(e);
-    extrasByMovie.set(e.movie_id, list);
-  }
-
-  for (let i = 0; i < rows.movies.length; i += chunkSize) {
-    const movies = rows.movies.slice(i, i + chunkSize);
-    const extras = movies.flatMap((mv) => extrasByMovie.get(mv.id) ?? []);
-    const res = await fetch(`/api/import/movies?catalogId=${encodeURIComponent(catalogId)}`, {
+    // 1. Create the catalog + custom field definitions.
+    const created = await fetch("/api/import/catalog", {
       method: "POST",
       headers: headers(opts, { "content-type": "application/json" }),
-      body: JSON.stringify({ movies, extras }),
+      body: JSON.stringify({ catalog: rows.catalog, customFieldDefs: rows.customFieldDefs }),
     });
-    if (!res.ok) throw new Error(`movie chunk ${i} failed (${res.status})`);
-    opts.onProgress?.(Math.min(i + chunkSize, rows.movies.length), rows.movies.length, "rows");
-  }
+    if (!created.ok) throw new Error(`catalog create failed (${created.status})`);
 
-  return catalogId;
+    // 2. Insert movies in chunks, carrying each chunk's extras alongside.
+    const extrasByMovie = new Map<string, ImportResult["extras"]>();
+    for (const e of rows.extras) {
+      const list = extrasByMovie.get(e.movie_id) ?? [];
+      list.push(e);
+      extrasByMovie.set(e.movie_id, list);
+    }
+
+    for (let i = 0; i < rows.movies.length; i += chunkSize) {
+      const movies = rows.movies.slice(i, i + chunkSize);
+      const extras = movies.flatMap((mv) => extrasByMovie.get(mv.id) ?? []);
+      const res = await fetch(`/api/import/movies?catalogId=${encodeURIComponent(catalogId)}`, {
+        method: "POST",
+        headers: headers(opts, { "content-type": "application/json" }),
+        body: JSON.stringify({ movies, extras }),
+      });
+      if (!res.ok) throw new Error(`movie chunk ${i} failed (${res.status})`);
+      opts.onProgress?.(Math.min(i + chunkSize, rows.movies.length), rows.movies.length, "rows");
+    }
+
+    // 3. For a cloud re-pull, drop older copies of the same source now that the
+    //    fresh one is fully committed. Best-effort: a failure here only leaves a
+    //    harmless duplicate, never a missing catalog.
+    if (opts.sourceRef) {
+      try {
+        await fetch(`/api/catalog/${encodeURIComponent(catalogId)}/supersede`, {
+          method: "POST",
+          headers: headers(opts),
+        });
+      } catch {
+        /* keep the duplicate; the user can delete it manually */
+      }
+    }
+
+    return catalogId;
+  } catch (e) {
+    // Best-effort rollback so a failed import never leaves a half-catalog or
+    // orphan posters behind. Swallow cleanup errors — surface the real cause.
+    try {
+      await fetch(`/api/import/abort?catalogId=${encodeURIComponent(catalogId)}`, {
+        method: "POST",
+        headers: headers(opts),
+      });
+    } catch {
+      /* leave any residue for the next import/abort to clear */
+    }
+    throw e;
+  }
 }

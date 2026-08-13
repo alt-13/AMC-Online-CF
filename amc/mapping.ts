@@ -21,6 +21,7 @@ export interface CatalogRow {
   description: string;
   cfp_column_settings: string;
   cfp_gui_properties: string;
+  source_ref: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -134,8 +135,13 @@ export async function catalogToRows(
   cat: AMCCatalog,
   tenantId: string,
   sinks: ImportSinks,
+  // Caller may fix the catalog id up front so it can clean up (poster prefix +
+  // rows) if the import fails partway. Defaults to a fresh id.
+  catalogId: string = sinks.newId(),
+  // Stable origin key for cloud pulls, so a re-pull can supersede its catalog.
+  // NULL for direct file uploads.
+  sourceRef: string | null = null,
 ): Promise<ImportResult> {
-  const catalogId = sinks.newId();
   const ts = sinks.now();
 
   const catalog: CatalogRow = {
@@ -148,6 +154,7 @@ export async function catalogToRows(
     description: cat.description,
     cfp_column_settings: cat.cfpColumnSettings,
     cfp_gui_properties: cat.cfpGuiProperties,
+    source_ref: sourceRef,
     created_at: ts,
     updated_at: ts,
   };

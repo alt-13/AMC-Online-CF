@@ -140,11 +140,14 @@ All routes except `/api/auth/*` require `Authorization: Bearer <access_token>`.
 | `PUT /api/import/poster` (`x-poster-key`, raw body) | store one poster in R2 |
 | `POST /api/import/catalog` | create catalog + custom field defs |
 | `POST /api/import/movies?catalogId=` | insert a chunk of movies + extras |
+| `POST /api/import/abort?catalogId=` | roll back a failed import: drop rows + sweep the R2 poster prefix |
 | `GET /api/catalogs` | list this tenant's catalogs |
 | `GET /api/catalog/:id/info` | catalog header + defs + movie count |
-| `GET /api/catalog/:id/movies` | movie grid metadata |
-| `GET /api/catalog/:id/export` | full row bundle (poster keys, no bytes) |
+| `GET /api/catalog/:id/movies?limit=&offset=` | one bounded page of grid metadata + `total` (client walks pages) |
+| `GET /api/catalog/:id/export` | full row bundle (poster keys, no bytes), read in bounded pages |
 | `POST /api/catalog/:id/movies` | create a movie: next on-disk `number` + schema defaults + patch |
+| `POST /api/catalog/:id/supersede` | after a cloud re-pull, drop older catalogs sharing this one's `source_ref` |
+| `DELETE /api/catalog/:id` | delete a catalog (+ all its movies/extras/posters) |
 | `GET /api/movies/:id` | movie detail + extras |
 | `PUT /api/movies/:id` | patch scalar movie columns |
 | `DELETE /api/movies/:id` | delete movie (+ its R2 posters) |

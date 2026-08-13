@@ -204,7 +204,16 @@ export async function megaPull(
 ): Promise<string> {
   const file = await downloadFromMega(node);
   const blob = new Blob([file.bytes as BlobPart], { type: "application/octet-stream" });
-  return importAmcFile(blob, { ...session(), onProgress });
+  // Identify the file by its parent folder handle + name — stable even when a
+  // push replaces the file bytes (and thus its own handle). Lets a re-pull
+  // supersede the previous catalog instead of stacking duplicates.
+  return importAmcFile(blob, { ...session(), onProgress, sourceRef: megaSourceRef(node) });
+}
+
+/** Stable "same file" key for a Mega node: `mega:<parentFolderHandle>:<name>`. */
+function megaSourceRef(node: MegaFile): string {
+  const parent = (node as unknown as { parent?: { nodeId?: string } }).parent?.nodeId ?? "";
+  return `mega:${parent}:${node.name ?? ""}`;
 }
 
 /**
