@@ -28,8 +28,10 @@
       </template>
       <template v-else>
         <span class="dz-title">{{ phaseLabel }}</span>
-        <div class="bar"><div class="bar-fill" :style="{ width: pct + '%' }" /></div>
-        <span class="dz-sub">{{ done }} / {{ total }}</span>
+        <div class="bar" :class="{ indet: indeterminate }">
+          <div class="bar-fill" :style="indeterminate ? undefined : { width: pct + '%' }" />
+        </div>
+        <span v-if="!indeterminate" class="dz-sub">{{ done }} / {{ total }}</span>
       </template>
     </label>
 
@@ -45,15 +47,20 @@ const emit = defineEmits<{ imported: [catalogId: string] }>();
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const busy = ref(false);
-const phase = ref<"posters" | "rows">("posters");
+const phase = ref<"reading" | "posters" | "rows">("reading");
 const done = ref(0);
 const total = ref(0);
 const error = ref("");
 
 const pct = computed(() => (total.value ? Math.round((done.value / total.value) * 100) : 0));
-const phaseLabel = computed(() =>
-  phase.value === "posters" ? "Uploading posters…" : "Importing movies…",
-);
+const indeterminate = computed(() => phase.value === "reading" || !total.value);
+const phaseLabel = computed(() => {
+  switch (phase.value) {
+    case "reading": return "Reading file…";
+    case "posters": return "Uploading posters…";
+    default: return "Importing movies…";
+  }
+});
 
 function onPick(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
@@ -69,6 +76,7 @@ async function run(file: File) {
   if (busy.value) return;
   error.value = "";
   busy.value = true;
+  phase.value = "reading";
   done.value = 0;
   total.value = 0;
   try {
@@ -121,5 +129,11 @@ async function run(file: File) {
   overflow: hidden;
 }
 .bar-fill { height: 100%; background: var(--c-gold, #c9a84c); transition: width 0.2s; }
+.bar.indet { position: relative; }
+.bar.indet .bar-fill { width: 35%; animation: indet 1.1s ease-in-out infinite; }
+@keyframes indet {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
 .err { margin-top: 0.6rem; color: var(--c-danger, #e05252); font-size: 0.82rem; }
 </style>

@@ -200,9 +200,10 @@ export async function megaPush(
  */
 export async function megaPull(
   node: MegaFile,
-  onProgress?: (done: number, total: number, phase: "posters" | "rows") => void,
+  onProgress?: (done: number, total: number, phase: "download" | "reading" | "posters" | "rows") => void,
 ): Promise<string> {
-  const file = await downloadFromMega(node);
+  // Download is the long phase for a big catalog — report its byte progress too.
+  const file = await downloadFromMega(node, (loaded, total) => onProgress?.(loaded, total, "download"));
   const blob = new Blob([file.bytes as BlobPart], { type: "application/octet-stream" });
   // Identify the file by its parent folder handle + name — stable even when a
   // push replaces the file bytes (and thus its own handle). Lets a re-pull
@@ -230,7 +231,7 @@ function megaSourceRef(node: MegaFile): string | null {
  */
 export async function megaPullPath(
   path: string = megaSettings.path,
-  onProgress?: (done: number, total: number, phase: "posters" | "rows") => void,
+  onProgress?: (done: number, total: number, phase: "download" | "reading" | "posters" | "rows") => void,
 ): Promise<string> {
   if (!storage) throw new Error("Not connected to Mega");
   const node = resolveAmcFile(storage, path);

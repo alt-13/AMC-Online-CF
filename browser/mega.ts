@@ -190,14 +190,60 @@ export function findInMega(storage: Storage, name: string): MegaFile | null {
   return children.find((f) => f.name === name) ?? null;
 }
 
-/** Download a Mega file (a node from the account, or a share link). */
-export async function downloadFromMega(fileOrLink: MegaFile | string): Promise<CloudFile> {
+// Minimal view of the Node-style Readable megajs returns in the browser — just
+// the three events we consume. Avoids pulling Node stream types into the app.
+interface DownloadStream {
+  on(ev: "data", cb: (chunk: Uint8Array) => void): void;
+  on(ev: "end", cb: () => void): void;
+  on(ev: "error", cb: (e: unknown) => void): void;
+}
+
+/**
+ * Download a Mega file (a node from the account, or a share link). Streams so a
+ * big file reports byte progress instead of sitting silent — `onProgress` fires
+ * with (bytesLoaded, bytesTotal) as chunks arrive. Errors reject (and surface in
+ * the UI) rather than hanging.
+ */
+export async function downloadFromMega(
+  fileOrLink: MegaFile | string,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<CloudFile> {
   const file = typeof fileOrLink === "string" ? MegaFile.fromURL(fileOrLink) : fileOrLink;
   if (typeof fileOrLink === "string") await file.loadAttributes();
-  // downloadBuffer is typed Buffer (Node), but in the browser megajs returns a
-  // Uint8Array-compatible value; treat it as one so no `Buffer` global is needed.
-  const buf = (await file.downloadBuffer({})) as unknown as Uint8Array;
-  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+
+  const total = file.size ?? 0;
+  const stream = file.download({}) as unknown as DownloadStream;
+
+  // Preallocate to the known size and clamp writes, so peak memory is 1× the file
+  // (matters on a phone) and a size mismatch can never overflow the buffer.
+  const buf = total > 0 ? new Uint8Array(total) : null;
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+
+  await new Promise<void>((resolve, reject) => {
+    stream.on("data", (chunk) => {
+      if (buf) {
+        const c = loaded + chunk.length > total ? chunk.subarray(0, total - loaded) : chunk;
+        buf.set(c, loaded);
+        loaded += c.length;
+      } else {
+        chunks.push(chunk);
+        loaded += chunk.length;
+      }
+      onProgress?.(loaded, total || loaded);
+    });
+    stream.on("end", () => resolve());
+    stream.on("error", (e) => reject(e instanceof Error ? e : new Error(String(e))));
+  });
+
+  let bytes: Uint8Array;
+  if (buf) {
+    bytes = loaded === total ? buf : buf.subarray(0, loaded);
+  } else {
+    bytes = new Uint8Array(loaded);
+    let off = 0;
+    for (const c of chunks) { bytes.set(c, off); off += c.length; }
+  }
   return { name: file.name ?? "", bytes, mtimeSec: file.timestamp };
 }
 

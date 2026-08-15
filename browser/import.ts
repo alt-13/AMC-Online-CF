@@ -29,8 +29,9 @@ export interface ImportOptions {
   fetcher?: AuthedFetch;
   /** Movies per commit request. Keep small to respect the Free-plan CPU cap. */
   chunkSize?: number;
-  /** Progress callback: (done, total, phase). */
-  onProgress?: (done: number, total: number, phase: "posters" | "rows") => void;
+  /** Progress callback: (done, total, phase). "reading" = parsing the binary
+   *  (done/total are 0 — it's a synchronous step, not countable). */
+  onProgress?: (done: number, total: number, phase: "reading" | "posters" | "rows") => void;
   /**
    * Stable origin key for a cloud pull (e.g. "mega:<folder>:<file>.amc"). When
    * set, once the import succeeds every older catalog with the same key is
@@ -60,6 +61,10 @@ function requester(o: ImportOptions): AuthedFetch {
 export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<string> {
   const chunkSize = opts.chunkSize ?? 200;
   const bytes = new Uint8Array(await file.arrayBuffer());
+  // Parsing a large .amc is synchronous and blocks the thread; signal "reading"
+  // and yield one macrotask so the UI paints that state before the parse locks up.
+  opts.onProgress?.(0, 0, "reading");
+  await new Promise((r) => setTimeout(r));
   const catalog = parseCatalog(bytes);
 
   // Fix the catalog id up front so a failure anywhere below — even during the

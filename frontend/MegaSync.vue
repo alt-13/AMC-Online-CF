@@ -88,10 +88,18 @@
           <span class="fname" :title="f.name">{{ f.name }}</span>
           <span class="fsize">{{ human(f.size) }}</span>
           <button class="btn" :disabled="!!importing" @click="pull(f)">
-            {{ importing === f.name ? importLabel : "Import" }}
+            {{ importing === f.name ? shortLabel : "Import" }}
           </button>
         </li>
       </ul>
+
+      <!-- import progress -->
+      <div v-if="importing" class="progress">
+        <div class="ptext">{{ phaseText }}</div>
+        <div class="bar" :class="{ indet: indeterminate }">
+          <div class="bar-fill" :style="indeterminate ? undefined : { width: pPct + '%' }" />
+        </div>
+      </div>
       <p v-else class="hint">
         No <code>.amc</code> files {{ path ? `at "${path}"` : "at your Mega account root" }}.
       </p>
@@ -102,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import {
   megaState as state,
   megaSettings as settings,
@@ -127,9 +135,36 @@ const reconnecting = ref(false);
 const error = ref("");
 const files = ref<MegaAmcFile[]>([]);
 const importing = ref<string | null>(null);
-const importLabel = ref("Import");
 const path = ref(settings.path);
 const deep = ref(false);
+
+// Import progress. `phase` drives whether done/total are bytes (download) or
+// counts (posters/rows); "reading" is the uncountable parse step.
+type Phase = "download" | "reading" | "posters" | "rows" | "";
+const phase = ref<Phase>("");
+const pDone = ref(0);
+const pTotal = ref(0);
+const pPct = computed(() => (pTotal.value ? Math.round((pDone.value / pTotal.value) * 100) : 0));
+const indeterminate = computed(() => phase.value === "reading" || (!pTotal.value && phase.value !== ""));
+const phaseText = computed(() => {
+  switch (phase.value) {
+    case "download": return `Downloading ${human(pDone.value)} / ${human(pTotal.value)}`;
+    case "reading": return "Reading file…";
+    case "posters": return `Posters ${pDone.value} / ${pTotal.value}`;
+    case "rows": return `Importing ${pDone.value} / ${pTotal.value}`;
+    default: return "Starting…";
+  }
+});
+// Compact word for the button itself.
+const shortLabel = computed(() => {
+  switch (phase.value) {
+    case "download": return pTotal.value ? `${pPct.value}%` : "Downloading…";
+    case "reading": return "Reading…";
+    case "posters": return "Posters…";
+    case "rows": return "Importing…";
+    default: return "…";
+  }
+});
 
 // On load: fetch this user's saved config, then auto-reconnect if a credential
 // is stored — so a remembered user never has to log in again.
@@ -202,18 +237,22 @@ async function applyPath() {
 async function pull(f: MegaAmcFile) {
   if (importing.value) return;
   importing.value = f.name;
-  importLabel.value = "Downloading…";
+  phase.value = "download";
+  pDone.value = 0;
+  pTotal.value = 0;
   error.value = "";
   try {
-    const id = await megaPull(f.node, (d, t, phase) => {
-      importLabel.value = phase === "posters" ? `Posters ${d}/${t}` : `Rows ${d}/${t}`;
+    const id = await megaPull(f.node, (d, t, ph) => {
+      phase.value = ph;
+      pDone.value = d;
+      pTotal.value = t;
     });
     emit("imported", id);
   } catch (e) {
     error.value = msg(e);
   } finally {
     importing.value = null;
-    importLabel.value = "Import";
+    phase.value = "";
   }
 }
 
@@ -300,4 +339,15 @@ function msg(e: unknown): string {
 .btn.ghost { background: transparent; color: var(--c-gold, #c9a84c); border: 1px solid var(--c-border, #2a2a48); }
 .btn:disabled { opacity: 0.7; cursor: default; }
 .err { color: var(--c-danger, #e05252); font-size: 0.82rem; margin: 0; }
+
+.progress { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.2rem; }
+.ptext { font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
+.bar { height: 8px; background: var(--c-elevated, #1f1f38); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--c-gold, #c9a84c); transition: width 0.2s; }
+/* Indeterminate: a sliding sliver for the uncountable parse step. */
+.bar.indet .bar-fill { width: 35%; animation: indet 1.1s ease-in-out infinite; }
+@keyframes indet {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
 </style>
