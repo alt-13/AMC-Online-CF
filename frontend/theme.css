@@ -1,0 +1,36 @@
+/*
+ * Global theme for the CF app.
+ *
+ * Every component references CSS variables with a hard-coded fallback
+ * (e.g. `var(--c-card, #181828)`), but nothing defined the variables or themed
+ * the page itself — so <body> fell back to white behind the dark cards. This
+ * defines the palette once and paints the page background dark.
+ */
+:root {
+  --c-bg: #0d0d17;          /* page background */
+  --c-card: #181828;        /* cards / panels */
+  --c-elevated: #1f1f38;    /* inputs, raised rows */
+  --c-border: #2a2a48;
+  --c-border-hi: #3a3a60;
+  --c-text: #e8e0d5;
+  --c-muted: #7e7a90;
+  --c-gold: #c9a84c;        /* accent */
+  --c-danger: #e05252;
+  --radius: 8px;
+  --font-display: "Georgia", "Times New Roman", serif;
+
+  color-scheme: dark;
+}
+
+html, body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+#app {
+  min-height: 100dvh;
+  background: var(--c-bg);
+}

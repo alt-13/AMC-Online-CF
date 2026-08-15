@@ -58,12 +58,17 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import CatalogImport from "./CatalogImport.vue";
 import MegaSync from "./MegaSync.vue";
 import MovieListView from "./MovieListView.vue";
 import { cf, downloadAmcFile, session, type CatalogRow } from "./api";
 import { megaState, megaPush } from "./mega";
+
+// Remember the last library the user opened and jump straight back into it on
+// load, instead of making them pick every time (the single-catalog Unraid app
+// always showed the one catalog; this is the multi-catalog equivalent).
+const LAST_KEY = "amc:lastCatalog";
 
 const catalogs = ref<CatalogRow[]>([]);
 const openCatalog = ref<CatalogRow | null>(null);
@@ -155,7 +160,29 @@ function fmt(ms: number): string {
   }
 }
 
-onMounted(refresh);
+// Persist whichever catalog is open so the next visit reopens it.
+watch(openCatalog, (c) => {
+  try {
+    if (c) localStorage.setItem(LAST_KEY, c.id);
+  } catch {
+    /* storage unavailable */
+  }
+});
+
+onMounted(async () => {
+  await refresh();
+  // Auto-open the remembered library on first load (only if it still exists).
+  let lastId: string | null = null;
+  try {
+    lastId = localStorage.getItem(LAST_KEY);
+  } catch {
+    /* ignore */
+  }
+  if (lastId && !openCatalog.value) {
+    const last = catalogs.value.find((c) => c.id === lastId);
+    if (last) openCatalog.value = last;
+  }
+});
 </script>
 
 <style scoped>
@@ -168,7 +195,8 @@ onMounted(refresh);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
   padding: 0.75rem 1rem;
   background: var(--c-card, #181828);
   border: 1px solid var(--c-border, #2a2a48);
@@ -176,8 +204,8 @@ onMounted(refresh);
   cursor: pointer;
 }
 .row:hover { border-color: var(--c-gold, #c9a84c); }
-.info { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
-.name { font-weight: 600; color: var(--c-text, #e8e0d5); }
+.info { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1 1 auto; }
+.name { font-weight: 600; color: var(--c-text, #e8e0d5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sub { font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
 .btn {
   background: var(--c-gold, #c9a84c);
@@ -188,11 +216,13 @@ onMounted(refresh);
   font-weight: 600;
   font-size: 0.82rem;
   cursor: pointer;
+  white-space: nowrap;
 }
 .btn.ghost { background: transparent; color: var(--c-gold, #c9a84c); border: 1px solid var(--c-border, #2a2a48); }
 .btn.ghost.danger { color: var(--c-danger, #e05252); }
 .btn.ghost.danger:hover { border-color: var(--c-danger, #e05252); }
 .btn:disabled { opacity: 0.7; cursor: default; }
-.actions { display: flex; gap: 0.5rem; align-items: center; }
-.err { color: var(--c-danger, #e05252); font-size: 0.82rem; }
+/* On a phone the three actions wrap under the name instead of overlapping it. */
+.actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.err { color: var(--c-danger, #e05252); font-size: 0.82rem; flex-basis: 100%; }
 </style>

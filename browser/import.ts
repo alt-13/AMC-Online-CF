@@ -39,6 +39,11 @@ export interface ImportOptions {
    * Omitted for direct file uploads.
    */
   sourceRef?: string | null;
+  /**
+   * Name to use when the .amc has no internal catalog name (most files don't) —
+   * typically the source filename, so the library shows "Filme" not "(untitled)".
+   */
+  fallbackName?: string;
 }
 
 function headers(o: ImportOptions, extra: Record<string, string> = {}): HeadersInit {
@@ -124,6 +129,12 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
       catalogId,
       opts.sourceRef ?? null,
     );
+
+    // Most .amc files carry no internal catalog name — fall back to the source
+    // filename so the library shows something meaningful, not "(untitled)".
+    if (!rows.catalog.name.trim() && opts.fallbackName?.trim()) {
+      rows.catalog.name = opts.fallbackName.trim();
+    }
 
     // Upload posters with a small pool of concurrent PUTs (overlaps latency).
     await uploadPosters(send, posterJobs, opts.onProgress);

@@ -222,7 +222,12 @@ export async function megaPull(
   }
 
   const blob = new Blob([bytes as BlobPart], { type: "application/octet-stream" });
-  const id = await importAmcFile(blob, { ...session(), onProgress, sourceRef });
+  const id = await importAmcFile(blob, {
+    ...session(),
+    onProgress,
+    sourceRef,
+    fallbackName: (node.name ?? "").replace(/\.amc$/i, ""),
+  });
   // Imported successfully — free the cached copy.
   if (sourceRef) await dropCachedAmc(sourceRef);
   return id;

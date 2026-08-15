@@ -304,9 +304,11 @@ export async function listMovies(
   catalogId: string,
   page: Page = {},
 ): Promise<MovieRow[]> {
-  // `, id` is a stable tiebreak so LIMIT/OFFSET paging never skips or repeats a
-  // row when several share a sort_title.
-  let sql = `SELECT * FROM movies WHERE catalog_id = ? ORDER BY sort_title, id`;
+  // Default "internal index" order: by on-disk catalog number, then title. AMC
+  // numbers are NOT unique (whole series share number 1), so the title breaks
+  // those ties alphabetically; `id` is a final stable tiebreak so LIMIT/OFFSET
+  // paging never skips or repeats a row.
+  let sql = `SELECT * FROM movies WHERE catalog_id = ? ORDER BY number, sort_title, id`;
   const binds: unknown[] = [catalogId];
   if (page.limit != null) {
     sql += ` LIMIT ?`;

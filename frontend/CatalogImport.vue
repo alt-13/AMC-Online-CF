@@ -84,6 +84,7 @@ async function run(file: File) {
     const catalogId = await withWakeLock(() =>
       importAmcFile(file, {
         ...session(),
+        fallbackName: file.name.replace(/\.amc$/i, ""),
         onProgress: (d, t, ph) => {
           phase.value = ph;
           done.value = d;
