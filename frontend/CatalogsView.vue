@@ -7,7 +7,7 @@
 -->
 <template>
   <!-- drilled into one library -->
-  <MovieListView v-if="openCatalog" :catalog="openCatalog" @back="openCatalog = null" />
+  <MovieListView v-if="openCatalog" :catalog="openCatalog" @back="goBack" />
 
   <div v-else class="catalogs">
     <h2 class="title">Your libraries</h2>
@@ -64,6 +64,7 @@ import MegaSync from "./MegaSync.vue";
 import MovieListView from "./MovieListView.vue";
 import { cf, downloadAmcFile, session, type CatalogRow } from "./api";
 import { megaState, megaPush } from "./mega";
+import { pushView, goBack } from "./nav";
 
 // Remember the last library the user opened and jump straight back into it on
 // load, instead of making them pick every time (the single-catalog Unraid app
@@ -160,8 +161,11 @@ function fmt(ms: number): string {
   }
 }
 
-// Persist whichever catalog is open so the next visit reopens it.
-watch(openCatalog, (c) => {
+// Persist whichever catalog is open so the next visit reopens it, and push a
+// history entry when one opens so the OS Back button returns here (libraries).
+const catalogCloser = () => (openCatalog.value = null);
+watch(openCatalog, (c, prev) => {
+  if (c && !prev) pushView(catalogCloser);
   try {
     if (c) localStorage.setItem(LAST_KEY, c.id);
   } catch {

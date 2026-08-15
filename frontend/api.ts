@@ -264,7 +264,11 @@ export const cf = {
   posterUrl: (key: string) => `/api/poster?key=${encodeURIComponent(key)}`,
 
   posterObjectUrl: async (key: string): Promise<string> => {
-    const res = await authedFetch(`/api/poster?key=${encodeURIComponent(key)}`);
+    // no-store: we turn the bytes into an object URL, so HTTP caching gains us
+    // nothing — and it avoids the conditional-request path where the browser
+    // has the ETag but not the body and the server answers 304 with no bytes
+    // (which surfaced as posters intermittently failing to load on mobile).
+    const res = await authedFetch(`/api/poster?key=${encodeURIComponent(key)}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`poster -> ${res.status}`);
     return URL.createObjectURL(await res.blob());
   },

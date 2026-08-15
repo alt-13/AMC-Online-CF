@@ -71,7 +71,7 @@
         :movie-id="selectedId"
         :defs="defs"
         :settings="settings"
-        @back="selectedId = null"
+        @back="goBack"
         @deleted="onDeleted"
         @changed="refresh"
       />
@@ -102,6 +102,7 @@ import MovieDetail from "./MovieDetail.vue";
 import SettingsDialog from "./SettingsDialog.vue";
 import OmdbDialog from "./OmdbDialog.vue";
 import { DEFAULT_SETTINGS, type AppSettings } from "./fields";
+import { pushView, goBack, dropView } from "./nav";
 
 const props = defineProps<{ catalog: CatalogRow }>();
 defineEmits<{ (e: "back"): void }>();
@@ -217,6 +218,7 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
   ro?.disconnect();
+  dropView(detailCloser); // don't leak a closer if we unmount with detail open
   objectUrls.forEach((u) => URL.revokeObjectURL(u));
 });
 
@@ -243,8 +245,17 @@ async function refresh() {
   movies.value = await cf.listMovies(props.catalog.id);
 }
 
-function select(id: string) {
+// Opening a movie is a history level so the OS Back button returns to the list
+// (not out of the app). `detailCloser` is stable so hardware Back and the
+// on-screen "← Back" both resolve to the same close.
+const detailCloser = () => (selectedId.value = null);
+function openDetail(id: string) {
+  const wasOpen = selectedId.value !== null;
   selectedId.value = id;
+  if (!wasOpen) pushView(detailCloser); // one level whether or not you switch rows
+}
+function select(id: string) {
+  openDetail(id);
 }
 
 async function onCreate(patch: Partial<MovieRow> = {}) {
@@ -253,7 +264,7 @@ async function onCreate(patch: Partial<MovieRow> = {}) {
   try {
     const created = await cf.createMovie(props.catalog.id, patch);
     await refresh();
-    selectedId.value = created.id; // jump straight into the editor
+    openDetail(created.id); // jump straight into the editor
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -273,7 +284,7 @@ async function createFromOmdb(patch: Partial<MovieRow>, posterUrl: string) {
       }
     }
     await refresh();
-    selectedId.value = created.id;
+    openDetail(created.id);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -282,8 +293,8 @@ async function createFromOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 }
 
 function onDeleted() {
-  selectedId.value = null;
   void refresh();
+  goBack(); // pops the detail history level and closes it
 }
 </script>
 
