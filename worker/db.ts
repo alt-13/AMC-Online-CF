@@ -304,11 +304,11 @@ export async function listMovies(
   catalogId: string,
   page: Page = {},
 ): Promise<MovieRow[]> {
-  // Default "internal index" order: by on-disk catalog number, then title. AMC
-  // numbers are NOT unique (whole series share number 1), so the title breaks
-  // those ties alphabetically; `id` is a final stable tiebreak so LIMIT/OFFSET
-  // paging never skips or repeats a row.
-  let sql = `SELECT * FROM movies WHERE catalog_id = ? ORDER BY number, sort_title, id`;
+  // Default "internal index" order, matching the Unraid app: by on-disk catalog
+  // number DESCENDING. AMC numbers are NOT unique (whole series share number 1),
+  // so the title breaks those ties alphabetically; `id` is a final stable
+  // tiebreak so LIMIT/OFFSET paging never skips or repeats a row.
+  let sql = `SELECT * FROM movies WHERE catalog_id = ? ORDER BY number DESC, sort_title, id`;
   const binds: unknown[] = [catalogId];
   if (page.limit != null) {
     sql += ` LIMIT ?`;
