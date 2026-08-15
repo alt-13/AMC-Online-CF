@@ -22,11 +22,15 @@
   "compatibility_date": "2025-01-01",
   "compatibility_flags": ["nodejs_compat"],
 
+  // Served at a custom domain on the account's alpenglut.eu zone. `custom_domain`
+  // makes Cloudflare create the DNS record + edge cert automatically.
+  "routes": [{ "pattern": "amc.alpenglut.eu", "custom_domain": true }],
+
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "amc",
-      "database_id": "REPLACE_WITH_d1_create_OUTPUT"
+      "database_id": "a9284840-4d6a-4e87-84b0-0e73b31d40f9"
     }
   ],
 
