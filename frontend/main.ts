@@ -6,5 +6,9 @@
 
 import { createApp } from "vue";
 import App from "./App.vue";
+import { pruneCachedAmc } from "./amccache";
 
 createApp(App).mount("#app");
+
+// Reclaim space from any abandoned .amc download caches (older than a day).
+void pruneCachedAmc();

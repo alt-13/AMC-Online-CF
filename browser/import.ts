@@ -54,6 +54,37 @@ function requester(o: ImportOptions): AuthedFetch {
   );
 }
 
+/** How many poster PUTs to keep in flight at once. Enough to hide round-trip
+ *  latency without overwhelming a phone connection or the Worker. */
+const POSTER_CONCURRENCY = 6;
+
+/** PUT every poster to R2 with a bounded pool of concurrent workers. Rejects (so
+ *  the import rolls back) on the first failure. Reports "posters" progress. */
+async function uploadPosters(
+  send: AuthedFetch,
+  jobs: Array<{ data: Uint8Array; key: string }>,
+  onProgress?: (done: number, total: number, phase: "reading" | "posters" | "rows") => void,
+): Promise<void> {
+  const total = jobs.length;
+  if (!total) return;
+  onProgress?.(0, total, "posters");
+  let next = 0;
+  let done = 0;
+  async function worker(): Promise<void> {
+    while (next < jobs.length) {
+      const job = jobs[next++];
+      const res = await send(
+        "/api/import/poster",
+        { method: "PUT", body: job.data as BodyInit },
+        { "x-poster-key": job.key, "content-type": "application/octet-stream" },
+      );
+      if (!res.ok) throw new Error(`poster upload failed (${res.status}) for ${job.key}`);
+      onProgress?.(++done, total, "posters");
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(POSTER_CONCURRENCY, total) }, worker));
+}
+
 /**
  * Parse an .amc file and import it. Returns the new catalog id.
  * `file` is a File/Blob from an <input type="file"> or drag-and-drop.
@@ -74,28 +105,28 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
   const send = requester(opts);
 
   try {
-    // Flatten to rows; each poster is PUT to R2 as it is encountered.
-    let posterCount = 0;
+    // Flatten to rows. Poster keys are deterministic, so we just RECORD each
+    // upload here and return the key immediately; the bytes are pushed to R2
+    // afterwards with bounded concurrency. Uploading one-at-a-time was the main
+    // slowdown — a big catalog is thousands of serial round-trips over a phone.
+    const posterJobs: Array<{ data: Uint8Array; key: string }> = [];
     const rows: ImportResult = await catalogToRows(
       catalog,
       opts.tenantId,
       {
         newId: () => crypto.randomUUID(),
         now: () => Date.now(),
-        putPoster: async (data, key) => {
-          const res = await send(
-            "/api/import/poster",
-            { method: "PUT", body: data as BodyInit },
-            { "x-poster-key": key, "content-type": "application/octet-stream" },
-          );
-          if (!res.ok) throw new Error(`poster upload failed (${res.status}) for ${key}`);
-          opts.onProgress?.(++posterCount, catalog.movies.length, "posters");
-          return key;
+        putPoster: (data, key) => {
+          posterJobs.push({ data, key });
+          return Promise.resolve(key);
         },
       },
       catalogId,
       opts.sourceRef ?? null,
     );
+
+    // Upload posters with a small pool of concurrent PUTs (overlaps latency).
+    await uploadPosters(send, posterJobs, opts.onProgress);
 
     // 1. Create the catalog + custom field definitions.
     const created = await send(

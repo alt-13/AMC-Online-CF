@@ -42,6 +42,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { importAmcFile, session } from "./api";
+import { withWakeLock } from "./wakelock";
 
 const emit = defineEmits<{ imported: [catalogId: string] }>();
 
@@ -80,14 +81,16 @@ async function run(file: File) {
   done.value = 0;
   total.value = 0;
   try {
-    const catalogId = await importAmcFile(file, {
-      ...session(),
-      onProgress: (d, t, ph) => {
-        phase.value = ph;
-        done.value = d;
-        total.value = t;
-      },
-    });
+    const catalogId = await withWakeLock(() =>
+      importAmcFile(file, {
+        ...session(),
+        onProgress: (d, t, ph) => {
+          phase.value = ph;
+          done.value = d;
+          total.value = t;
+        },
+      }),
+    );
     emit("imported", catalogId);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);

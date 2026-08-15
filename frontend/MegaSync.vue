@@ -124,6 +124,7 @@ import {
   megaPull,
   type MegaAmcFile,
 } from "./mega";
+import { withWakeLock } from "./wakelock";
 
 const emit = defineEmits<{ imported: [catalogId: string] }>();
 
@@ -242,11 +243,13 @@ async function pull(f: MegaAmcFile) {
   pTotal.value = 0;
   error.value = "";
   try {
-    const id = await megaPull(f.node, (d, t, ph) => {
-      phase.value = ph;
-      pDone.value = d;
-      pTotal.value = t;
-    });
+    const id = await withWakeLock(() =>
+      megaPull(f.node, (d, t, ph) => {
+        phase.value = ph;
+        pDone.value = d;
+        pTotal.value = t;
+      }),
+    );
     emit("imported", id);
   } catch (e) {
     error.value = msg(e);

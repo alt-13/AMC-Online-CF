@@ -10,7 +10,7 @@ import type { AMCCatalog, AMCMovie } from "../amc/types";
 // `fetcher` — which also pins that import honours the injected request function
 // (the app passes one that refreshes an expired token mid-import).
 
-function movie(title: string): AMCMovie {
+function movie(title: string, poster?: Uint8Array): AMCMovie {
   return {
     number: 1, date: 0, dateWatched: 0, userRating: -1, rating: -1, year: -1,
     length: -1, videoBitrate: 0, audioBitrate: 0, disks: 1, colorTag: 0,
@@ -20,16 +20,16 @@ function movie(title: string): AMCMovie {
     actors: "", url: "", description: "", comments: "", filePath: "",
     videoFormat: "", audioFormat: "", resolution: "", framerate: "",
     languages: "", subtitles: "", size: "",
-    picture: { picPath: "", picData: new Uint8Array(0) },
+    picture: { picPath: poster ? "p.jpg" : "", picData: poster ?? new Uint8Array(0) },
     customFieldValues: [], extras: [],
   };
 }
 
-function amcBlob(): Blob {
+function amcBlob(movies: AMCMovie[] = [movie("Stalker")]): Blob {
   const cat: AMCCatalog = {
     version: 42, name: "Films", mail: "", site: "", description: "",
     cfpColumnSettings: "", cfpGuiProperties: "", customFieldDefs: [],
-    movies: [movie("Stalker")],
+    movies,
   };
   return new Blob([serializeCatalog(cat) as BlobPart]);
 }
@@ -100,5 +100,31 @@ describe("importAmcFile", () => {
     const { calls, fetcher } = stub();
     await importAmcFile(amcBlob(), { tenantId: "t1", fetcher });
     expect(calls.some((c) => c.endsWith("/supersede"))).toBe(false);
+  });
+
+  it("uploads every poster (in parallel) before creating the catalog", async () => {
+    const { calls, fetcher } = stub();
+    const movies = [
+      movie("A", new Uint8Array([1, 2, 3])),
+      movie("B", new Uint8Array([4, 5, 6])),
+      movie("C", new Uint8Array([7, 8, 9])),
+    ];
+    await importAmcFile(amcBlob(movies), { tenantId: "t1", fetcher, chunkSize: 50 });
+
+    const posters = calls.filter((c) => c === "/api/import/poster");
+    expect(posters).toHaveLength(3);
+    // Posters land before the catalog row (export/UI expect the bytes present).
+    expect(calls.lastIndexOf("/api/import/poster")).toBeLessThan(calls.indexOf("/api/import/catalog"));
+  });
+
+  it("rolls back if a poster upload fails", async () => {
+    const { calls, fetcher } = stub("/api/import/poster");
+    const movies = [movie("A", new Uint8Array([1, 2, 3]))];
+    await expect(
+      importAmcFile(amcBlob(movies), { tenantId: "t1", fetcher }),
+    ).rejects.toThrow(/poster upload failed/);
+    expect(calls.some((c) => c.startsWith("/api/import/abort"))).toBe(true);
+    // Never reached catalog creation.
+    expect(calls).not.toContain("/api/import/catalog");
   });
 });

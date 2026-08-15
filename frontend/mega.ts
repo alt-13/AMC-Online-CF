@@ -27,6 +27,7 @@ import {
   type MegaCredentials,
 } from "../browser/mega";
 import type { Storage, File as MegaFile } from "megajs";
+import { getCachedAmc, putCachedAmc, dropCachedAmc } from "./amccache";
 
 // megajs's own MutableFile class (the node type with .delete) isn't exported from
 // its type defs, only File is. We only need the .delete method here.
@@ -202,13 +203,29 @@ export async function megaPull(
   node: MegaFile,
   onProgress?: (done: number, total: number, phase: "download" | "reading" | "posters" | "rows") => void,
 ): Promise<string> {
-  // Download is the long phase for a big catalog — report its byte progress too.
-  const file = await downloadFromMega(node, (loaded, total) => onProgress?.(loaded, total, "download"));
-  const blob = new Blob([file.bytes as BlobPart], { type: "application/octet-stream" });
   // Identify the file by its parent folder handle + name — stable even when a
-  // push replaces the file bytes (and thus its own handle). Lets a re-pull
-  // supersede the previous catalog instead of stacking duplicates.
-  return importAmcFile(blob, { ...session(), onProgress, sourceRef: megaSourceRef(node) });
+  // push replaces the file bytes (and thus its own handle). Doubles as the cache
+  // key and the re-pull dedup key (supersede).
+  const sourceRef = megaSourceRef(node);
+
+  // Skip the (large, phone-killable) download if we already have these bytes
+  // cached from an earlier attempt that got interrupted.
+  let bytes = sourceRef ? await getCachedAmc(sourceRef) : null;
+  if (bytes) {
+    onProgress?.(bytes.length, bytes.length, "download"); // already here — show 100%
+  } else {
+    const file = await downloadFromMega(node, (loaded, total) => onProgress?.(loaded, total, "download"));
+    bytes = file.bytes;
+    // Cache the completed download so a kill during parse/upload doesn't force a
+    // re-download on retry. Best-effort.
+    if (sourceRef) await putCachedAmc(sourceRef, bytes);
+  }
+
+  const blob = new Blob([bytes as BlobPart], { type: "application/octet-stream" });
+  const id = await importAmcFile(blob, { ...session(), onProgress, sourceRef });
+  // Imported successfully — free the cached copy.
+  if (sourceRef) await dropCachedAmc(sourceRef);
+  return id;
 }
 
 /**
