@@ -51,6 +51,30 @@
             </select>
           </div>
         </div>
+
+        <div class="section">
+          <div class="sec-head static"><span class="sec-label">OMDb API key</span></div>
+          <div class="key-row">
+            <p class="key-note">
+              Powers “⚡ Fetch → new” (IMDb/OMDb metadata). Get a free key at
+              <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">omdbapi.com</a>.
+            </p>
+            <input
+              v-model="omdbInput"
+              type="password"
+              autocomplete="off"
+              :placeholder="omdbKey.personal ? 'A key is saved — type to replace it' : 'Paste your OMDb API key…'"
+            />
+            <div class="key-actions">
+              <span class="key-state" :class="{ ok: omdbKey.hasKey }">
+                {{ omdbKey.personal ? "✓ Your key is saved"
+                   : omdbKey.hasKey ? "Using the server's shared key"
+                   : "No key set — fetch is disabled" }}
+              </span>
+              <button v-if="omdbKey.personal" class="link danger" @click="removeKey">Remove</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <footer class="foot">
@@ -69,7 +93,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { settings as settingsApi, type CustomFieldDefRow } from "./api";
+import { settings as settingsApi, omdb, type CustomFieldDefRow, type OmdbKeyState } from "./api";
 import { sectionsFor, DEFAULT_SETTINGS, type AppSettings } from "./fields";
 
 const props = defineProps<{ defs: CustomFieldDefRow[] }>();
@@ -83,13 +107,31 @@ const expanded = ref(new Set(["main"]));
 const saving = ref(false);
 const error = ref("");
 
+const omdbKey = ref<OmdbKeyState>({ hasKey: false, personal: false });
+const omdbInput = ref("");
+
 onMounted(async () => {
   try {
     draft.value = { ...structuredClone(DEFAULT_SETTINGS), ...(await settingsApi.get()) };
   } catch {
     /* defaults */
   }
+  try {
+    omdbKey.value = await omdb.keyState();
+  } catch {
+    /* leave defaults */
+  }
 });
+
+async function removeKey() {
+  error.value = "";
+  try {
+    omdbKey.value = await omdb.saveKey(null);
+    omdbInput.value = "";
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
 
 function vis(key: string, mode: "desktop" | "mobile"): boolean {
   if (key === "original_title") return true;
@@ -109,6 +151,11 @@ async function save() {
   saving.value = true;
   error.value = "";
   try {
+    // Only send the OMDb key when the user actually typed one (blank = keep).
+    if (omdbInput.value.trim()) {
+      omdbKey.value = await omdb.saveKey(omdbInput.value.trim());
+      omdbInput.value = "";
+    }
     const saved = await settingsApi.save(draft.value);
     emit("saved", saved);
     emit("close");
@@ -151,6 +198,14 @@ function close() {
 .name { font-size: 0.8rem; }
 .search-row { padding: 0.5rem 1rem 0.7rem 1.75rem; }
 .search-row select { width: 100%; padding: 0.4rem; background: var(--c-elevated, #1f1f38); color: var(--c-text, #e8e0d5); border: 1px solid var(--c-border, #2a2a48); border-radius: 6px; }
+.key-row { padding: 0.5rem 1rem 0.7rem 1.75rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.key-note { font-size: 0.72rem; color: var(--c-muted, #7e7a90); margin: 0; }
+.key-note a { color: var(--c-gold, #c9a84c); }
+.key-row input { width: 100%; padding: 0.4rem; background: var(--c-elevated, #1f1f38); color: var(--c-text, #e8e0d5); border: 1px solid var(--c-border, #2a2a48); border-radius: 6px; }
+.key-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.key-state { font-size: 0.72rem; color: var(--c-muted, #7e7a90); }
+.key-state.ok { color: var(--c-gold, #c9a84c); }
+.link.danger { color: var(--c-danger, #e05252); }
 .foot { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-top: 1px solid var(--c-border, #2a2a48); }
 .link { background: none; border: none; color: var(--c-muted, #7e7a90); font-size: 0.75rem; cursor: pointer; }
 .link:hover { color: var(--c-gold, #c9a84c); }

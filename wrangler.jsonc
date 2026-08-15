@@ -14,9 +14,11 @@
   // then paste the printed database_id below.
   //
   // Secrets (not in this file):
-  //   npx wrangler secret put AUTH_SECRET     (required — JWT/PBKDF2 key)
-  //   npx wrangler secret put OMDB_API_KEY    (optional — enables movie lookup;
-  //                                            free key at omdbapi.com/apikey.aspx)
+  //   npx wrangler secret put AUTH_SECRET       (required — JWT/PBKDF2 key)
+  //   npx wrangler secret put ENCRYPTION_SECRET (optional — separate key for
+  //                                              encrypting stored credentials)
+  //   npx wrangler secret put OMDB_API_KEY      (optional shared fallback only;
+  //     the OMDb key is normally set per-user in-app under Settings)
   "name": "amc-online",
   "main": "worker/index.ts",
   "compatibility_date": "2025-01-01",

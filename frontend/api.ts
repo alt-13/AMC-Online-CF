@@ -287,12 +287,30 @@ export interface OmdbResult {
   poster_url: string;
 }
 
+export interface OmdbKeyState {
+  hasKey: boolean; // a usable key exists (personal or global fallback)
+  personal: boolean; // this user has their own key stored
+}
+
 export const omdb = {
   search: (query: string) =>
     jget<OmdbSuggestion[]>(`/api/omdb/search?q=${encodeURIComponent(query)}`),
 
   fetch: (ttOrUrl: string) =>
     jget<OmdbResult>(`/api/omdb/fetch?i=${encodeURIComponent(ttOrUrl)}`),
+
+  /** Whether an OMDb key is available (never returns the key itself). */
+  keyState: () => jget<OmdbKeyState>("/api/omdb/key"),
+
+  /** Set (string), keep ("" / undefined), or clear (null) the personal key. */
+  saveKey: async (key: string | null): Promise<OmdbKeyState> => {
+    const res = await authedFetch("/api/omdb/key", {
+      method: "PUT",
+      body: JSON.stringify({ key }),
+    }, { "content-type": "application/json" });
+    if (!res.ok) throw new Error(`save OMDb key -> ${res.status}`);
+    return res.json() as Promise<OmdbKeyState>;
+  },
 };
 
 // --- app settings (field visibility + search field) ------------------------

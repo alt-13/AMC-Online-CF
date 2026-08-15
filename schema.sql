@@ -170,6 +170,11 @@ CREATE TABLE IF NOT EXISTS user_cloud (
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   data       TEXT NOT NULL DEFAULT '{}',
+  -- OMDb API key, encrypted at rest exactly like user_cloud.credential (AES-GCM,
+  -- never plaintext). Per-user so the OMDb key is set in-app, not as a Worker
+  -- secret — the only deploy-time secret is then the Cloudflare token. NULL = use
+  -- the optional global OMDB_API_KEY env var, if the operator set one.
+  omdb_key   TEXT,
   updated_at INTEGER NOT NULL
 );
 

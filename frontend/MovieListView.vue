@@ -61,6 +61,7 @@
     <OmdbDialog
       v-if="omdbOpen"
       @close="omdbOpen = false"
+      @open-settings="omdbOpen = false; settingsOpen = true"
       @apply="createFromOmdb"
     />
   </div>

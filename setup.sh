@@ -87,9 +87,11 @@ else
   esac
 fi
 
-# OMDB_API_KEY: optional. Blank Enter skips it.
-read -r -p "OMDB_API_KEY (optional, Enter to skip — free key at omdbapi.com): " omdb_key || true
-[ -n "${omdb_key:-}" ] && put_secret OMDB_API_KEY "$omdb_key" || echo "  OMDB_API_KEY skipped (movie lookup disabled)"
+# OMDb key is set per-user in-app (Settings → OMDb API key), encrypted at rest,
+# so no OMDb secret is needed to deploy. An operator can still set a shared
+# fallback manually if they want one for every user:
+#   npx wrangler secret put OMDB_API_KEY
+echo "  OMDb key: set per-user in-app (Settings) — no deploy secret needed"
 
 # --- 5. deploy ------------------------------------------------------------
 say "Building frontend + deploying worker"

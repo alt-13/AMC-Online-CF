@@ -23,8 +23,10 @@ export interface Env {
    *  to AUTH_SECRET when unset. Set one if you ever rotate AUTH_SECRET so stored
    *  Mega credentials survive the rotation. wrangler secret put ENCRYPTION_SECRET */
   ENCRYPTION_SECRET?: string;
-  /** OMDb API key for the movie-lookup feature. Optional; set with:
-   *  wrangler secret put OMDB_API_KEY  (get a free key at omdbapi.com). */
+  /** OPTIONAL global fallback OMDb key. The key is normally per-user (set in
+   *  Settings, encrypted in user_settings.omdb_key), so a deploy needs no OMDb
+   *  secret at all. Set this only to give every user a shared default:
+   *  wrangler secret put OMDB_API_KEY  (free key at omdbapi.com). */
   OMDB_API_KEY?: string;
 }
 
@@ -114,6 +116,29 @@ export async function upsertUserSettings(
      ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
   )
     .bind(userId, data, now)
+    .run();
+}
+
+/** The user's encrypted OMDb key (base64 iv‖ciphertext), or null if none set. */
+export async function getOmdbKey(env: Env, userId: string): Promise<string | null> {
+  const row = await env.DB.prepare(`SELECT omdb_key FROM user_settings WHERE user_id = ?`)
+    .bind(userId)
+    .first<{ omdb_key: string | null }>();
+  return row?.omdb_key ?? null;
+}
+
+/** Store (or clear, with null) the encrypted OMDb key without touching `data`. */
+export async function setOmdbKey(
+  env: Env,
+  userId: string,
+  encrypted: string | null,
+  now: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_id, omdb_key, updated_at) VALUES (?,?,?)
+     ON CONFLICT(user_id) DO UPDATE SET omdb_key = excluded.omdb_key, updated_at = excluded.updated_at`,
+  )
+    .bind(userId, encrypted, now)
     .run();
 }
 

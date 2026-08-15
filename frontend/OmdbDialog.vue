@@ -35,18 +35,29 @@
           </li>
         </ul>
       </div>
-      <p class="hint">Fetch needs the operator's <code>OMDB_API_KEY</code> secret set.</p>
+      <p class="hint" :class="{ warn: keyState && !keyState.hasKey }">
+        <template v-if="keyState && !keyState.hasKey">
+          Fetch needs a free OMDb API key.
+          <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">Get one</a>,
+          then <button class="inline-link" @click="emit('open-settings')">add it in Settings →</button>
+        </template>
+        <template v-else>
+          Metadata from IMDb / OMDb. Manage your key in
+          <button class="inline-link" @click="emit('open-settings')">Settings</button>.
+        </template>
+      </p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
-import { omdb, type MovieRow, type OmdbSuggestion } from "./api";
+import { omdb, type MovieRow, type OmdbSuggestion, type OmdbKeyState } from "./api";
 
 const props = defineProps<{ initialQuery?: string }>();
 const emit = defineEmits<{
   (e: "close"): void;
+  (e: "open-settings"): void;
   (e: "apply", patch: Partial<MovieRow>, posterUrl: string): void;
 }>();
 
@@ -57,9 +68,11 @@ const busy = ref(false);
 const fetching = ref<string | null>(null);
 const searched = ref(false);
 const error = ref("");
+const keyState = ref<OmdbKeyState | null>(null);
 
 onMounted(() => {
   input.value?.focus();
+  void omdb.keyState().then((s) => (keyState.value = s)).catch(() => {});
   if (query.value.trim()) void run();
 });
 
@@ -120,7 +133,9 @@ function close() {
 .muted { color: var(--c-muted, #7e7a90); font-size: 0.85rem; }
 .err { color: var(--c-danger, #e05252); font-size: 0.82rem; }
 .hint { padding: 0.6rem 1rem 0.9rem; font-size: 0.72rem; color: var(--c-muted, #7e7a90); }
-.hint code { background: var(--c-elevated, #1f1f38); padding: 0 0.3rem; border-radius: 4px; }
+.hint.warn { color: var(--c-danger, #e05252); }
+.hint a { color: var(--c-gold, #c9a84c); }
+.inline-link { background: none; border: none; padding: 0; font: inherit; color: var(--c-gold, #c9a84c); cursor: pointer; text-decoration: underline; }
 button.primary { background: var(--c-gold, #c9a84c); color: #0a0a14; border: none; border-radius: 6px; padding: 0.45rem 0.9rem; font-weight: 600; font-size: 0.82rem; cursor: pointer; }
 button.primary:disabled { opacity: 0.6; cursor: default; }
 </style>

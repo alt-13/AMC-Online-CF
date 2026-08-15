@@ -159,6 +159,29 @@ All routes except `/api/auth/*` require `Authorization: Bearer <access_token>`.
 
 ## Deploy
 
+### Cloudflare API token
+
+`setup.sh` authenticates via `wrangler login` (browser OAuth) OR a
+`CLOUDFLARE_API_TOKEN` env var (headless / CI). If you use a token, create it at
+**dash.cloudflare.com → My Profile → API Tokens** with these permissions — the
+account *role* doesn't matter, only the scopes ticked on the token itself:
+
+| Scope | Permission | Why |
+| --- | --- | --- |
+| Account · **D1** | Edit | create the `amc` database, apply the schema |
+| Account · **Workers R2 Storage** | Edit | create the `amc-posters` bucket |
+| Account · **Workers Scripts** | Edit | deploy the Worker + static assets |
+| Zone · **Workers Routes** | Edit | *(custom domain only)* attach `app.example.com` |
+| Zone · **DNS** | Edit | *(custom domain only)* the record `custom_domain` creates |
+| Zone · **Zone** | Read | *(custom domain only)* resolve the zone |
+
+Shortcut: start from the **"Edit Cloudflare Workers"** template, then **add D1 →
+Edit** (not in the template) and the three Zone rows if you're using a custom
+domain. Scope the Zone rows to just the domain you're deploying to.
+
+No OMDb secret is required — the OMDb key is set per-user in-app (Settings),
+encrypted at rest. See "OMDb key" below.
+
 **One command on a fresh account:**
 
 ```sh
@@ -167,9 +190,9 @@ cd cf && ./setup.sh
 
 `setup.sh` logs in if needed, creates the D1 database + R2 bucket, **writes the
 `database_id` into `wrangler.jsonc`**, applies `schema.sql`, sets `AUTH_SECRET`
-(random-generated on Enter) and the optional `OMDB_API_KEY` **via stdin — never
-the dashboard**, then builds the frontend and deploys. It's re-runnable (existing
-resources are detected and skipped), so it doubles as a rotate-a-secret tool.
+and (optionally) `ENCRYPTION_SECRET` **via stdin — never the dashboard**, then
+builds the frontend and deploys. It's re-runnable (existing resources are
+detected and skipped), so it doubles as a rotate-a-secret tool.
 
 The equivalent manual steps:
 
@@ -180,14 +203,21 @@ npx wrangler d1 create amc                  # paste database_id into wrangler.js
 npx wrangler r2 bucket create amc-posters
 npx wrangler d1 execute amc --remote --file=schema.sql
 npx wrangler secret put AUTH_SECRET          # JWT/PBKDF2 signing secret (required)
-npx wrangler secret put OMDB_API_KEY         # optional — enables movie lookup
 npm run build                                # vite -> cf/dist (the assets binding)
 npx wrangler deploy
 ```
 
-Only `AUTH_SECRET` and `OMDB_API_KEY` are true secrets (encrypted secret store,
-set via stdin). The D1 `database_id` is not sensitive — it lives in the committed
-`wrangler.jsonc` and is useless without your account credentials.
+`AUTH_SECRET` (and optional `ENCRYPTION_SECRET`) are the only true secrets
+(encrypted secret store, set via stdin). The D1 `database_id` is not sensitive —
+it lives in the committed `wrangler.jsonc` and is useless without your account
+credentials.
+
+**OMDb key.** Movie-metadata lookup ("⚡ Fetch → new") uses OMDb, which needs a
+free key from [omdbapi.com](https://www.omdbapi.com/apikey.aspx). Each user sets
+their own in **Settings → OMDb API key**; it's encrypted at rest in
+`user_settings.omdb_key` and never leaves the server. An operator *may* still set
+a global `OMDB_API_KEY` secret as a shared fallback, but it's optional — the
+deploy needs no OMDb secret at all.
 
 Dev: run `npx wrangler dev` (local D1 + R2 emulation, serves /api on :8787) and
 `npm run dev` (vite on :5173, proxies /api to :8787) side by side.
