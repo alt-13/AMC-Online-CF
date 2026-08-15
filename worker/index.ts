@@ -132,8 +132,16 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     const movies = (body.movies ?? []).map((mv) => ({ ...mv, catalog_id: cat.id }));
     const movieIds = new Set(movies.map((mv) => mv.id));
     const extras = (body.extras ?? []).filter((e) => movieIds.has(e.movie_id));
-    await db.insertMovies(env, movies);
-    await db.insertExtras(env, extras);
+    try {
+      await db.insertMovies(env, movies);
+      await db.insertExtras(env, extras);
+    } catch (e) {
+      // Surface the real DB error instead of a generic 500 so the import UI can
+      // show why (e.g. a UNIQUE constraint) rather than "internal error".
+      const detail = e instanceof Error ? e.message : String(e);
+      console.error("import/movies insert failed", detail);
+      return err(422, `movie insert failed: ${detail}`);
+    }
     await db.touchCatalog(env, catalogId, Date.now());
     return json({ inserted: movies.length });
   }
