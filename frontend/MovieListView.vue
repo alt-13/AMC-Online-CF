@@ -514,6 +514,12 @@ function onDeleted() {
   padding: 0.6rem 0.75rem;
   border-bottom: 1px solid var(--c-border);
   flex-shrink: 0;
+  /* Lift the whole toolbar into a stacking context above the virtual table.
+     The table's .window uses will-change:transform, promoting it to its own
+     compositor layer that would otherwise paint the scope dropdown's overlap
+     region on top of the menu regardless of the menu's z-index. */
+  position: relative;
+  z-index: 20;
 }
 .search-wrap {
   flex: 1;
