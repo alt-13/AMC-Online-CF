@@ -839,7 +839,7 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 .crew-stack { flex: 1; display: flex; flex-direction: column; gap: 0.18rem; }
 .actors-stack { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
 .inline-label { font-size: 0.78rem; color: var(--c-muted); display: block; padding-left: 0.1rem; }
-.actors-area { flex: 1; resize: none; min-height: 90px; }
+.actors-area { flex: 1; resize: none; min-height: 90px; line-height: 1.4; }
 
 /* ── Field layout ── */
 .field-row { display: flex; align-items: center; gap: 0.35rem; min-height: 26px; }
@@ -860,6 +860,9 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 .url-link:hover { opacity: 1; }
 
 /* ── Native controls, themed to match the self-hosted PrimeVue look ── */
+/* .actors-area lives outside a .field-control (it sits in .actors-stack), so it
+   is listed explicitly or it would fall back to the browser's default textarea. */
+.actors-area,
 .field-control input[type="text"],
 .field-control input[type="number"],
 .field-control input[type="date"],
@@ -878,6 +881,7 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
+.actors-area:focus,
 .field-control input:focus,
 .field-control select:focus,
 .field-control textarea:focus {
