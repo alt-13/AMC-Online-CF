@@ -41,9 +41,33 @@
           <input
             v-model="searchInput"
             class="search-input"
-            placeholder="Search films…"
+            :placeholder="searchField ? `Search ${activeScopeLabel}…` : 'Search films…'"
             type="text"
           />
+          <!-- Scope filter: pick which field the search matches (mirrors the
+               self-hosted filter icon inside the search bar). -->
+          <div ref="scopeRef" class="scope">
+            <button
+              class="scope-btn"
+              :class="{ active: !!searchField }"
+              :title="searchField ? `Searching: ${activeScopeLabel}` : 'Search scope'"
+              @click.stop="scopeOpen = !scopeOpen"
+            >
+              <i class="pi pi-filter" />
+            </button>
+            <div v-if="scopeOpen" class="scope-menu">
+              <template v-for="g in scopeGroups" :key="g.label || 'all'">
+                <div v-if="g.label" class="scope-group">{{ g.label }}</div>
+                <button
+                  v-for="it in g.items"
+                  :key="it.value"
+                  class="scope-item"
+                  :class="{ sel: it.value === searchField }"
+                  @click="pickScope(it.value)"
+                >{{ it.label }}</button>
+              </template>
+            </div>
+          </div>
           <button v-if="searchInput" class="search-clear" @click="searchInput = ''">
             <i class="pi pi-times" />
           </button>
@@ -148,7 +172,10 @@ import {
 import MovieDetail from "./MovieDetail.vue";
 import SettingsDialog from "./SettingsDialog.vue";
 import OmdbDialog from "./OmdbDialog.vue";
-import { DEFAULT_SETTINGS, type AppSettings, COLOR_TAG_COLORS, COLOR_TAG_NAMES } from "./fields";
+import {
+  DEFAULT_SETTINGS, type AppSettings, COLOR_TAG_COLORS, COLOR_TAG_NAMES,
+  searchScopes, scopeLabel, ALL_SEARCH_FIELDS,
+} from "./fields";
 import { pushView, goBack, dropView } from "./nav";
 
 const props = defineProps<{ catalog: CatalogRow }>();
@@ -186,24 +213,62 @@ const filtered = computed(() => {
   const term = q.value.trim().toLowerCase();
   if (!term) return sorted.value;
   const field = settings.value.search_field;
-  return sorted.value.filter((m) => haystack(m, field).includes(term));
+  return sorted.value.filter((m) => matches(m, term, field));
 });
 
-function haystack(m: MovieRow, field: string): string {
+// "All fields" (field === "") scans the full curated field set + every custom
+// value — matching the self-hosted search. A specific scope matches only that
+// column, or the one custom field for a `custom_<tag>` scope.
+function matches(m: MovieRow, term: string, field: string): boolean {
   if (!field) {
-    return [m.original_title, m.translated_title, m.director, m.actors, m.category]
-      .join(" ")
-      .toLowerCase();
+    for (const k of ALL_SEARCH_FIELDS) {
+      if (String((m as Record<string, unknown>)[k] ?? "").toLowerCase().includes(term)) return true;
+    }
+    return customValues(m).some((v) => v.toLowerCase().includes(term));
   }
   if (field.startsWith("custom_")) {
-    try {
-      const cv = JSON.parse(m.custom_values || "{}") as Record<string, string>;
-      return String(cv[field.slice(7)] ?? "").toLowerCase();
-    } catch {
-      return "";
-    }
+    const cv = parseCustom(m);
+    return String(cv[field.slice(7)] ?? "").toLowerCase().includes(term);
   }
-  return String((m as Record<string, unknown>)[field] ?? "").toLowerCase();
+  return String((m as Record<string, unknown>)[field] ?? "").toLowerCase().includes(term);
+}
+
+function parseCustom(m: MovieRow): Record<string, string> {
+  try {
+    return JSON.parse(m.custom_values || "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function customValues(m: MovieRow): string[] {
+  return Object.values(parseCustom(m)).map(String);
+}
+
+// --- search scope (the inline filter icon) ---------------------------------
+const scopeOpen = ref(false);
+const scopeRef = ref<HTMLElement | null>(null);
+const searchField = computed(() => settings.value.search_field);
+const scopeGroups = computed(() => searchScopes(defs.value));
+const activeScopeLabel = computed(() => scopeLabel(defs.value, searchField.value));
+
+async function pickScope(value: string) {
+  scopeOpen.value = false;
+  if (settings.value.search_field === value) return;
+  settings.value = { ...settings.value, search_field: value };
+  // Persist like the self-hosted control; searching still works in-memory if it fails.
+  try {
+    await settingsApi.save(settings.value);
+  } catch {
+    /* non-critical */
+  }
+}
+
+// Close the scope menu on an outside click.
+function onDocClick(e: MouseEvent) {
+  if (scopeOpen.value && scopeRef.value && !scopeRef.value.contains(e.target as Node)) {
+    scopeOpen.value = false;
+  }
 }
 
 // --- virtual scroll --------------------------------------------------------
@@ -233,20 +298,35 @@ watch(q, () => {
   if (scroller.value) scroller.value.scrollTop = 0;
 });
 
-// Lazy thumbnails: fetch a poster only for rows currently visible.
-const requested = new Set<string>();
+// Lazy thumbnails: fetch a poster only for rows currently visible, and cap how
+// many are in flight at once. Without this, fast-scrolling a large catalog fires
+// a request for every row it passes — hundreds of pending fetches that saturate
+// the browser's per-host connection pool and stall the detail pane when you click
+// a row (its getMovie/poster request queues behind them). We keep a queue of the
+// currently-visible-and-unloaded rows and drain it through a small pool; rows that
+// scroll off before a slot frees are dropped, so on-screen posters win the slots.
+// The cap is kept below the ~6-per-host browser limit so the detail pane always
+// has a free connection.
+const MAX_CONCURRENT_THUMBS = 4;
+const requested = new Set<string>(); // loaded or in flight — never fetched twice
+let thumbQueue: MovieRow[] = [];
+let activeThumbs = 0;
+
 watch(visible, (rows) => {
-  for (const m of rows) void ensureThumb(m);
+  thumbQueue = rows.filter((m) => m.poster_key && !thumbs[m.id] && !requested.has(m.id));
+  pumpThumbs();
 });
-async function ensureThumb(m: MovieRow) {
-  if (!m.poster_key || thumbs[m.id] || requested.has(m.id)) return;
-  requested.add(m.id);
-  try {
-    const url = await cf.posterObjectUrl(m.poster_key);
-    thumbs[m.id] = url;
-    objectUrls.push(url);
-  } catch {
-    requested.delete(m.id); // let it retry if the row scrolls back
+
+function pumpThumbs() {
+  while (activeThumbs < MAX_CONCURRENT_THUMBS && thumbQueue.length) {
+    const m = thumbQueue.shift()!;
+    if (!m.poster_key || thumbs[m.id] || requested.has(m.id)) continue;
+    requested.add(m.id);
+    activeThumbs++;
+    cf.posterObjectUrl(m.poster_key)
+      .then((url) => { thumbs[m.id] = url; objectUrls.push(url); })
+      .catch(() => { requested.delete(m.id); }) // let it retry if it scrolls back
+      .finally(() => { activeThumbs--; pumpThumbs(); });
   }
 }
 
@@ -268,9 +348,11 @@ onMounted(async () => {
     ro = new ResizeObserver(measure);
     ro.observe(scroller.value);
   }
+  document.addEventListener("click", onDocClick);
 });
 onBeforeUnmount(() => {
   ro?.disconnect();
+  document.removeEventListener("click", onDocClick);
   dropView(detailCloser); // don't leak a closer if we unmount with detail open
   objectUrls.forEach((u) => URL.revokeObjectURL(u));
 });
@@ -451,7 +533,7 @@ function onDeleted() {
   background: var(--c-elevated);
   border: 1px solid var(--c-border);
   color: var(--c-text);
-  padding: 0.4rem 1.8rem 0.4rem 1.8rem;
+  padding: 0.4rem 3.1rem 0.4rem 1.8rem;
   border-radius: var(--radius);
   font-family: var(--font-body);
   font-size: 0.825rem;
@@ -472,6 +554,68 @@ function onDeleted() {
   line-height: 1;
 }
 .search-clear:hover { color: var(--c-text); }
+
+/* Scope filter — minimal icon trigger inside the search bar + its dropdown */
+.scope {
+  position: absolute;
+  right: 1.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+}
+.scope-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--c-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0 0.2rem;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.scope-btn:hover { color: var(--c-text); }
+.scope-btn.active { color: var(--c-gold); }
+
+.scope-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 190px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 0.25rem;
+  background: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+}
+.scope-group {
+  padding: 0.4rem 0.5rem 0.15rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--c-muted);
+}
+.scope-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--c-text);
+  padding: 0.35rem 0.5rem;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.scope-item:hover { background: var(--c-surface); }
+.scope-item.sel { color: var(--c-gold); background: var(--c-gold-dim); }
 
 .new-btn {
   flex-shrink: 0;

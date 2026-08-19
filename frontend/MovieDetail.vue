@@ -429,7 +429,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onBeforeUnmount } from "vue";
+import { ref, reactive, watch, onBeforeUnmount, nextTick } from "vue";
 import { cf, session, type MovieRow, type CustomFieldDefRow, type Extra } from "./api";
 import OmdbDialog from "./OmdbDialog.vue";
 import {
@@ -445,6 +445,7 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: "back"): void; (e: "deleted"): void; (e: "changed"): void }>();
 
 const loading = ref(true);
+const hydrating = ref(false); // suppresses the dirty watcher while load() populates the form
 const saving = ref(false);
 const dirty = ref(false);
 const error = ref("");
@@ -478,6 +479,7 @@ onBeforeUnmount(() => {
 
 async function load() {
   loading.value = true;
+  hydrating.value = true;
   error.value = "";
   try {
     const m = await cf.getMovie(props.movieId);
@@ -489,13 +491,20 @@ async function load() {
     for (const d of props.defs) if (!(d.tag in custom)) custom[d.tag] = "";
     extras.value = (m.extras ?? []).map((e) => ({ ...e }));
     openSet.clear();
-    await loadPoster(m.poster_key);
-    // Start clean; the deep watcher below flags real edits.
-    dirty.value = false;
+    // Show the form as soon as the metadata is in — don't gate it on the poster
+    // bytes, which may still be queued behind the list's thumbnail fetches. The
+    // poster fills in on its own a moment later.
+    loading.value = false;
+    void loadPoster(m.poster_key);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
-  } finally {
     loading.value = false;
+  } finally {
+    // Start clean; let the hydration mutations flush under `hydrating` so the
+    // deep watcher below only flags real user edits afterwards.
+    dirty.value = false;
+    await nextTick();
+    hydrating.value = false;
   }
 }
 
@@ -516,7 +525,7 @@ async function loadPoster(key: string | null) {
 
 // Flag edits (skips the initial hydrate — dirty is reset at end of load()).
 watch([() => ({ ...form }), custom, extras], () => {
-  if (!loading.value) dirty.value = true;
+  if (!hydrating.value) dirty.value = true;
 }, { deep: true });
 
 // --- extras editing ---------------------------------------------------------

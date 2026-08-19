@@ -137,6 +137,84 @@ export function isVisible(
   return s.field_visibility[mode]?.[key] ?? true;
 }
 
+// --- search scopes (the inline filter icon in the movie list) --------------
+//
+// A curated, search-oriented grouping mirrored field-for-field from the
+// self-hosted MovieList filter. "" = all fields. Custom fields use the
+// `custom_<tag>` key so a value picked here is interchangeable with the
+// SettingsDialog "Search field" control (both persist to settings.search_field).
+export interface SearchScopeGroup {
+  label: string; // "" for the ungrouped "All fields" row
+  items: { label: string; value: string }[];
+}
+
+export function searchScopes(defs: CustomFieldDefRow[]): SearchScopeGroup[] {
+  const groups: SearchScopeGroup[] = [
+    { label: "", items: [{ label: "All fields", value: "" }] },
+    { label: "Film", items: [
+      { label: "Title", value: "original_title" },
+      { label: "Translated title", value: "translated_title" },
+      { label: "Category", value: "category" },
+      { label: "Year", value: "year" },
+      { label: "Country", value: "country" },
+      { label: "Certification", value: "certification" },
+      { label: "Description", value: "description" },
+    ] },
+    { label: "People", items: [
+      { label: "Director", value: "director" },
+      { label: "Actors", value: "actors" },
+      { label: "Producer", value: "producer" },
+      { label: "Writer", value: "writer" },
+      { label: "Composer", value: "composer" },
+    ] },
+    { label: "File", items: [
+      { label: "Media", value: "media" },
+      { label: "Media type", value: "media_type" },
+      { label: "Source", value: "source" },
+      { label: "Borrower", value: "borrower" },
+      { label: "File path", value: "file_path" },
+      { label: "URL", value: "url" },
+    ] },
+    { label: "Technical", items: [
+      { label: "Languages", value: "languages" },
+      { label: "Subtitles", value: "subtitles" },
+      { label: "Video format", value: "video_format" },
+      { label: "Audio format", value: "audio_format" },
+      { label: "Resolution", value: "resolution" },
+      { label: "Framerate", value: "framerate" },
+    ] },
+    { label: "Notes", items: [
+      { label: "Comments", value: "comments" },
+    ] },
+  ];
+  if (defs.length) {
+    groups.push({
+      label: "Custom",
+      items: defs.map((d) => ({ label: d.name || d.tag, value: `custom_${d.tag}` })),
+    });
+  }
+  return groups;
+}
+
+/** Columns an "All fields" search scans (union of the scope groups above; the
+ *  custom values are searched separately from the custom_values JSON). Mirrors
+ *  the self-hosted matchesSearch coverage. */
+export const ALL_SEARCH_FIELDS: readonly string[] = [
+  "original_title", "translated_title", "director", "actors", "country",
+  "category", "year", "producer", "writer", "composer", "certification",
+  "languages", "subtitles", "description", "comments", "media", "media_type",
+  "source", "borrower", "video_format", "audio_format", "resolution",
+  "framerate", "file_path", "url",
+];
+
+/** Human label for a scope value (for the filter tooltip). "" when not found. */
+export function scopeLabel(defs: CustomFieldDefRow[], value: string): string {
+  for (const g of searchScopes(defs)) {
+    for (const it of g.items) if (it.value === value) return it.label;
+  }
+  return "";
+}
+
 /** All sections including a Custom section for this catalog's defs. */
 export function sectionsFor(defs: CustomFieldDefRow[]): FieldSection[] {
   if (!defs.length) return STATIC_SECTIONS;
