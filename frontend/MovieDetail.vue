@@ -371,6 +371,49 @@
             </div>
           </div>
         </div>
+
+        <!-- ── Extras ── -->
+        <div v-show="showField('extras')">
+          <div class="section-sep extras-sep">
+            <span>Extras</span>
+            <button class="mini-btn" @click="addExtra"><i class="pi pi-plus" /> Add Extra</button>
+          </div>
+          <div v-if="!extras.length" class="no-extras">No extras yet.</div>
+          <div v-else class="extras-accordion">
+            <div v-for="(extra, idx) in extras" :key="idx" class="extra-panel">
+              <div class="extra-header" @click="toggleExtra(idx)">
+                <label class="switch" @click.stop>
+                  <input type="checkbox" :checked="!!extra.checked"
+                    @change="extra.checked = ($event.target as HTMLInputElement).checked ? 1 : 0" />
+                  <span class="slider" />
+                </label>
+                <span class="extra-title">{{ extra.title || `Extra ${idx + 1}` }}</span>
+                <span v-if="extra.tag" class="extra-tag-badge">{{ extra.tag }}</span>
+                <button class="pic-btn danger extra-del" title="Remove extra" @click.stop="removeExtra(idx)">
+                  <i class="pi pi-trash" />
+                </button>
+                <i class="pi extra-chevron" :class="openSet.has(idx) ? 'pi-chevron-down' : 'pi-chevron-right'" />
+              </div>
+              <div v-show="openSet.has(idx)" class="extra-content">
+                <div class="section-cols">
+                  <div class="col-fields">
+                    <div class="group-label">Info</div>
+                    <div class="field-row"><label class="field-label">Title</label><div class="field-control"><input type="text" class="full-width" v-model="extra.title" /></div></div>
+                    <div class="field-row"><label class="field-label">Tag</label><div class="field-control"><input type="text" class="full-width" v-model="extra.tag" /></div></div>
+                    <div class="field-row"><label class="field-label">Category</label><div class="field-control"><input type="text" class="full-width" v-model="extra.category" /></div></div>
+                    <div class="field-row"><label class="field-label">URL</label><div class="field-control"><input type="text" class="full-width" v-model="extra.url" /></div></div>
+                    <div class="field-row"><label class="field-label">Created By</label><div class="field-control"><input type="text" class="full-width" v-model="extra.created_by" /></div></div>
+                  </div>
+                  <div class="col-fields">
+                    <div class="group-label">Notes</div>
+                    <div class="field-row align-top"><label class="field-label top-label">Description</label><div class="field-control"><textarea class="full-width" rows="3" v-model="extra.description" /></div></div>
+                    <div class="field-row align-top"><label class="field-label top-label">Comments</label><div class="field-control"><textarea class="full-width" rows="2" v-model="extra.comments" /></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </template>
 
@@ -387,7 +430,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch, onBeforeUnmount } from "vue";
-import { cf, session, type MovieRow, type CustomFieldDefRow } from "./api";
+import { cf, session, type MovieRow, type CustomFieldDefRow, type Extra } from "./api";
 import OmdbDialog from "./OmdbDialog.vue";
 import {
   isVisible, parseCustom, delphiToInput, inputToDelphi, SENTINEL,
@@ -409,6 +452,8 @@ const omdbOpen = ref(false);
 
 const form = reactive({} as MovieRow);
 const custom = reactive<Record<string, string>>({});
+const extras = ref<Extra[]>([]);
+const openSet = reactive(new Set<number>()); // which extra panels are expanded
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const posterSrc = ref("");
@@ -442,6 +487,8 @@ async function load() {
     for (const k of Object.keys(custom)) delete custom[k];
     Object.assign(custom, parseCustom(m));
     for (const d of props.defs) if (!(d.tag in custom)) custom[d.tag] = "";
+    extras.value = (m.extras ?? []).map((e) => ({ ...e }));
+    openSet.clear();
     await loadPoster(m.poster_key);
     // Start clean; the deep watcher below flags real edits.
     dirty.value = false;
@@ -468,9 +515,26 @@ async function loadPoster(key: string | null) {
 }
 
 // Flag edits (skips the initial hydrate — dirty is reset at end of load()).
-watch([() => ({ ...form }), custom], () => {
+watch([() => ({ ...form }), custom, extras], () => {
   if (!loading.value) dirty.value = true;
 }, { deep: true });
+
+// --- extras editing ---------------------------------------------------------
+function toggleExtra(i: number) {
+  if (openSet.has(i)) openSet.delete(i);
+  else openSet.add(i);
+}
+function addExtra() {
+  extras.value.push({
+    checked: 0, tag: "", title: "", category: "",
+    url: "", description: "", comments: "", created_by: "",
+  });
+  openSet.add(extras.value.length - 1); // open the new one
+}
+function removeExtra(i: number) {
+  extras.value.splice(i, 1);
+  openSet.clear(); // indices shifted — collapse rather than mis-map open state
+}
 
 // --- field helpers ----------------------------------------------------------
 const showField = (key: string) => isVisible(props.settings, key, mode.value);
@@ -507,13 +571,16 @@ async function save() {
   saving.value = true;
   error.value = "";
   try {
-    const patch: Partial<MovieRow> = {
+    const patch: Partial<MovieRow> & { extras: Extra[] } = {
       ...form,
       custom_values: JSON.stringify(custom),
       sort_title: (form.translated_title || form.original_title).toLowerCase(),
+      extras: extras.value,
     };
-    const updated = await cf.updateMovie(form.id, patch);
-    Object.assign(form, updated);
+    const { extras: savedExtras, ...movieOnly } = await cf.updateMovie(form.id, patch);
+    Object.assign(form, movieOnly);
+    extras.value = (savedExtras ?? []).map((e) => ({ ...e }));
+    openSet.clear();
     dirty.value = false;
     emit("changed");
   } catch (e) {
@@ -949,6 +1016,75 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 .media-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.18rem 0.75rem; align-items: start; }
 .media-col { min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
 .media-col .field-label { flex: 0 0 75px; }
+
+/* ── Extras (collapsible accordion) ── */
+.extras-sep { justify-content: space-between; }
+.extras-sep::after { display: none; }
+.mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: transparent;
+  color: var(--c-gold);
+  border: 1px solid var(--c-gold);
+  border-radius: 6px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.mini-btn:hover { background: var(--c-gold-dim); }
+.no-extras { color: var(--c-muted); font-size: 0.875rem; padding: 0.5rem 0; }
+.extras-accordion { display: flex; flex-direction: column; gap: 4px; margin-top: 0.3rem; }
+.extra-panel { border: 1px solid var(--c-border); border-radius: var(--radius); overflow: hidden; }
+.extra-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--c-elevated);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.extra-header:hover { background: var(--c-border); }
+.extra-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.extra-tag-badge {
+  font-size: 0.7rem;
+  background: var(--c-gold-dim);
+  color: var(--c-gold);
+  padding: 0.1rem 0.4rem;
+  border-radius: 8px;
+  border: 1px solid rgba(201,168,76,0.3);
+}
+.extra-del { color: var(--c-muted); }
+.extra-chevron { color: var(--c-muted); font-size: 0.7rem; }
+.extra-content { padding: 0.75rem 0.6rem; background: var(--c-card); }
+.section-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+.col-fields { display: flex; flex-direction: column; gap: 0.18rem; }
+.group-label {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--c-muted);
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: 0.4rem;
+}
 
 .err { color: var(--c-danger); font-size: 0.82rem; padding: 0.5rem 1.25rem; }
 

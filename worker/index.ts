@@ -435,7 +435,12 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     if (m === "PUT") {
       const movie = await ownedMovie(env, t, id);
       if (!movie) return err(404, "movie not found");
-      const patch = (await req.json()) as Partial<MovieRow>;
+      const body = (await req.json()) as Partial<MovieRow> & { extras?: Array<Partial<ExtraRow>> };
+      // Extras (if present) are handled separately — updateMovie whitelists movie
+      // columns, so an `extras` key would be ignored, but strip it to be explicit.
+      const extrasInput = body.extras;
+      delete (body as { extras?: unknown }).extras;
+      const patch = body as Partial<MovieRow>;
       // Keep sort_title consistent with the titles even for clients that don't
       // send it (the grid orders by it). Derive from the patch overlaid on the row.
       if (("original_title" in patch || "translated_title" in patch) && !("sort_title" in patch)) {
@@ -444,8 +449,38 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
         patch.sort_title = (translated || original).toLowerCase();
       }
       await db.updateMovie(env, id, patch);
+
+      // Replace-all extras when the client sends the set. Ordinals follow array
+      // order; ids/poster_key/pic_path round-trip so existing extra posters are
+      // preserved. Posters orphaned by a removed extra are swept from R2.
+      if (Array.isArray(extrasInput)) {
+        const old = await db.getExtras(env, id);
+        const rows: ExtraRow[] = extrasInput.map((e, i) => ({
+          id: typeof e.id === "string" && e.id ? e.id : crypto.randomUUID(),
+          movie_id: id,
+          ordinal: i,
+          checked: e.checked ? 1 : 0,
+          tag: String(e.tag ?? ""),
+          title: String(e.title ?? ""),
+          category: String(e.category ?? ""),
+          url: String(e.url ?? ""),
+          description: String(e.description ?? ""),
+          comments: String(e.comments ?? ""),
+          created_by: String(e.created_by ?? ""),
+          pic_path: String(e.pic_path ?? ""),
+          poster_key: typeof e.poster_key === "string" ? e.poster_key : null,
+        }));
+        await db.replaceExtras(env, id, rows);
+        const kept = new Set(rows.map((r) => r.poster_key).filter((k): k is string => !!k));
+        const orphans = old
+          .map((e) => e.poster_key)
+          .filter((k): k is string => !!k && !kept.has(k));
+        if (orphans.length) await env.R2.delete(orphans);
+      }
+
       const updated = await db.getMovie(env, id);
-      return json(updated);
+      const extras = await db.getExtras(env, id);
+      return json({ ...updated, extras });
     }
     if (m === "DELETE") {
       const movie = await ownedMovie(env, t, id);

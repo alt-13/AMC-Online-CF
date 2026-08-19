@@ -179,6 +179,24 @@ export interface CatalogInfo extends CatalogRow {
   custom_field_defs: CustomFieldDefRow[];
 }
 
+/** One "extra" record attached to a movie (behind-the-scenes clips, trailers…).
+ *  The editor manages the text fields + `checked`; `id`/`ordinal`/`pic_path`/
+ *  `poster_key` round-trip so the Worker preserves an extra's existing poster. */
+export interface Extra {
+  id?: string;
+  ordinal?: number;
+  checked: number;
+  tag: string;
+  title: string;
+  category: string;
+  url: string;
+  description: string;
+  comments: string;
+  created_by: string;
+  pic_path?: string;
+  poster_key?: string | null;
+}
+
 export const cf = {
   listCatalogs: () => jget<CatalogRow[]>("/api/catalogs"),
 
@@ -204,15 +222,18 @@ export const cf = {
     return all;
   },
 
-  getMovie: (id: string) => jget<MovieRow & { extras: unknown[] }>(`/api/movies/${encodeURIComponent(id)}`),
+  getMovie: (id: string) => jget<MovieRow & { extras: Extra[] }>(`/api/movies/${encodeURIComponent(id)}`),
 
-  updateMovie: async (id: string, patch: Partial<MovieRow>): Promise<MovieRow> => {
+  updateMovie: async (
+    id: string,
+    patch: Partial<MovieRow> & { extras?: Extra[] },
+  ): Promise<MovieRow & { extras: Extra[] }> => {
     const res = await authedFetch(`/api/movies/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(patch),
     }, { "content-type": "application/json" });
     if (!res.ok) throw new Error(`update movie -> ${res.status}`);
-    return res.json() as Promise<MovieRow>;
+    return res.json() as Promise<MovieRow & { extras: Extra[] }>;
   },
 
   deleteMovie: async (id: string): Promise<void> => {

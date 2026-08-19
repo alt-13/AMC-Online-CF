@@ -285,6 +285,37 @@ export async function insertExtras(env: Env, extras: ExtraRow[]): Promise<void> 
   );
 }
 
+/** Replace ALL of a movie's extras in one transaction (delete + re-insert).
+ *  Ordinals come from array order. The caller handles R2 poster cleanup for any
+ *  extra removed by the edit — this only touches D1. Mirrors the "edit the whole
+ *  movie" model of updateMovie: the client sends the full extras set it wants. */
+export async function replaceExtras(
+  env: Env,
+  movieId: string,
+  extras: ExtraRow[],
+): Promise<void> {
+  const del = env.DB.prepare(`DELETE FROM movie_extras WHERE movie_id = ?`).bind(movieId);
+  if (!extras.length) {
+    await del.run();
+    return;
+  }
+  const ins = env.DB.prepare(
+    `INSERT INTO movie_extras
+       (id, movie_id, ordinal, checked, tag, title, category, url, description,
+        comments, created_by, pic_path, poster_key)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  );
+  await env.DB.batch([
+    del,
+    ...extras.map((e) =>
+      ins.bind(
+        e.id, e.movie_id, e.ordinal, e.checked, e.tag, e.title, e.category,
+        e.url, e.description, e.comments, e.created_by, e.pic_path, e.poster_key,
+      ),
+    ),
+  ]);
+}
+
 /** The next free on-disk `number` for a catalog (MAX + 1, or 1 when empty).
  *  Guarantees the UNIQUE(catalog_id, number) constraint holds for a new row. */
 export async function nextMovieNumber(env: Env, catalogId: string): Promise<number> {
