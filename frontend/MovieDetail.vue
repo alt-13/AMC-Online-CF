@@ -3,83 +3,378 @@
   scalar field (grouped, honouring the per-user visibility settings), custom
   fields, plus delete. Explicit Save (PUT /api/movies/:id). Poster changes are
   binary side-effects and persist immediately; text edits wait for Save.
+
+  Layout is a deliberate visual match of the self-hosted MovieForm.vue: the same
+  header (inline poster + meta pills + rating badges + watched toggle + colour
+  dot), the same two-column body in the same field order, and the same 4-column
+  media grid — rebuilt on native controls (this build carries no PrimeVue) styled
+  to match the themed PrimeVue look via the shared tokens.
+
+  Not ported: the Extras editor. The Worker only writes extras on import
+  (insertExtras); there is no PUT path to persist per-movie extra edits, so an
+  editable accordion here would silently drop changes. Add a worker endpoint
+  first, then the section.
 -->
 <template>
-  <div class="detail">
-    <div class="bar">
-      <button class="ghost" @click="$emit('back')">← Back</button>
-      <span class="crumb">#{{ form.number }} · {{ form.original_title || "Untitled" }}</span>
-      <div class="bar-actions">
-        <button class="ghost" @click="omdbOpen = true">⚡ Fetch</button>
-        <button class="danger" @click="onDelete">🗑 Delete</button>
-        <button class="primary" :disabled="saving" @click="save">
-          {{ saving ? "Saving…" : dirty ? "Save" : "Saved ✓" }}
-        </button>
-      </div>
-    </div>
+  <div class="movie-form">
+    <div v-if="loading" class="loading-msg">Loading…</div>
 
-    <div v-if="loading" class="muted pad">Loading…</div>
-    <div v-else class="grid">
-      <!-- poster -->
-      <div class="poster-col">
-        <div class="poster">
-          <img v-if="posterSrc" :src="posterSrc" alt="poster" />
-          <div v-else class="poster-empty">No poster</div>
-        </div>
-        <div class="poster-actions">
-          <label class="ghost file">
-            Upload…
-            <input type="file" accept="image/*" hidden @change="onFile" />
-          </label>
-          <button class="ghost" @click="fromUrl">From URL…</button>
-        </div>
-        <p v-if="posterMsg" class="muted small">{{ posterMsg }}</p>
-      </div>
-
-      <!-- fields -->
-      <div class="fields-col">
-        <template v-for="sec in sections" :key="sec.key">
-          <div v-if="sectionHasVisible(sec)" class="sec-title">{{ sec.label }}</div>
-          <template v-for="f in sec.fields" :key="f.key">
-            <div v-if="showField(f.key)" class="row" :class="{ top: isMultiline(f.key) }">
-              <label>{{ f.label }}</label>
-              <!-- custom field -->
-              <template v-if="f.key.startsWith('custom_')">
-                <input
-                  v-if="customType(f.key) === 'ftBoolean'"
-                  type="checkbox"
-                  :checked="custom[customTag(f.key)] === '1'"
-                  @change="custom[customTag(f.key)] = ($event.target as HTMLInputElement).checked ? '1' : '0'"
-                />
-                <input
-                  v-else
-                  v-model="custom[customTag(f.key)]"
-                  :type="customType(f.key) === 'ftInteger' ? 'number' : 'text'"
-                />
-              </template>
-              <!-- scalar fields -->
-              <input v-else-if="isDate(f.key)" type="date" :value="delphiToInput(num(f.key))"
-                @change="setDate(f.key, ($event.target as HTMLInputElement).value)" />
-              <input v-else-if="isBool(f.key)" type="checkbox"
-                :checked="!!form[f.key as keyof MovieRow]"
-                @change="(form as any)[f.key] = ($event.target as HTMLInputElement).checked ? 1 : 0" />
-              <select v-else-if="f.key === 'color_tag'" v-model.number="(form as any).color_tag">
-                <option v-for="(name, n) in COLOR_TAG_NAMES" :key="n" :value="Number(n)">{{ name }}</option>
-              </select>
-              <input v-else-if="f.key === 'rating' || f.key === 'user_rating'" type="number"
-                step="0.1" min="0" max="10" :value="ratingDec(f.key)"
-                @input="setRating(f.key, ($event.target as HTMLInputElement).value)" />
-              <input v-else-if="isInteger(f.key)" type="number" :value="numOrBlank(f.key)"
-                @input="setInt(f.key, ($event.target as HTMLInputElement).value)" />
-              <textarea v-else-if="isMultiline(f.key)" rows="3" v-model="(form as any)[f.key]" />
-              <input v-else type="text" v-model="(form as any)[f.key]" />
+    <template v-else>
+      <!-- ── Header ── -->
+      <div class="form-header">
+        <div class="header-left">
+          <!-- Poster panel (inline, 110×160) -->
+          <div class="picture-panel">
+            <div class="poster-wrap" @click="triggerUpload">
+              <img v-if="posterSrc" :src="posterSrc" class="poster" alt="Movie poster" />
+              <div v-else class="poster-placeholder">
+                <i class="pi pi-image" />
+                <span>Click to upload</span>
+              </div>
+              <div class="poster-overlay"><i class="pi pi-upload" /></div>
             </div>
-          </template>
-        </template>
-      </div>
-    </div>
+            <input
+              ref="fileInput"
+              type="file"
+              accept="image/*"
+              class="hidden-input"
+              @change="onFile"
+            />
+            <div class="picture-actions">
+              <button class="pic-btn" title="Upload poster" @click="triggerUpload">
+                <i class="pi pi-upload" />
+              </button>
+              <button class="pic-btn" title="From URL" @click="fromUrl">
+                <i class="pi pi-link" />
+              </button>
+              <button v-if="posterSrc" class="pic-btn danger" title="Remove poster" @click="removePoster">
+                <i class="pi pi-trash" />
+              </button>
+            </div>
+            <p v-if="posterMsg" class="poster-msg">{{ posterMsg }}</p>
+          </div>
 
-    <p v-if="error" class="err pad">{{ error }}</p>
+          <!-- Title + meta + ratings -->
+          <div class="header-info">
+            <h1 class="movie-title">{{ form.original_title || "Untitled" }}</h1>
+            <p
+              v-if="form.translated_title && form.translated_title !== form.original_title"
+              class="movie-sub mobile-hide"
+            >{{ form.translated_title }}</p>
+            <div class="header-meta">
+              <span v-if="form.year > 0" class="meta-tag">{{ form.year }}</span>
+              <span v-if="form.category" class="meta-tag mobile-hide">{{ form.category }}</span>
+              <span v-if="form.length > 0" class="meta-tag">{{ form.length }} min</span>
+              <span v-if="form.director" class="meta-tag mobile-hide">Dir. {{ form.director }}</span>
+            </div>
+            <div class="ratings-row">
+              <div v-if="form.rating > 0" class="rating-badge">
+                <i class="pi pi-star-fill" />
+                {{ (form.rating / 10).toFixed(1) }}
+                <span class="rating-label">score</span>
+              </div>
+              <div v-if="form.user_rating > 0" class="rating-badge user">
+                <i class="pi pi-user" />
+                {{ (form.user_rating / 10).toFixed(1) }}
+                <span class="rating-label">mine</span>
+              </div>
+              <div class="checked-toggle mobile-hide" @click="form.checked = form.checked ? 0 : 1">
+                <i :class="form.checked ? 'pi pi-eye' : 'pi pi-eye-slash'" />
+                <span>{{ form.checked ? "Watched" : "Unwatched" }}</span>
+              </div>
+              <div
+                class="color-tag-badge mobile-hide"
+                :style="{ background: colorOf(form.color_tag ?? 0) }"
+                :title="colorNameOf(form.color_tag ?? 0)"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button class="hbtn mobile-only" title="Back to list" @click="$emit('back')">
+            <i class="pi pi-arrow-left" />
+          </button>
+          <button class="hbtn" title="Fetch from OMDb" @click="omdbOpen = true">
+            <i class="pi pi-bolt" />
+            <span class="hbtn-label">Fetch</span>
+          </button>
+          <button class="save-btn" :disabled="saving || !dirty" @click="save">
+            <i v-if="saving" class="pi pi-spin pi-spinner" />
+            {{ saving ? "Saving…" : dirty ? "Save" : "Saved ✓" }}
+          </button>
+          <button class="hbtn danger" title="Delete film" @click="onDelete">
+            <i class="pi pi-trash" />
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Body ── -->
+      <div class="form-body">
+        <div class="form-main">
+          <!-- Left column -->
+          <div class="col-left">
+            <div class="field-row">
+              <label class="field-label">Original Title</label>
+              <div class="field-control"><input type="text" class="full-width" v-model="form.original_title" /></div>
+            </div>
+            <div class="field-row" v-show="showField('translated_title')">
+              <label class="field-label">Translated Title</label>
+              <div class="field-control"><input type="text" class="full-width" v-model="form.translated_title" /></div>
+            </div>
+
+            <!-- Crew fields alongside Actors -->
+            <div
+              class="crew-actors-row"
+              v-show="showField('director') || showField('producer') || showField('writer') ||
+                      showField('composer') || showField('actors')"
+            >
+              <div
+                class="crew-stack"
+                v-show="showField('director') || showField('producer') ||
+                        showField('writer') || showField('composer')"
+              >
+                <div class="field-row" v-show="showField('director')">
+                  <label class="field-label">Director</label>
+                  <div class="field-control"><input type="text" class="full-width" v-model="form.director" /></div>
+                </div>
+                <div class="field-row" v-show="showField('producer')">
+                  <label class="field-label">Producer</label>
+                  <div class="field-control"><input type="text" class="full-width" v-model="form.producer" /></div>
+                </div>
+                <div class="field-row" v-show="showField('writer')">
+                  <label class="field-label">Writer</label>
+                  <div class="field-control"><input type="text" class="full-width" v-model="form.writer" /></div>
+                </div>
+                <div class="field-row" v-show="showField('composer')">
+                  <label class="field-label">Composer</label>
+                  <div class="field-control"><input type="text" class="full-width" v-model="form.composer" /></div>
+                </div>
+              </div>
+              <div class="actors-stack" v-show="showField('actors')">
+                <span class="inline-label">Actors</span>
+                <textarea class="full-width actors-area" v-model="form.actors" />
+              </div>
+            </div>
+
+            <div class="field-row" v-show="showField('category')">
+              <label class="field-label">Category</label>
+              <div class="field-control"><input type="text" class="full-width" v-model="form.category" /></div>
+            </div>
+            <div class="field-row" v-show="showField('country')">
+              <label class="field-label">Country</label>
+              <div class="field-control"><input type="text" class="full-width" v-model="form.country" /></div>
+            </div>
+            <div class="field-row" v-show="showField('url')">
+              <label class="field-label">URL</label>
+              <div class="field-control url-row">
+                <input type="text" class="full-width" v-model="form.url" />
+                <a v-if="form.url" :href="form.url" target="_blank" class="url-link">
+                  <i class="pi pi-external-link" />
+                </a>
+              </div>
+            </div>
+            <div class="field-row align-top" v-show="showField('description')">
+              <label class="field-label top-label">Description</label>
+              <div class="field-control"><textarea class="full-width" rows="3" v-model="form.description" /></div>
+            </div>
+            <div class="field-row align-top" v-show="showField('comments')">
+              <label class="field-label top-label">Comments</label>
+              <div class="field-control"><textarea class="full-width" rows="2" v-model="form.comments" /></div>
+            </div>
+          </div>
+
+          <!-- Right column -->
+          <div class="col-right">
+            <div class="field-row" v-show="showField('media')">
+              <label class="field-label">Media</label>
+              <div class="field-control"><input type="text" class="full-width" v-model="form.media" /></div>
+            </div>
+            <div class="field-row" v-show="showField('date')">
+              <label class="field-label">Date Added</label>
+              <div class="field-control">
+                <input type="date" :value="delphiToInput(num('date'))"
+                  @change="setDate('date', ($event.target as HTMLInputElement).value)" />
+              </div>
+            </div>
+            <div class="field-row" v-show="showField('date_watched')">
+              <label class="field-label">Date Watched</label>
+              <div class="field-control">
+                <input type="date" :value="delphiToInput(num('date_watched'))"
+                  @change="setDate('date_watched', ($event.target as HTMLInputElement).value)" />
+              </div>
+            </div>
+            <div class="field-row" v-show="showField('year')">
+              <label class="field-label">Year</label>
+              <div class="field-control">
+                <input type="number" :value="numOrBlank('year')"
+                  @input="setInt('year', ($event.target as HTMLInputElement).value)" />
+              </div>
+            </div>
+            <div class="field-row" v-show="showField('length')">
+              <label class="field-label">Length (min)</label>
+              <div class="field-control">
+                <input type="number" :value="numOrBlank('length')"
+                  @input="setInt('length', ($event.target as HTMLInputElement).value)" />
+              </div>
+            </div>
+            <div class="field-row" v-show="showField('rating')">
+              <label class="field-label">Rating</label>
+              <div class="field-control">
+                <input type="number" step="0.1" min="0" max="10" :value="ratingDec('rating')"
+                  @input="setRating('rating', ($event.target as HTMLInputElement).value)" />
+              </div>
+            </div>
+            <div class="field-row" v-show="showField('user_rating')">
+              <label class="field-label">My Rating</label>
+              <div class="field-control">
+                <input type="number" step="0.1" min="0" max="10" :value="ratingDec('user_rating')"
+                  @input="setRating('user_rating', ($event.target as HTMLInputElement).value)" />
+              </div>
+            </div>
+            <div class="field-row" v-show="showField('certification')">
+              <label class="field-label">Certification</label>
+              <div class="field-control"><input type="text" class="full-width" v-model="form.certification" /></div>
+            </div>
+            <div class="field-row" v-show="showField('checked')">
+              <label class="field-label">Watched</label>
+              <div class="field-control">
+                <label class="switch">
+                  <input type="checkbox" :checked="!!form.checked"
+                    @change="form.checked = ($event.target as HTMLInputElement).checked ? 1 : 0" />
+                  <span class="slider" />
+                </label>
+              </div>
+            </div>
+            <div class="field-row" v-show="showField('color_tag')">
+              <label class="field-label">Color Tag</label>
+              <div class="field-control color-tag-control">
+                <span class="dot" :style="{ background: colorOf(form.color_tag ?? 0) }" />
+                <select class="full-width" v-model.number="form.color_tag">
+                  <option v-for="(name, n) in COLOR_TAG_NAMES" :key="n" :value="Number(n)">{{ name }}</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-row" v-show="showField('borrower')">
+              <label class="field-label">Borrower</label>
+              <div class="field-control"><input type="text" class="full-width" v-model="form.borrower" /></div>
+            </div>
+            <div class="field-row" v-show="showField('series_number')">
+              <label class="field-label" title="Series grouping number — entries sharing the same number are listed as a series">Number (#)</label>
+              <div class="field-control">
+                <input type="number" min="0" v-model.number="form.number" />
+              </div>
+            </div>
+
+            <!-- Custom fields -->
+            <template v-if="defs.length > 0">
+              <div class="mini-sep">Custom</div>
+              <div
+                v-for="def in defs"
+                :key="def.tag"
+                class="field-row"
+                v-show="showField('custom_' + def.tag)"
+              >
+                <label class="field-label">{{ def.name || def.tag }}</label>
+                <div class="field-control">
+                  <label v-if="customTypeOf(def.tag) === 'ftBoolean'" class="switch">
+                    <input type="checkbox" :checked="custom[def.tag] === '1'"
+                      @change="custom[def.tag] = ($event.target as HTMLInputElement).checked ? '1' : '0'" />
+                    <span class="slider" />
+                  </label>
+                  <input
+                    v-else
+                    class="full-width"
+                    :type="customTypeOf(def.tag) === 'ftInteger' ? 'number' : 'text'"
+                    v-model="custom[def.tag]"
+                  />
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- ── Media / Technical ── -->
+        <div v-show="['media_type','source','disks','size','file_path','video_format',
+                      'video_bitrate','resolution','framerate','audio_format',
+                      'audio_bitrate','languages','subtitles'].some((k) => showField(k))">
+          <div class="section-sep">Media</div>
+          <div class="media-grid">
+            <div class="media-col">
+              <div class="field-row" v-show="showField('media_type')">
+                <label class="field-label">Media Type</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.media_type" /></div>
+              </div>
+              <div class="field-row" v-show="showField('source')">
+                <label class="field-label">Source</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.source" /></div>
+              </div>
+              <div class="field-row" v-show="showField('disks')">
+                <label class="field-label">Disks</label>
+                <div class="field-control">
+                  <input type="number" :value="numOrBlank('disks')"
+                    @input="setInt('disks', ($event.target as HTMLInputElement).value)" />
+                </div>
+              </div>
+              <div class="field-row" v-show="showField('size')">
+                <label class="field-label">Size</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.size" /></div>
+              </div>
+            </div>
+            <div class="media-col">
+              <div class="field-row" v-show="showField('file_path')">
+                <label class="field-label">File Path</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.file_path" /></div>
+              </div>
+              <div class="field-row" v-show="showField('video_format')">
+                <label class="field-label">Video Format</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.video_format" /></div>
+              </div>
+              <div class="field-row" v-show="showField('video_bitrate')">
+                <label class="field-label">Video kbps</label>
+                <div class="field-control">
+                  <input type="number" :value="numOrBlank('video_bitrate')"
+                    @input="setInt('video_bitrate', ($event.target as HTMLInputElement).value)" />
+                </div>
+              </div>
+              <div class="field-row" v-show="showField('resolution')">
+                <label class="field-label">Resolution</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.resolution" /></div>
+              </div>
+            </div>
+            <div class="media-col">
+              <div class="field-row" v-show="showField('framerate')">
+                <label class="field-label">Framerate</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.framerate" /></div>
+              </div>
+              <div class="field-row" v-show="showField('audio_format')">
+                <label class="field-label">Audio Format</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.audio_format" /></div>
+              </div>
+              <div class="field-row" v-show="showField('audio_bitrate')">
+                <label class="field-label">Audio kbps</label>
+                <div class="field-control">
+                  <input type="number" :value="numOrBlank('audio_bitrate')"
+                    @input="setInt('audio_bitrate', ($event.target as HTMLInputElement).value)" />
+                </div>
+              </div>
+              <div class="field-row" v-show="showField('languages')">
+                <label class="field-label">Languages</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.languages" /></div>
+              </div>
+            </div>
+            <div class="media-col">
+              <div class="field-row" v-show="showField('subtitles')">
+                <label class="field-label">Subtitles</label>
+                <div class="field-control"><input type="text" class="full-width" v-model="form.subtitles" /></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <p v-if="error" class="err">{{ error }}</p>
 
     <OmdbDialog
       v-if="omdbOpen"
@@ -91,13 +386,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue";
+import { ref, reactive, watch, onBeforeUnmount } from "vue";
 import { cf, session, type MovieRow, type CustomFieldDefRow } from "./api";
 import OmdbDialog from "./OmdbDialog.vue";
 import {
-  sectionsFor, isVisible, parseCustom, delphiToInput, inputToDelphi,
-  DATE_FIELDS, BOOL_FIELDS, INTEGER_FIELDS, MULTILINE, SENTINEL,
-  COLOR_TAG_NAMES, type AppSettings,
+  isVisible, parseCustom, delphiToInput, inputToDelphi, SENTINEL,
+  COLOR_TAG_COLORS, COLOR_TAG_NAMES, type AppSettings,
 } from "./fields";
 
 const props = defineProps<{
@@ -116,24 +410,36 @@ const omdbOpen = ref(false);
 const form = reactive({} as MovieRow);
 const custom = reactive<Record<string, string>>({});
 
+const fileInput = ref<HTMLInputElement | null>(null);
 const posterSrc = ref("");
 const posterMsg = ref("");
 let objectUrl = "";
 
-const mode = computed<"desktop" | "mobile">(() =>
+const mode = ref<"desktop" | "mobile">(
   window.matchMedia("(max-width: 768px)").matches ? "mobile" : "desktop",
 );
-const sections = computed(() => sectionsFor(props.defs));
+const _mq = window.matchMedia("(max-width: 768px)");
+const _mqListener = (e: MediaQueryListEvent) => { mode.value = e.matches ? "mobile" : "desktop"; };
+_mq.addEventListener("change", _mqListener);
 
-onMounted(load);
-onBeforeUnmount(() => objectUrl && URL.revokeObjectURL(objectUrl));
+// Reload whenever the selected movie changes (the component instance is reused
+// across row switches — no :key remount).
+watch(() => props.movieId, load, { immediate: true });
+
+onBeforeUnmount(() => {
+  _mq.removeEventListener("change", _mqListener);
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+});
 
 async function load() {
   loading.value = true;
   error.value = "";
   try {
     const m = await cf.getMovie(props.movieId);
+    // Clear stale keys, then hydrate (reactive object is reused across reloads).
+    for (const k of Object.keys(form)) delete (form as Record<string, unknown>)[k];
     Object.assign(form, m);
+    for (const k of Object.keys(custom)) delete custom[k];
     Object.assign(custom, parseCustom(m));
     for (const d of props.defs) if (!(d.tag in custom)) custom[d.tag] = "";
     await loadPoster(m.poster_key);
@@ -166,18 +472,17 @@ watch([() => ({ ...form }), custom], () => {
   if (!loading.value) dirty.value = true;
 }, { deep: true });
 
-// --- field-type predicates (thin wrappers so the template stays readable) ---
+// --- field helpers ----------------------------------------------------------
 const showField = (key: string) => isVisible(props.settings, key, mode.value);
-const isDate = (k: string) => DATE_FIELDS.has(k);
-const isBool = (k: string) => BOOL_FIELDS.has(k);
-const isInteger = (k: string) => INTEGER_FIELDS.has(k);
-const isMultiline = (k: string) => MULTILINE.has(k);
-const sectionHasVisible = (sec: { fields: { key: string }[] }) =>
-  sec.fields.some((f) => showField(f.key));
+const customTypeOf = (tag: string) =>
+  props.defs.find((d) => d.tag === tag)?.field_type ?? "ftString";
 
-const customTag = (fieldKey: string) => fieldKey.slice("custom_".length);
-const customType = (fieldKey: string) =>
-  props.defs.find((d) => d.tag === customTag(fieldKey))?.field_type ?? "ftString";
+function colorOf(tag: number): string {
+  return COLOR_TAG_COLORS[tag] ?? "transparent";
+}
+function colorNameOf(tag: number): string {
+  return COLOR_TAG_NAMES[tag] ?? "";
+}
 
 // --- numeric/date binding helpers ------------------------------------------
 const num = (k: string) => Number((form as Record<string, unknown>)[k] ?? 0);
@@ -229,6 +534,10 @@ async function onDelete() {
 }
 
 // --- poster actions ---------------------------------------------------------
+function triggerUpload() {
+  fileInput.value?.click();
+}
+
 async function onFile(ev: Event) {
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -249,6 +558,8 @@ async function onFile(ev: Event) {
     emit("changed");
   } catch (e) {
     posterMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    if (fileInput.value) fileInput.value.value = "";
   }
 }
 
@@ -256,6 +567,20 @@ async function fromUrl() {
   const url = prompt("Image URL:");
   if (!url) return;
   await applyPosterUrl(url);
+}
+
+async function removePoster() {
+  if (!form.poster_key) return;
+  posterMsg.value = "Removing…";
+  try {
+    await cf.updateMovie(form.id, { poster_key: null, pic_path: "" });
+    form.poster_key = null;
+    await loadPoster(null);
+    posterMsg.value = "";
+    emit("changed");
+  } catch (e) {
+    posterMsg.value = e instanceof Error ? e.message : String(e);
+  }
 }
 
 async function putPoster(key: string, bytes: Uint8Array) {
@@ -295,41 +620,352 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 </script>
 
 <style scoped>
-.detail { display: flex; flex-direction: column; gap: 0.75rem; max-width: 900px; margin: 0 auto; padding: 1rem; }
-.bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
-.crumb { flex: 1; min-width: 0; font-weight: 600; color: var(--c-text, #e8e0d5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-actions { display: flex; gap: 0.4rem; }
-.grid { display: grid; grid-template-columns: 200px 1fr; gap: 1.25rem; align-items: start; }
-.poster-col { display: flex; flex-direction: column; gap: 0.5rem; }
-.poster { aspect-ratio: 2/3; background: var(--c-elevated, #1f1f38); border: 1px solid var(--c-border, #2a2a48); border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-.poster img { width: 100%; height: 100%; object-fit: cover; }
-.poster-empty { color: var(--c-muted, #7e7a90); font-size: 0.85rem; }
-.poster-actions { display: flex; gap: 0.4rem; }
-.poster-actions .ghost, .file { flex: 1; text-align: center; }
-.file { cursor: pointer; }
-.fields-col { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
-.sec-title { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--c-muted, #7e7a90); border-top: 1px solid var(--c-border, #2a2a48); padding-top: 0.5rem; margin-top: 0.3rem; }
-.row { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 0.5rem; min-height: 30px; }
-.row.top { align-items: start; }
-.row label { font-size: 0.78rem; color: var(--c-muted, #7e7a90); text-align: right; }
-.row input[type="text"], .row input[type="number"], .row input[type="date"], .row select, .row textarea {
-  width: 100%; padding: 0.35rem 0.5rem; background: var(--c-elevated, #1f1f38); color: var(--c-text, #e8e0d5);
-  border: 1px solid var(--c-border, #2a2a48); border-radius: 6px; font: inherit; font-size: 0.85rem;
+.movie-form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--c-bg);
 }
-.row input[type="checkbox"] { justify-self: start; accent-color: var(--c-gold, #c9a84c); }
-.row textarea { resize: vertical; }
-button, .file { background: transparent; border: 1px solid var(--c-border, #2a2a48); border-radius: 6px; padding: 0.4rem 0.7rem; font-size: 0.8rem; color: var(--c-text, #e8e0d5); cursor: pointer; }
-button.primary { background: var(--c-gold, #c9a84c); color: #0a0a14; border: none; font-weight: 600; }
-button.danger { color: var(--c-danger, #e05252); border-color: var(--c-danger, #e05252); }
-button:disabled { opacity: 0.6; cursor: default; }
-.muted { color: var(--c-muted, #7e7a90); font-size: 0.9rem; }
-.small { font-size: 0.75rem; }
-.pad { padding: 0.5rem; }
-.err { color: var(--c-danger, #e05252); font-size: 0.82rem; }
+.loading-msg { padding: 2rem; color: var(--c-muted); font-size: 0.875rem; }
+
+/* ── Header ── */
+.form-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem 0.75rem;
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-border);
+  flex-shrink: 0;
+}
+.header-left { display: flex; gap: 1rem; flex: 1; min-width: 0; }
+.header-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-top: 0.25rem;
+}
+.movie-title {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--c-text);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+}
+.movie-sub { font-size: 0.85rem; color: var(--c-muted); font-style: italic; margin: 0; }
+.header-meta { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.meta-tag {
+  font-size: 0.72rem;
+  color: var(--c-muted);
+  background: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  padding: 0.1rem 0.45rem;
+  border-radius: 10px;
+}
+.ratings-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.rating-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  padding: 0.2rem 0.55rem;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--c-gold);
+}
+.rating-badge.user { color: #7ec8e3; }
+.rating-badge .pi { font-size: 0.7rem; }
+.rating-label { font-weight: 300; font-size: 0.7rem; color: var(--c-muted); }
+.checked-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--c-muted);
+  cursor: pointer;
+  padding: 0.2rem 0.5rem;
+  border-radius: 10px;
+  border: 1px solid var(--c-border);
+  transition: all 0.15s;
+}
+.checked-toggle:hover { border-color: var(--c-gold); color: var(--c-gold); }
+.color-tag-badge {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.2);
+  flex-shrink: 0;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+  flex-shrink: 0;
+  padding-top: 0.25rem;
+}
+.hbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: transparent;
+  color: var(--c-gold);
+  border: 1px solid var(--c-gold);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.hbtn:hover { background: var(--c-gold-dim); }
+.hbtn.danger { color: var(--c-danger); border-color: var(--c-danger); }
+.hbtn.danger:hover { background: rgba(224,82,82,0.15); }
+.save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--c-gold);
+  color: #0a0a14;
+  border: 1px solid var(--c-gold);
+  border-radius: 6px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+.save-btn:hover:not(:disabled) { background: #dbb85a; }
+.save-btn:disabled { opacity: 0.55; cursor: default; }
+.mobile-only { display: none; }
+
+/* ── Poster panel ── */
+.picture-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  width: 110px;
+  flex-shrink: 0;
+}
+.poster-wrap {
+  position: relative;
+  width: 110px;
+  height: 160px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.poster-wrap:hover { border-color: var(--c-gold); }
+.poster-wrap:hover .poster-overlay { opacity: 1; }
+.poster { width: 100%; height: 100%; object-fit: cover; display: block; }
+.poster-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  color: var(--c-muted);
+  font-size: 0.7rem;
+}
+.poster-placeholder .pi { font-size: 1.4rem; }
+.poster-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+  color: #fff;
+  font-size: 1.2rem;
+}
+.picture-actions { display: flex; gap: 0.15rem; }
+.pic-btn {
+  background: transparent;
+  border: none;
+  color: var(--c-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  font-size: 0.85rem;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.pic-btn:hover { color: var(--c-gold); background: var(--c-elevated); }
+.pic-btn.danger:hover { color: var(--c-danger); }
+.poster-msg { font-size: 0.7rem; color: var(--c-muted); text-align: center; }
+.hidden-input { display: none; }
+
+/* ── Scrollable body ── */
+.form-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding: 0.5rem 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+/* ── Two-column main ── */
+.form-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-start;
+  min-width: 0;
+}
+.col-left { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
+.col-right { flex: 0 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
+
+/* ── Crew + Actors side-by-side ── */
+.crew-actors-row { display: flex; flex-direction: row; gap: 0.5rem; align-items: stretch; margin: 0.1rem 0; }
+.crew-stack { flex: 1; display: flex; flex-direction: column; gap: 0.18rem; }
+.actors-stack { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.inline-label { font-size: 0.78rem; color: var(--c-muted); display: block; padding-left: 0.1rem; }
+.actors-area { flex: 1; resize: none; min-height: 90px; }
+
+/* ── Field layout ── */
+.field-row { display: flex; align-items: center; gap: 0.35rem; min-height: 26px; }
+.field-row.align-top { align-items: flex-start; }
+.field-label {
+  flex: 0 0 100px;
+  font-size: 0.78rem;
+  color: var(--c-muted);
+  text-align: right;
+  padding-right: 0.25rem;
+  white-space: nowrap;
+}
+.top-label { padding-top: 0.3rem; }
+.field-control { flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.4rem; }
+.full-width { width: 100%; }
+.url-row { display: flex; align-items: center; gap: 0.4rem; width: 100%; }
+.url-link { color: var(--c-gold); font-size: 0.85rem; flex-shrink: 0; text-decoration: none; opacity: 0.8; transition: opacity 0.15s; }
+.url-link:hover { opacity: 1; }
+
+/* ── Native controls, themed to match the self-hosted PrimeVue look ── */
+.field-control input[type="text"],
+.field-control input[type="number"],
+.field-control input[type="date"],
+.field-control select,
+.field-control textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.4rem 0.55rem;
+  background: var(--c-elevated);
+  color: var(--c-text);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field-control input:focus,
+.field-control select:focus,
+.field-control textarea:focus {
+  border-color: var(--c-gold);
+  box-shadow: 0 0 0 1px var(--c-gold);
+}
+.field-control textarea { resize: vertical; line-height: 1.4; }
+.field-control input[type="date"] { color-scheme: dark; }
+
+/* Color-tag select with a leading swatch */
+.color-tag-control { display: flex; align-items: center; gap: 0.4rem; }
+.color-tag-control .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.15); flex-shrink: 0; }
+
+/* ── Toggle switch (Watched + boolean custom fields) ── */
+.switch { position: relative; display: inline-block; width: 38px; height: 20px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  border-radius: 20px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.switch .slider::before {
+  content: "";
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  top: 2px;
+  background: var(--c-muted);
+  border-radius: 50%;
+  transition: transform 0.15s, background 0.15s;
+}
+.switch input:checked + .slider { background: var(--c-gold-dim); border-color: var(--c-gold); }
+.switch input:checked + .slider::before { transform: translateX(18px); background: var(--c-gold); }
+
+/* ── Separators ── */
+.mini-sep {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--c-muted);
+  padding-top: 0.35rem;
+  margin-top: 0.2rem;
+  border-top: 1px solid var(--c-border);
+}
+.section-sep {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--c-muted);
+  margin-top: 0.3rem;
+}
+.section-sep::after { content: ""; flex: 1; height: 1px; background: var(--c-border); }
+
+/* ── Media grid ── */
+.media-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.18rem 0.75rem; align-items: start; }
+.media-col { min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
+.media-col .field-label { flex: 0 0 75px; }
+
+.err { color: var(--c-danger); font-size: 0.82rem; padding: 0.5rem 1.25rem; }
+
+/* ── Mobile ── */
 @media (max-width: 768px) {
-  .grid { grid-template-columns: 1fr; }
-  .poster { max-width: 160px; }
-  .row { grid-template-columns: 1fr; gap: 0.15rem; }
-  .row label { text-align: left; }
+  .form-header { padding: 0.5rem 0.75rem; max-height: 20vh; overflow: hidden; align-items: center; }
+  .mobile-hide { display: none !important; }
+  .mobile-only { display: inline-flex; }
+  .header-actions { flex-direction: column; gap: 0.3rem; align-items: center; }
+  .header-left { flex-direction: row; align-items: center; gap: 0.5rem; overflow: hidden; }
+  .poster-wrap { width: 48px !important; height: 70px !important; flex-shrink: 0; }
+  .picture-actions, .poster-msg { display: none; }
+  .header-info { overflow: hidden; }
+  .movie-title { font-size: 1rem; }
+  .form-body { padding: 0.5rem 0.5rem 1rem; }
+  .col-left, .col-right { flex: 1 1 100%; }
+  .crew-actors-row { flex-direction: column; }
+  .field-row { flex-direction: column; align-items: stretch; gap: 0.15rem; min-height: unset; }
+  .field-row.align-top { align-items: stretch; }
+  .field-label { flex: 0 0 auto; text-align: left; padding-right: 0; white-space: normal; }
+  .top-label { padding-top: 0; }
+  .media-grid { grid-template-columns: 1fr 1fr; }
 }
 </style>

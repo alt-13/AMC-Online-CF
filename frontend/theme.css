@@ -7,17 +7,23 @@
  * defines the palette once and paints the page background dark.
  */
 :root {
-  --c-bg: #0d0d17;          /* page background */
-  --c-card: #181828;        /* cards / panels */
-  --c-elevated: #1f1f38;    /* inputs, raised rows */
-  --c-border: #2a2a48;
+  /* Palette mirrors the self-hosted (Unraid) build's App.vue tokens exactly,
+     so the two frontends render with the identical cinema theme. */
+  --c-bg:        #0a0a14;    /* page background */
+  --c-surface:   #11111e;    /* top bar / list chrome */
+  --c-card:      #181828;    /* cards / panels */
+  --c-elevated:  #1f1f38;    /* inputs, raised rows */
+  --c-border:    #2a2a48;
   --c-border-hi: #3a3a60;
-  --c-text: #e8e0d5;
-  --c-muted: #7e7a90;
-  --c-gold: #c9a84c;        /* accent */
-  --c-danger: #e05252;
-  --radius: 8px;
-  --font-display: "Georgia", "Times New Roman", serif;
+  --c-gold:      #c9a84c;    /* accent */
+  --c-gold-dim:  rgba(201,168,76,.18);
+  --c-text:      #e8e0d5;
+  --c-muted:     #7e7a90;
+  --c-danger:    #e05252;
+  --c-success:   #4caf7a;
+  --radius:      8px;
+  --font-display: 'Playfair Display', Georgia, serif;
+  --font-body:    'DM Sans', system-ui, sans-serif;
 
   color-scheme: dark;
 }
@@ -27,7 +33,7 @@ html, body {
   min-height: 100dvh;
   background: var(--c-bg);
   color: var(--c-text);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-body);
 }
 
 #app {

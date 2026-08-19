@@ -5,6 +5,7 @@
 // (create-account on first run, otherwise sign-in) before CatalogsView.
 
 import { createApp } from "vue";
+import "primeicons/primeicons.css";
 import "./theme.css";
 import App from "./App.vue";
 import { pruneCachedAmc } from "./amccache";
