@@ -587,11 +587,19 @@ async function save() {
       extras: extras.value,
     };
     const { extras: savedExtras, ...movieOnly } = await cf.updateMovie(form.id, patch);
+    // Syncing the server response back into `form`/`extras` mutates the same
+    // reactive sources the dirty watcher tracks, and that watcher runs on the
+    // next flush (flush:'pre', async). Without this guard it refires *after* we
+    // clear `dirty` and re-flags the form dirty, leaving the Save button active.
+    // Mirror load(): suppress the watcher across the sync, clear it after flush.
+    hydrating.value = true;
     Object.assign(form, movieOnly);
     extras.value = (savedExtras ?? []).map((e) => ({ ...e }));
     openSet.clear();
     dirty.value = false;
     emit("changed");
+    await nextTick();
+    hydrating.value = false;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -614,6 +622,24 @@ function triggerUpload() {
   fileInput.value?.click();
 }
 
+// Poster changes persist immediately (their own PUT/updateMovie), so syncing
+// the local form must NOT flip the text form dirty. Suppress the watcher across
+// the mutation and clear the flag only after it has flushed — same guard as
+// save()/load(). Keep the window tight (just the mutation), not around the
+// preceding network calls, so a concurrent field edit still registers.
+//
+// Mirror BOTH columns the server writes: poster_key and pic_path. Every poster
+// updateMovie call sends pic_path=".jpg" when a key is present and "" when it's
+// cleared (rule 4: embedded pictures must round-trip with a non-empty pic_path),
+// so the in-memory form matches the D1 row after the write.
+async function setPosterKeyQuietly(key: string | null) {
+  hydrating.value = true;
+  form.poster_key = key;
+  form.pic_path = key ? ".jpg" : "";
+  await nextTick();
+  hydrating.value = false;
+}
+
 async function onFile(ev: Event) {
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -628,7 +654,7 @@ async function onFile(ev: Event) {
     const jpeg = await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 })).arrayBuffer();
     await putPoster(key, new Uint8Array(jpeg));
     await cf.updateMovie(form.id, { poster_key: key, pic_path: ".jpg" });
-    form.poster_key = key;
+    await setPosterKeyQuietly(key);
     await loadPoster(key);
     posterMsg.value = "";
     emit("changed");
@@ -650,7 +676,7 @@ async function removePoster() {
   posterMsg.value = "Removing…";
   try {
     await cf.updateMovie(form.id, { poster_key: null, pic_path: "" });
-    form.poster_key = null;
+    await setPosterKeyQuietly(null);
     await loadPoster(null);
     posterMsg.value = "";
     emit("changed");
@@ -678,7 +704,7 @@ async function applyPosterUrl(url: string) {
   posterMsg.value = "Fetching…";
   try {
     const updated = await cf.setPictureFromUrl({ ...form } as MovieRow, url);
-    form.poster_key = updated.poster_key;
+    await setPosterKeyQuietly(updated.poster_key);
     await loadPoster(updated.poster_key);
     posterMsg.value = "";
     emit("changed");
