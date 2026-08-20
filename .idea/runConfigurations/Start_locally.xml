@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Start locally" type="CompoundRunConfigurationType">
+    <toRun name="npm run dev" type="js.build_tools.npm" />
+    <toRun name="npm run dev:worker" type="js.build_tools.npm" />
+    <method v="2" />
+  </configuration>
+</component>
