@@ -1,0 +1,31 @@
+# ── Node / build output ──────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+*.local
+
+# ── Wrangler / Cloudflare local state + secrets (never commit) ────────────────
+.wrangler/
+.dev.vars
+.dev.vars.*
+
+# ── Catalog data (never commit real catalog files) ───────────────────────────
+*.amc
+*.amc.tmp
+
+# ── Env ──────────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Claude Code local settings ───────────────────────────────────────────────
+.claude/
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
