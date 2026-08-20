@@ -8,6 +8,8 @@
 import { parseCatalog } from "../amc/parser";
 import { catalogToRows } from "../amc/mapping";
 import type { ImportResult } from "../amc/mapping";
+import { detectEncoding, toReadable } from "../amc/transcode";
+import type { LegacyEncoding } from "../amc/codepages";
 
 /** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
 export type AuthedFetch = (
@@ -44,6 +46,13 @@ export interface ImportOptions {
    * typically the source filename, so the library shows "Filme" not "(untitled)".
    */
   fallbackName?: string;
+  /**
+   * OPTIONAL override for the legacy-codepage auto-detection. Normally omitted:
+   * a non-UTF-8 (ANSI) catalog's codepage is detected automatically. Set this
+   * only to force a specific page (windows-1252/1250/1251) when correcting a
+   * rare misdetection. Ignored for clean UTF-8 catalogs.
+   */
+  legacyEncoding?: LegacyEncoding;
 }
 
 function headers(o: ImportOptions, extra: Record<string, string> = {}): HeadersInit {
@@ -101,7 +110,14 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
   // and yield one macrotask so the UI paints that state before the parse locks up.
   opts.onProgress?.(0, 0, "reading");
   await new Promise((r) => setTimeout(r));
-  const catalog = parseCatalog(bytes);
+  const parsed = parseCatalog(bytes);
+
+  // Detect the on-disk text encoding (auto for legacy ANSI files; opts.legacyEncoding
+  // is an optional override) and, for legacy catalogs, reinterpret every string
+  // through the codepage so umlauts are readable AND survive D1 (lone surrogates
+  // would be stored as U+FFFD). Byte-exact export reverses this.
+  const textEncoding = detectEncoding(parsed, opts.legacyEncoding);
+  const catalog = toReadable(parsed, textEncoding);
 
   // Fix the catalog id up front so a failure anywhere below — even during the
   // poster phase — can be rolled back by its prefix. Import is otherwise a
@@ -128,6 +144,7 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
       },
       catalogId,
       opts.sourceRef ?? null,
+      textEncoding,
     );
 
     // Most .amc files carry no internal catalog name — fall back to the source

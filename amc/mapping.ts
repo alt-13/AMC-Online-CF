@@ -21,6 +21,10 @@ export interface CatalogRow {
   description: string;
   cfp_column_settings: string;
   cfp_gui_properties: string;
+  /** On-disk text encoding: "utf-8" for clean catalogs, or a legacy Windows
+   *  codepage ("windows-1252" | "windows-1250" | "windows-1251") for ANSI files.
+   *  Export re-encodes strings with this so the .amc stays byte-identical. */
+  text_encoding: string;
   source_ref: string | null;
   created_at: number;
   updated_at: number;
@@ -141,6 +145,9 @@ export async function catalogToRows(
   // Stable origin key for cloud pulls, so a re-pull can supersede its catalog.
   // NULL for direct file uploads.
   sourceRef: string | null = null,
+  // On-disk text encoding of `cat`'s strings. The caller (import.ts) detects this
+  // and passes the already-readable catalog; stored so export re-encodes exactly.
+  textEncoding: string = "utf-8",
 ): Promise<ImportResult> {
   const ts = sinks.now();
 
@@ -154,6 +161,7 @@ export async function catalogToRows(
     description: cat.description,
     cfp_column_settings: cat.cfpColumnSettings,
     cfp_gui_properties: cat.cfpGuiProperties,
+    text_encoding: textEncoding,
     source_ref: sourceRef,
     created_at: ts,
     updated_at: ts,

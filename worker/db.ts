@@ -167,13 +167,14 @@ export async function insertCatalog(env: Env, c: CatalogRow): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO catalogs
        (id, tenant_id, version, name, mail, site, description,
-        cfp_column_settings, cfp_gui_properties, source_ref, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        cfp_column_settings, cfp_gui_properties, text_encoding, source_ref,
+        created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   )
     .bind(
       c.id, c.tenant_id, c.version, c.name, c.mail, c.site, c.description,
-      c.cfp_column_settings, c.cfp_gui_properties, c.source_ref ?? null,
-      c.created_at, c.updated_at,
+      c.cfp_column_settings, c.cfp_gui_properties, c.text_encoding ?? "utf-8",
+      c.source_ref ?? null, c.created_at, c.updated_at,
     )
     .run();
 }

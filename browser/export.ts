@@ -7,6 +7,8 @@
 import { serializeCatalog } from "../amc/parser";
 import { rowsToCatalog } from "../amc/mapping";
 import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../amc/mapping";
+import { toRaw } from "../amc/transcode";
+import type { TextEncoding } from "../amc/codepages";
 
 /** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
 export type AuthedFetch = (
@@ -87,7 +89,13 @@ export async function exportAmcFile(catalogId: string, opts: ExportOptions): Pro
     getPoster,
   });
 
-  return new Blob([serializeCatalog(catalog)], { type: "application/octet-stream" });
+  // Re-encode strings to the catalog's original on-disk codepage so the .amc is
+  // byte-identical to what was imported (no-op for UTF-8 catalogs). Older rows
+  // predating this column read back as undefined -> treated as UTF-8.
+  const enc = (bundle.catalog.text_encoding ?? "utf-8") as TextEncoding;
+  const raw = toRaw(catalog, enc);
+
+  return new Blob([serializeCatalog(raw)], { type: "application/octet-stream" });
 }
 
 /** Convenience: build the file and trigger a browser download. */

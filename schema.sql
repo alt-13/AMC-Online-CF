@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS catalogs (
   description         TEXT NOT NULL DEFAULT '',
   cfp_column_settings TEXT NOT NULL DEFAULT '',  -- v4.0+ header blob (opaque)
   cfp_gui_properties  TEXT NOT NULL DEFAULT '',  -- v4.0+ header blob (opaque)
+  -- On-disk string encoding: 'utf-8' for clean catalogs, or a legacy Windows
+  -- codepage ('windows-1252'|'windows-1250'|'windows-1251') for ANSI files from
+  -- the Delphi desktop app. Import decodes legacy bytes through this so umlauts
+  -- are readable + D1-safe (lone surrogates would be stored as U+FFFD); export
+  -- re-encodes with it so the .amc stays byte-identical. See cf/amc/transcode.ts.
+  text_encoding       TEXT NOT NULL DEFAULT 'utf-8',
   -- Stable origin key for cloud pulls (e.g. "mega:<folder>:<file>.amc"). NULL for
   -- direct file uploads. Lets re-pulling the same .amc replace its catalog instead
   -- of piling up duplicates.
