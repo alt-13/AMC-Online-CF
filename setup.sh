@@ -7,7 +7,9 @@
 # schema, sets the secrets (piped via stdin — never the dashboard), and deploys.
 #
 # Re-runnable: existing resources are detected and skipped, so it's safe to run
-# again to finish a half-done setup or rotate a secret.
+# again to finish a half-done setup or ship migrations. Existing secrets are
+# LEFT UNTOUCHED — a re-run never silently rotates them (rotate deliberately with
+# `npx wrangler secret put <NAME>`).
 #
 # ROTATION CAVEAT: stored Mega credentials are encrypted with ENCRYPTION_SECRET
 # (which falls back to AUTH_SECRET when unset). Rotate the secret that encrypts
@@ -72,27 +74,44 @@ put_secret() {  # name  value
 }
 
 say "Secrets"
-# AUTH_SECRET: the trust anchor. Offer a strong random default.
-gen="$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)"
-read -r -p "AUTH_SECRET (Enter = generate a random 32-byte key): " auth_secret || true
-put_secret AUTH_SECRET "${auth_secret:-$gen}"
-[ -z "${auth_secret:-}" ] && echo "  (generated — you never need to see it; it stays in Cloudflare)"
+# Snapshot the secrets already set, so a re-run NEVER silently rotates one.
+# Rotating AUTH_SECRET invalidates every session; rotating the key that encrypts
+# stored Mega credentials makes them unreadable. Both are set only if missing.
+existing_secrets="$($WRANGLER secret list 2>/dev/null || echo '[]')"
+has_secret() {  # name
+  printf '%s' "$existing_secrets" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$1\""
+}
+
+# AUTH_SECRET: the trust anchor. Set once; offer a strong random default.
+if has_secret AUTH_SECRET; then
+  echo "  AUTH_SECRET already set — leaving it untouched"
+  echo "  (rotate deliberately with: npx wrangler secret put AUTH_SECRET)"
+else
+  gen="$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)"
+  read -r -p "AUTH_SECRET (Enter = generate a random 32-byte key): " auth_secret || true
+  put_secret AUTH_SECRET "${auth_secret:-$gen}"
+  [ -z "${auth_secret:-}" ] && echo "  (generated — you never need to see it; it stays in Cloudflare)"
+fi
 
 # ENCRYPTION_SECRET: encrypts stored Mega credentials. Kept separate from
 # AUTH_SECRET so JWT-signing can be rotated without bricking saved credentials.
-# Only set it the FIRST time — re-running and generating a new one would make
-# existing credentials undecryptable (users then get a 409 asking to reconnect).
-enc_gen="$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)"
-read -r -p "ENCRYPTION_SECRET (Enter = generate; leave unset to reuse AUTH_SECRET): " enc_secret || true
-if [ -n "${enc_secret:-}" ]; then
-  put_secret ENCRYPTION_SECRET "$enc_secret"
+# Set only the FIRST time — regenerating it would make existing credentials
+# undecryptable (users then get a 409 asking to reconnect).
+if has_secret ENCRYPTION_SECRET; then
+  echo "  ENCRYPTION_SECRET already set — leaving it untouched"
 else
-  read -r -p "  No value entered — generate a dedicated one now? [y/N]: " enc_yn || true
-  case "${enc_yn:-}" in
-    [yY]*) put_secret ENCRYPTION_SECRET "$enc_gen"
-           echo "  (generated — set once; do not rotate or stored credentials become unreadable)" ;;
-    *)     echo "  ENCRYPTION_SECRET skipped (credentials will be encrypted under AUTH_SECRET)" ;;
-  esac
+  enc_gen="$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64)"
+  read -r -p "ENCRYPTION_SECRET (Enter = generate; leave unset to reuse AUTH_SECRET): " enc_secret || true
+  if [ -n "${enc_secret:-}" ]; then
+    put_secret ENCRYPTION_SECRET "$enc_secret"
+  else
+    read -r -p "  No value entered — generate a dedicated one now? [y/N]: " enc_yn || true
+    case "${enc_yn:-}" in
+      [yY]*) put_secret ENCRYPTION_SECRET "$enc_gen"
+             echo "  (generated — set once; do not rotate or stored credentials become unreadable)" ;;
+      *)     echo "  ENCRYPTION_SECRET skipped (credentials will be encrypted under AUTH_SECRET)" ;;
+    esac
+  fi
 fi
 
 # OMDb key is set per-user in-app (Settings → OMDb API key), encrypted at rest,
