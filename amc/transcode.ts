@@ -74,6 +74,18 @@ const CE_HIGH = new Set(
 );
 
 const isCyrillic = (cp: number): boolean => cp >= 0x0400 && cp <= 0x04ff;
+const isAsciiLetter = (cp: number): boolean =>
+  (cp >= 0x41 && cp <= 0x5a) || (cp >= 0x61 && cp <= 0x7a);
+
+// Windows-1251 maps EVERY high byte to a Cyrillic letter, so a Latin catalog
+// (German/Polish/…) — whose accented bytes also decode to "letters" under 1251 —
+// can tie or edge out the correct Latin page on raw letter coverage. But a real
+// Cyrillic document is DOMINATED by Cyrillic letters, whereas a Latin one is
+// dominated by ASCII letters with only sparse accents. So 1251 is only
+// considered when Cyrillic actually dominates the letters; otherwise a stray
+// ambiguous byte can't misclassify a German catalog as Russian (the "schöner" →
+// "schцner" bug).
+const CYRILLIC_DOMINANCE_MIN = 0.3;
 
 // Cap how much text we score — a few hundred KB of samples is plenty of signal
 // and keeps a huge catalog's import fast.
@@ -105,11 +117,35 @@ function scoreDecoded(text: string, cand: LegacyEncoding): number {
   return s;
 }
 
+/** Fraction of letters that decode to Cyrillic under Windows-1251 (ASCII letters
+ *  stay ASCII, high bytes become Cyrillic). ~0 for a Latin catalog, ~1 for a
+ *  Russian one. */
+function cyrillicDominance(legacyRawParts: Uint8Array[]): number {
+  let ascii = 0;
+  let cyrillic = 0;
+  for (const part of legacyRawParts) {
+    for (const ch of decodeCp(part, "windows-1251")) {
+      const cp = ch.codePointAt(0)!;
+      if (isAsciiLetter(cp)) ascii += 1;
+      else if (isCyrillic(cp)) cyrillic += 1;
+    }
+  }
+  const total = ascii + cyrillic;
+  return total ? cyrillic / total : 0;
+}
+
 /** Pick the legacy codepage that best explains a catalog's non-UTF-8 bytes. */
 function detectLegacyEncoding(legacyRawParts: Uint8Array[]): LegacyEncoding {
-  let best = LEGACY_CANDIDATES[0];
+  // Gate out Cyrillic unless it actually dominates the letters — a Latin catalog
+  // is ASCII-heavy, so a few ambiguous bytes must never make it "Russian".
+  const cyrillicOk = cyrillicDominance(legacyRawParts) >= CYRILLIC_DOMINANCE_MIN;
+  const candidates = cyrillicOk
+    ? LEGACY_CANDIDATES
+    : LEGACY_CANDIDATES.filter((c) => c !== "windows-1251");
+
+  let best = candidates[0];
   let bestScore = -Infinity;
-  for (const cand of LEGACY_CANDIDATES) {
+  for (const cand of candidates) {
     let score = 0;
     for (const part of legacyRawParts) score += scoreDecoded(decodeCp(part, cand), cand);
     if (score > bestScore) {

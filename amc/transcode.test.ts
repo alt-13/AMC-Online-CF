@@ -143,6 +143,25 @@ describe("codepage transcode (fixes legacy umlaut corruption)", () => {
     expect(detectEncoding(cat)).toBe("windows-1252");
   });
 
+  it("does NOT misdetect a German catalog as Cyrillic (the schöner→schцner bug)", () => {
+    // Reproduces the real failure: a German (ASCII-dominant) catalog whose ö byte
+    // 0xF6 was read as Windows-1251 'ц'. The description carries a few bytes that
+    // are stray symbols in 1252 (¸¨´) but Cyrillic letters in 1251 — enough to tip
+    // the raw coverage score to Cyrillic. The Cyrillic-dominance gate must still
+    // keep it Latin, because the catalog is overwhelmingly ASCII.
+    const title = decodeAmcString(encodeCp("Wunderschöner", "windows-1252"));
+    const asciiDesc = new TextEncoder().encode(
+      "Ein wunderschoener Film ueber Liebe und Leben in Berlin mit Herz und Seele",
+    );
+    const tippingBytes = Uint8Array.of(0xb8, 0xb8, 0xb8, 0xb8, 0xa8, 0xb4); // ё ё ё ё Ё ґ in 1251
+    const desc = decodeAmcString(Uint8Array.from([...asciiDesc, ...tippingBytes]));
+    const cat = makeCatalog([makeMovie({ originalTitle: title, description: desc })]);
+
+    const enc = detectEncoding(cat);
+    expect(enc).toBe("windows-1252"); // NOT windows-1251
+    expect(toReadable(cat, enc).movies[0].originalTitle).toBe("Wunderschöner");
+  });
+
   it("honours an explicit legacy-encoding override over auto-detection", () => {
     const rawBytes = encodeCp("Война и мир", "windows-1251");
     const cat = makeCatalog([makeMovie({ originalTitle: decodeAmcString(rawBytes) })]);
