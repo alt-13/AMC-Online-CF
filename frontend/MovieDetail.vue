@@ -103,7 +103,7 @@
             <i v-if="saving" class="pi pi-spin pi-spinner" />
             {{ saving ? "Saving…" : dirty ? "Save" : "Saved ✓" }}
           </button>
-          <button class="hbtn danger" title="Delete film" @click="onDelete">
+          <button class="hbtn danger" title="Delete film" @click="deleteOpen = true">
             <i class="pi pi-trash" />
           </button>
         </div>
@@ -425,6 +425,32 @@
       @close="omdbOpen = false"
       @apply="applyOmdb"
     />
+
+    <ConfirmDialog
+      v-if="deleteOpen"
+      title="Delete film"
+      :message="`Delete “${form.original_title || 'this movie'}”? This cannot be undone.`"
+      confirm-label="Delete"
+      cancel-label="Cancel"
+      danger
+      :busy="deleting"
+      @confirm="confirmDelete"
+      @cancel="deleteOpen = false"
+    />
+
+    <ConfirmDialog
+      v-if="urlOpen"
+      title="Poster from URL"
+      message="Paste a direct link to an image. It will be fetched and stored as the poster."
+      input
+      input-type="url"
+      input-placeholder="https://…"
+      confirm-label="Fetch"
+      cancel-label="Cancel"
+      :busy="urlBusy"
+      @confirm="submitUrl"
+      @cancel="urlOpen = false"
+    />
   </div>
 </template>
 
@@ -432,6 +458,7 @@
 import { ref, reactive, watch, onBeforeUnmount, nextTick } from "vue";
 import { cf, session, type MovieRow, type CustomFieldDefRow, type Extra } from "./api";
 import OmdbDialog from "./OmdbDialog.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
 import {
   isVisible, parseCustom, delphiToInput, inputToDelphi, SENTINEL,
   COLOR_TAG_COLORS, COLOR_TAG_NAMES, type AppSettings,
@@ -450,6 +477,10 @@ const saving = ref(false);
 const dirty = ref(false);
 const error = ref("");
 const omdbOpen = ref(false);
+const deleteOpen = ref(false);
+const deleting = ref(false);
+const urlOpen = ref(false);
+const urlBusy = ref(false);
 
 const form = reactive({} as MovieRow);
 const custom = reactive<Record<string, string>>({});
@@ -474,6 +505,7 @@ watch(() => props.movieId, load, { immediate: true });
 
 onBeforeUnmount(() => {
   _mq.removeEventListener("change", _mqListener);
+  window.removeEventListener("beforeunload", onBeforeUnload);
   if (objectUrl) URL.revokeObjectURL(objectUrl);
 });
 
@@ -576,7 +608,9 @@ function setRating(k: string, v: string) {
 }
 
 // --- save / delete ----------------------------------------------------------
-async function save() {
+// Returns true on success, false on failure — the unsaved-changes guard in the
+// parent uses this to decide whether "Save & continue" may proceed.
+async function save(): Promise<boolean> {
   saving.value = true;
   error.value = "";
   try {
@@ -600,20 +634,49 @@ async function save() {
     emit("changed");
     await nextTick();
     hydrating.value = false;
+    return true;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
+    return false;
   } finally {
     saving.value = false;
   }
 }
 
-async function onDelete() {
-  if (!confirm(`Delete "${form.original_title || "this movie"}"? This cannot be undone.`)) return;
+// Abandon in-flight edits. Every caller navigates away immediately after (a row
+// switch reloads the form via the movieId watcher; a close unmounts the
+// component), so clearing the flag is enough — the edited values are discarded
+// with the view and never persisted.
+function discard() {
+  dirty.value = false;
+}
+
+// beforeunload guard: warn on a real page unload (tab close / reload / external
+// nav) while there are unsaved text edits. Browsers only allow the native
+// generic prompt here — no custom message or styled dialog is possible — but it
+// fires only on actual unload, not on in-app row switches (those are guarded by
+// the parent's ConfirmDialog). Poster edits persist immediately, so they never
+// set `dirty` and never trigger this.
+function onBeforeUnload(e: BeforeUnloadEvent) {
+  if (!dirty.value) return;
+  e.preventDefault();
+  e.returnValue = ""; // required by Chrome to show the prompt
+}
+window.addEventListener("beforeunload", onBeforeUnload);
+
+defineExpose({ dirty, save, discard });
+
+async function confirmDelete() {
+  deleting.value = true;
   try {
     await cf.deleteMovie(form.id);
+    deleteOpen.value = false;
     emit("deleted");
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
+    deleteOpen.value = false;
+  } finally {
+    deleting.value = false;
   }
 }
 
@@ -665,10 +728,21 @@ async function onFile(ev: Event) {
   }
 }
 
-async function fromUrl() {
-  const url = prompt("Image URL:");
-  if (!url) return;
-  await applyPosterUrl(url);
+function fromUrl() {
+  urlOpen.value = true;
+}
+async function submitUrl(url?: string) {
+  const u = (url ?? "").trim();
+  if (!u) {
+    urlOpen.value = false;
+    return;
+  }
+  // Keep the dialog open with a spinner while fetching; applyPosterUrl reports
+  // any failure via posterMsg, so close afterwards either way.
+  urlBusy.value = true;
+  await applyPosterUrl(u);
+  urlBusy.value = false;
+  urlOpen.value = false;
 }
 
 async function removePoster() {

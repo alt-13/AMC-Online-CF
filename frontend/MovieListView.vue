@@ -135,10 +135,11 @@
     <section class="pane-detail">
       <MovieDetail
         v-if="selectedId"
+        ref="detailRef"
         :movie-id="selectedId"
         :defs="defs"
         :settings="settings"
-        @back="goBack"
+        @back="requestClose"
         @deleted="onDeleted"
         @changed="refresh"
       />
@@ -161,6 +162,19 @@
       @open-settings="omdbOpen = false; settingsOpen = true"
       @apply="createFromOmdb"
     />
+
+    <ConfirmDialog
+      v-if="confirmOpen"
+      title="Unsaved changes"
+      :message="`You have unsaved edits${confirmMovieTitle ? ` to “${confirmMovieTitle}”` : ''}. Save them before leaving?`"
+      confirm-label="Save & continue"
+      discard-label="Discard"
+      cancel-label="Keep editing"
+      :busy="confirmBusy"
+      @confirm="confirmSave"
+      @discard="confirmDiscard"
+      @cancel="confirmCancel"
+    />
   </div>
 </template>
 
@@ -172,6 +186,7 @@ import {
 import MovieDetail from "./MovieDetail.vue";
 import SettingsDialog from "./SettingsDialog.vue";
 import OmdbDialog from "./OmdbDialog.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
 import {
   DEFAULT_SETTINGS, type AppSettings, COLOR_TAG_COLORS, COLOR_TAG_NAMES,
   searchScopes, scopeLabel, ALL_SEARCH_FIELDS,
@@ -190,6 +205,58 @@ const selectedId = ref<string | null>(null);
 const creating = ref(false);
 const settingsOpen = ref(false);
 const omdbOpen = ref(false);
+
+// --- unsaved-changes guard --------------------------------------------------
+// The detail pane owns the `dirty` flag; we read it (and call save/discard)
+// through a template ref. Any navigation away from a dirty movie — clicking
+// another row, the on-screen Back, or the hardware/OS Back — is intercepted and
+// routed through ConfirmDialog instead of silently discarding the edits.
+const detailRef = ref<InstanceType<typeof MovieDetail> | null>(null);
+const confirmOpen = ref(false);
+const confirmBusy = ref(false);
+let pendingProceed: (() => void) | null = null;
+
+const confirmMovieTitle = computed(
+  () => movies.value.find((m) => m.id === selectedId.value)?.original_title ?? "",
+);
+
+// Run `proceed` now if the detail is clean; otherwise stash it and ask first.
+function guard(proceed: () => void) {
+  if (detailRef.value?.dirty) {
+    pendingProceed = proceed;
+    confirmOpen.value = true;
+  } else {
+    proceed();
+  }
+}
+
+async function confirmSave() {
+  confirmBusy.value = true;
+  const ok = await detailRef.value?.save();
+  confirmBusy.value = false;
+  if (!ok) {
+    // Save failed — keep the detail open (the error is shown inside it) and drop
+    // the pending navigation rather than leaving with unsaved changes.
+    confirmOpen.value = false;
+    pendingProceed = null;
+    return;
+  }
+  finishConfirm();
+}
+function confirmDiscard() {
+  detailRef.value?.discard();
+  finishConfirm();
+}
+function confirmCancel() {
+  confirmOpen.value = false;
+  pendingProceed = null;
+}
+function finishConfirm() {
+  confirmOpen.value = false;
+  const p = pendingProceed;
+  pendingProceed = null;
+  p?.();
+}
 
 const thumbs = reactive<Record<string, string>>({});
 const objectUrls: string[] = [];
@@ -383,14 +450,30 @@ async function refresh() {
 // Opening a movie is a history level so the OS Back button returns to the list
 // (not out of the app). `detailCloser` is stable so hardware Back and the
 // on-screen "← Back" both resolve to the same close.
-const detailCloser = () => (selectedId.value = null);
+const detailCloser = () => {
+  if (detailRef.value?.dirty) {
+    // The hardware/OS Back already popped this history level via popstate. Re-push
+    // it so a *confirmed* close still has an entry to pop, then ask before we
+    // actually close. (Save/Discard clear `dirty`, so the follow-up goBack falls
+    // straight through to the close below.)
+    pushView(detailCloser);
+    guard(() => goBack());
+    return;
+  }
+  selectedId.value = null;
+};
 function openDetail(id: string) {
   const wasOpen = selectedId.value !== null;
   selectedId.value = id;
   if (!wasOpen) pushView(detailCloser); // one level whether or not you switch rows
 }
 function select(id: string) {
-  openDetail(id);
+  if (id === selectedId.value) return; // no-op re-click: never prompt
+  guard(() => openDetail(id));
+}
+// On-screen Back button (mobile) routes through the same guard as hardware Back.
+function requestClose() {
+  guard(() => goBack());
 }
 
 async function onCreate(patch: Partial<MovieRow> = {}) {
@@ -428,6 +511,9 @@ async function createFromOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 }
 
 function onDeleted() {
+  // The movie is gone; clear any dirty flag so the Back below closes cleanly
+  // instead of the guard re-prompting for edits that no longer have a target.
+  detailRef.value?.discard();
   void refresh();
   goBack(); // pops the detail history level and closes it
 }
