@@ -53,24 +53,12 @@ say "Applying schema.sql to remote D1"
 $WRANGLER d1 execute "$DB_NAME" --remote --file=schema.sql
 
 # --- 2b. migrations -------------------------------------------------------
-# schema.sql uses CREATE TABLE IF NOT EXISTS, so it sets up a FRESH database
-# completely but never alters an existing one. Incremental ALTERs live in
-# migrations/*.sql; apply each here. Re-runnable: a migration already applied
-# (e.g. its column exists, or schema.sql already created it on a fresh DB) fails
-# with "duplicate column"/"already exists" and is treated as a skip.
-if compgen -G "migrations/*.sql" >/dev/null 2>&1; then
-  say "Applying migrations to remote D1"
-  for mig in $(ls migrations/*.sql | sort); do
-    out="$($WRANGLER d1 execute "$DB_NAME" --remote --file="$mig" 2>&1 || true)"
-    if printf '%s' "$out" | grep -qiE 'duplicate column|already exists'; then
-      echo "  $(basename "$mig") — already applied, skipping"
-    elif printf '%s' "$out" | grep -qiE '\berror\b'; then
-      echo "  $(basename "$mig") — FAILED:"; printf '%s\n' "$out"; exit 1
-    else
-      echo "  $(basename "$mig") — applied"
-    fi
-  done
-fi
+# schema.sql is the BASELINE (CREATE TABLE IF NOT EXISTS). Every later schema
+# change lives in migrations/*.sql and is applied with Wrangler's native D1
+# migrations, which track what's been run in a d1_migrations table — so this is
+# idempotent and safe to run on every deploy (see the deploy step / package.json).
+say "Applying D1 migrations (remote)"
+$WRANGLER d1 migrations apply "$DB_NAME" --remote
 
 # --- 3. R2 bucket ---------------------------------------------------------
 say "R2 bucket ($BUCKET_NAME)"

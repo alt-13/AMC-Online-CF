@@ -8,6 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "migrate": "wrangler d1 migrations apply amc --remote",
+    "deploy": "wrangler d1 migrations apply amc --remote && wrangler deploy",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:mega": "vitest run browser/mega.integration.test.ts",

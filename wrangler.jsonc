@@ -32,7 +32,11 @@
     {
       "binding": "DB",
       "database_name": "amc",
-      "database_id": "a9284840-4d6a-4e87-84b0-0e73b31d40f9"
+      "database_id": "a9284840-4d6a-4e87-84b0-0e73b31d40f9",
+      // Incremental schema changes live in cf/migrations/*.sql and are applied
+      // with `wrangler d1 migrations apply amc --remote` (run it in the deploy
+      // step — see package.json "deploy" and setup.sh). schema.sql is the baseline.
+      "migrations_dir": "migrations"
     }
   ],
 
