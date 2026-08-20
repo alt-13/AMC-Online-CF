@@ -1,5 +1,5 @@
 {
-  // Type-checking config for the whole cf/ port (Worker + browser + shared).
+  // Type-checking config for the whole port (Worker + browser + shared).
   // Install deps first:  npm i -D wrangler @cloudflare/workers-types typescript
   "compilerOptions": {
     "target": "ES2022",

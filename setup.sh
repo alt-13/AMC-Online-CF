@@ -18,7 +18,7 @@
 # dedicated ENCRYPTION_SECRET below lets you rotate AUTH_SECRET (JWT signing) on
 # its own without touching stored credentials.
 #
-# Usage:  cd cf && ./setup.sh
+# Usage:  ./setup.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 

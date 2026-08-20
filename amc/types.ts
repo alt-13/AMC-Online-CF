@@ -8,7 +8,7 @@
 //
 // NOTE ON PICTURES: `picData` holds raw JPEG bytes as read from the file.
 // In the Cloudflare port these bytes never reach D1 — the import flow lifts
-// them into R2 and swaps `picData` for an R2 key (see cf/amc/mapping.ts).
+// them into R2 and swaps `picData` for an R2 key (see amc/mapping.ts).
 
 export interface AMCPicture {
   /** Relative path to an external picture file, or "" if none/embedded. */

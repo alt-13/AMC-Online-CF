@@ -11,12 +11,12 @@
 --   3. Positional custom-field values are preserved via `custom_field_defs.ordinal`
 --      so an export re-emits them in the exact on-disk order the format requires.
 --
--- Apply:  wrangler d1 execute amc --file=cf/schema.sql
+-- Apply:  wrangler d1 execute amc --file=schema.sql
 
 PRAGMA foreign_keys = ON;
 
 -- Accounts. `id` doubles as the tenant_id used across catalogs + R2 key prefixes.
--- Passwords are PBKDF2-SHA256 (WebCrypto) — never bcrypt — see cf/worker/auth.ts.
+-- Passwords are PBKDF2-SHA256 (WebCrypto) — never bcrypt — see worker/auth.ts.
 CREATE TABLE IF NOT EXISTS users (
   id            TEXT PRIMARY KEY,             -- uuid == tenant_id
   email         TEXT NOT NULL,

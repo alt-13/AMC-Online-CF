@@ -1,11 +1,11 @@
 {
-  // AMC Online — Cloudflare Worker (cf-port)
+  // AMC Online — Cloudflare Worker
   //
-  // First time?  cd cf && ./setup.sh   — provisions everything below, prompts
+  // First time?  ./setup.sh   — provisions everything below, prompts
   //   for the secrets, and deploys. The manual steps here are the fallback.
   //
-  // Deploy:  cd cf && npx wrangler deploy
-  // Local:   cd cf && npx wrangler dev
+  // Deploy:  npx wrangler deploy
+  // Local:   npx wrangler dev
   //
   // Provision the bindings once before first deploy:
   //   npx wrangler d1 create amc
@@ -33,7 +33,7 @@
       "binding": "DB",
       "database_name": "amc",
       "database_id": "a9284840-4d6a-4e87-84b0-0e73b31d40f9",
-      // Incremental schema changes live in cf/migrations/*.sql and are applied
+      // Incremental schema changes live in migrations/*.sql and are applied
       // with `wrangler d1 migrations apply amc --remote` (run it in the deploy
       // step — see package.json "deploy" and setup.sh). schema.sql is the baseline.
       "migrations_dir": "migrations"
@@ -48,7 +48,7 @@
   ],
 
   // The built Vue frontend is served as static assets; the Worker handles /api/*.
-  // Built by `npm run build` in cf/ (vite.config.ts) -> cf/dist.
+  // Built by `npm run build` (vite.config.ts) -> ./dist.
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

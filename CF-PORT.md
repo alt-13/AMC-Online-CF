@@ -1,4 +1,4 @@
-# AMC Online — Cloudflare port (`cf-port`)
+# AMC Online — Cloudflare port
 
 Get AMC off Unraid and make it usable by people who don't run a server: upload
 your `.amc` once, browse and edit it online, export it back whenever you want —
@@ -34,7 +34,7 @@ The fix is to stop treating the catalog as one in-memory object:
 **The binary parse/serialize only ever runs in the browser.** A Worker request
 touches at most a handful of D1 rows and one poster — so 128 MB is never in play.
 
-## What's in `cf/`
+## What's in this repo
 
 | Path | Runs where | Purpose |
 |------|-----------|---------|
@@ -185,7 +185,7 @@ encrypted at rest. See "OMDb key" below.
 **One command on a fresh account:**
 
 ```sh
-cd cf && ./setup.sh
+./setup.sh
 ```
 
 `setup.sh` logs in if needed, creates the D1 database + R2 bucket, **writes the
@@ -197,13 +197,12 @@ detected and skipped), so it doubles as a rotate-a-secret tool.
 The equivalent manual steps:
 
 ```sh
-cd cf
 npm install                                  # frontend + worker build deps
 npx wrangler d1 create amc                  # paste database_id into wrangler.jsonc
 npx wrangler r2 bucket create amc-posters
 npx wrangler d1 execute amc --remote --file=schema.sql
 npx wrangler secret put AUTH_SECRET          # JWT/PBKDF2 signing secret (required)
-npm run build                                # vite -> cf/dist (the assets binding)
+npm run build                                # vite -> ./dist (the assets binding)
 npx wrangler deploy
 ```
 
@@ -222,9 +221,9 @@ deploy needs no OMDb secret at all.
 Dev: run `npx wrangler dev` (local D1 + R2 emulation, serves /api on :8787) and
 `npm run dev` (vite on :5173, proxies /api to :8787) side by side.
 
-The frontend is a self-contained vite app in `cf/` (`vite.config.ts`, `index.html`,
-`frontend/main.ts` -> `CatalogsView.vue`). `npm run build` emits `cf/dist`, which
-`wrangler.jsonc` serves as static assets while the Worker handles `/api/*`.
+The frontend is a self-contained vite app at the repo root (`vite.config.ts`,
+`index.html`, `frontend/main.ts` -> `CatalogsView.vue`). `npm run build` emits
+`./dist`, which `wrangler.jsonc` serves as static assets while the Worker handles `/api/*`.
 
 **megajs needs a Node polyfill in the browser build.** megajs is browser-capable
 but its bundle reaches for `Buffer` (AES + attribute packing) and touches
@@ -236,7 +235,7 @@ where esbuild pre-bundles megajs unpolyfilled). `optimizeDeps.include: ["megajs"
 routes it through the polyfilled path.
 
 Build deps still not added for the Worker itself: `wrangler` and
-`@cloudflare/workers-types` (for `worker/`). See `cf/tsconfig.json`.
+`@cloudflare/workers-types` (for `worker/`). See `tsconfig.json`.
 
 ## Mega import / export
 

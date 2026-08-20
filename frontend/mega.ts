@@ -7,7 +7,7 @@
 //
 // The Mega session lives ONLY in this browser tab's memory. We never persist the
 // password and never send it to the Worker — doing cloud sync client-side is the
-// whole reason Mega belongs in the browser (see cf/CF-PORT.md "Mega import/export").
+// whole reason Mega belongs in the browser (see CF-PORT.md "Mega import/export").
 //
 // This is written provider-agnostically on purpose: Mega is the first backend,
 // but the same shape (connect → list → push/pull) is meant to host Drive/Dropbox/

@@ -4,7 +4,7 @@
 // surrogates (U+DC80..U+DCFF) so a no-edit round-trip is byte-exact. But those
 // lone surrogates are destroyed the moment they are stored in D1 (SQLite TEXT is
 // UTF-8 — a lone surrogate becomes U+FFFD "�"), so both display and export break
-// for ANSI catalogs. See cf/amc/codepages.ts and CLAUDE.md rule 5.
+// for ANSI catalogs. See amc/codepages.ts and CLAUDE.md rule 5.
 //
 // The fix, run entirely in the browser (import.ts / export.ts):
 //   import:  toReadable  — reinterpret the raw legacy bytes through a codepage so
