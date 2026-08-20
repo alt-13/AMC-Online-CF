@@ -439,10 +439,18 @@ function onDeleted() {
 .workspace {
   display: grid;
   grid-template-columns: clamp(320px, 42%, 620px) 1fr;
+  /* Cap the single row at the viewport: a bare/auto grid row has a min-content
+     minimum and grows to fit content (the 150k-px virtual spacer), which makes
+     the .scroller's height:100% resolve to the full content height — defeating
+     virtual scrolling so every row (and every poster) renders. minmax(0, 1fr)
+     floors the row at 0 so it stays viewport-sized and the scroller stays
+     scrollable. min-height:0 on the items overrides their auto min so they can
+     shrink to the row instead of blowing it out. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
 }
-.pane-detail { min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+.pane-detail { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 
 .placeholder {
   flex: 1;
@@ -462,6 +470,7 @@ function onDeleted() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   height: 100%;
   background: var(--c-surface);
   border-right: 1px solid var(--c-border);
