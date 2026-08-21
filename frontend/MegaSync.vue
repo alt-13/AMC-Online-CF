@@ -137,7 +137,10 @@ const error = ref("");
 const files = ref<MegaAmcFile[]>([]);
 const importing = ref<string | null>(null);
 const path = ref(settings.path);
-const deep = ref(false);
+// Default on: the account tree is already in memory after login, so recursing
+// subfolders is a free in-memory walk — auto-discover .amc files anywhere as
+// soon as you connect. The checkbox stays visible to opt out (root only).
+const deep = ref(true);
 
 // Import progress. `phase` drives whether done/total are bytes (download) or
 // counts (posters/rows); "reading" is the uncountable parse step.
