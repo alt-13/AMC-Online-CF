@@ -100,6 +100,36 @@ npm run build                                 # → ./dist (served via the asset
 npm run deploy                                # applies migrations + wrangler deploy
 ```
 
+### Deploy on push (Cloudflare Workers Builds)
+
+To have Cloudflare rebuild and redeploy automatically on every push, connect the
+repo under **Workers & Pages → your Worker → Settings → Builds** (or **Create →
+Workers → Import a repository**) and set:
+
+| Dashboard field | Value |
+|---|---|
+| **Build command** | `npm run build` |
+| **Deploy command** | `npm run deploy` |
+| **Root directory** | `/` (repo root) |
+
+- `npm run build` runs `vite build` → `./dist` (served via the `assets` binding).
+- `npm run deploy` runs `wrangler d1 migrations apply amc --remote && wrangler
+  deploy`, so **pending D1 migrations are applied on every deploy** and the schema
+  stays current. (Use `npx wrangler deploy` instead if you prefer to apply
+  migrations by hand.)
+
+**One-time prerequisites** — Workers Builds deploys the code but does **not**
+provision infrastructure, so before the first push-deploy:
+
+- The **D1 database** (`amc`) and **R2 bucket** (`amc-posters`) must already exist
+  and `wrangler.jsonc` must hold the real `database_id` (both done by `./setup.sh`
+  or the manual steps above; `database_id` is committed).
+- **`AUTH_SECRET` must be set as a Worker secret** in the dashboard
+  (**Settings → Variables and Secrets → add secret**, name `AUTH_SECRET`). Secrets
+  are never in git and `wrangler deploy` does not create them, so a build that
+  skips this will deploy a Worker that can't sign tokens. `ENCRYPTION_SECRET` and a
+  shared `OMDB_API_KEY` are optional (see `wrangler.jsonc`).
+
 **OMDb key** (optional): metadata lookup uses OMDb, which needs a free key from
 [omdbapi.com](https://www.omdbapi.com/apikey.aspx). Each user sets their own in
 **Settings → OMDb API key** (encrypted at rest); no deploy-time secret is required.
