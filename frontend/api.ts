@@ -247,6 +247,15 @@ export const cf = {
     if (!res.ok && res.status !== 204) throw new Error(`delete catalog -> ${res.status}`);
   },
 
+  /** Adopt a cloud origin for a catalog that had none (first cloud push). */
+  setSourceRef: async (id: string, sourceRef: string): Promise<void> => {
+    const res = await authedFetch(`/api/catalog/${encodeURIComponent(id)}/source-ref`, {
+      method: "POST",
+      body: JSON.stringify({ source_ref: sourceRef }),
+    }, { "content-type": "application/json" });
+    if (!res.ok) throw new Error(`set source_ref -> ${res.status}`);
+  },
+
   /** Create a movie in a catalog. The Worker assigns the next on-disk number;
    *  pass any editable columns to prefill (e.g. an OMDb patch). */
   createMovie: async (catalogId: string, patch: Partial<MovieRow> = {}): Promise<MovieRow> => {

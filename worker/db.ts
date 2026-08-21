@@ -217,6 +217,17 @@ export async function touchCatalog(env: Env, id: string, now: number): Promise<v
   await env.DB.prepare(`UPDATE catalogs SET updated_at = ? WHERE id = ?`).bind(now, id).run();
 }
 
+export async function setCatalogSourceRef(
+  env: Env,
+  id: string,
+  sourceRef: string,
+  now: number,
+): Promise<void> {
+  await env.DB.prepare(`UPDATE catalogs SET source_ref = ?, updated_at = ? WHERE id = ?`)
+    .bind(sourceRef, now, id)
+    .run();
+}
+
 /** Delete a catalog. movies + custom_field_defs + extras cascade via FK;
  *  posters in R2 are cleaned by the caller (purgeCatalog sweeps them by prefix). */
 export async function deleteCatalog(env: Env, id: string): Promise<void> {

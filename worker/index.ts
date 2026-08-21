@@ -402,6 +402,17 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ superseded });
   }
 
+  // POST /api/catalog/:id/source-ref  { source_ref } — adopt a cloud origin for a
+  // catalog that had none (first push of a direct-upload library to the cloud).
+  if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "source-ref" && m === "POST") {
+    const cat = await db.getCatalog(env, t, seg[2]);
+    if (!cat) return err(404, "catalog not found");
+    const { source_ref } = (await req.json().catch(() => ({}))) as { source_ref?: string };
+    if (!source_ref) return err(400, "source_ref required");
+    await db.setCatalogSourceRef(env, cat.id, source_ref, Date.now());
+    return json({ id: cat.id, source_ref });
+  }
+
   // GET /api/catalog/:id/export  — full row bundle for the browser rebuild.
   // Reads movies + extras in bounded pages (never one unbounded query) and
   // reassembles the whole set the export format needs.
