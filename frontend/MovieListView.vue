@@ -746,10 +746,14 @@ function onDeleted() {
   display: grid;
   grid-template-columns: 4px 28px 1fr auto auto auto;
   align-items: center;
-  gap: 0.6rem;
+  /* Tight 4px column gap so the poster hugs the left edge and the title gets the
+     reclaimed pixels; the numeric cells on the right restore their breathing room
+     via their own margins below. */
+  column-gap: 4px;
   height: 52px;
   width: 100%;
-  padding: 0 0.75rem;
+  /* 4px left so the poster sits close to the panel edge (was 0.75rem). */
+  padding: 0 0.75rem 0 4px;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--c-border);
@@ -810,11 +814,15 @@ function onDeleted() {
   text-overflow: ellipsis;
 }
 
+/* The row's column-gap is a tight 4px (to pull the poster left); the numeric
+   cells add ~0.35rem of their own left margin to restore ~0.6rem of breathing
+   room between title/year/rating/watched. */
 .year-cell {
   font-size: 0.8rem;
   color: var(--c-muted);
   font-variant-numeric: tabular-nums;
   text-align: center;
+  margin-left: 0.35rem;
 }
 .rating-cell {
   font-size: 0.82rem;
@@ -823,8 +831,9 @@ function onDeleted() {
   font-variant-numeric: tabular-nums;
   min-width: 1.8rem;
   text-align: right;
+  margin-left: 0.35rem;
 }
-.watched-cell { width: 1.2rem; text-align: center; }
+.watched-cell { width: 1.2rem; text-align: center; margin-left: 0.35rem; }
 .checked-icon { color: var(--c-success); font-size: 0.8rem; }
 
 /* States */
