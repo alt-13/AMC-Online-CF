@@ -117,6 +117,19 @@ export function folderAt(storage: Storage, segments: string[]): MegaFile | null 
   return node;
 }
 
+/** Resolve a folder node by its stable Mega handle (nodeId). Used by origin
+ *  push, where a catalog's source_ref stored the parent folder's handle. */
+export function folderByHandle(storage: Storage, handle: string): MegaFile | null {
+  if (handle && handle === (storage.root?.nodeId ?? "")) {
+    return storage.root as unknown as MegaFile;
+  }
+  const found = storage.find(
+    (f) => f.directory === true && (f.nodeId ?? "") === handle,
+    true,
+  ) as unknown as MegaFile | null;
+  return found ?? null;
+}
+
 /** Like folderAt, but creates any missing folders along the way. */
 export async function ensureFolderAt(storage: Storage, segments: string[]): Promise<MegaFile> {
   let node: MegaFile = storage.root as unknown as MegaFile;
