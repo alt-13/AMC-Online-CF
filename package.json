@@ -6,7 +6,7 @@
   "description": "AMC Online — Cloudflare port (worker + browser modules)",
   "scripts": {
     "dev": "vite",
-    "predev:worker": "node scripts/ensure-dist.mjs",
+    "predev:worker": "node scripts/ensure-dist.mjs && node scripts/seed-local-db.mjs",
     "dev:worker": "wrangler dev",
     "build": "vite build",
     "preview": "vite preview",

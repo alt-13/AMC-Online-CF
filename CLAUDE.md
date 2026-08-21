@@ -217,13 +217,19 @@ npm run dev:worker     # wrangler dev  → Worker + local D1/R2 on :8787
 npm run dev            # vite          → frontend on :5173, proxies /api → :8787
 ```
 
-`dev:worker` has a `predev:worker` hook (`scripts/ensure-dist.mjs`) that drops a
-placeholder `dist/index.html` if there's no build yet — wrangler's `assets`
-binding refuses to boot without `./dist`, and in the two-process model you use
-vite's :5173 for the UI so wrangler's assets copy is unused anyway. A real
-`npm run build` overwrites the placeholder.
+`dev:worker` has a `predev:worker` hook that runs two scripts before `wrangler
+dev` boots:
+- `scripts/ensure-dist.mjs` drops a placeholder `dist/index.html` if there's no
+  build yet — wrangler's `assets` binding refuses to boot without `./dist`, and in
+  the two-process model you use vite's :5173 for the UI so wrangler's assets copy
+  is unused anyway. A real `npm run build` overwrites the placeholder.
+- `scripts/seed-local-db.mjs` **auto-seeds the emulated D1** on first run: it
+  probes for the `users` table and, if the local DB is empty (fresh clone / wiped
+  `.wrangler` state), applies `schema.sql` + migrations. Both steps are idempotent,
+  so it's a no-op (quiet, fast) once seeded. This is why a missing `user_cloud`
+  table no longer 500s the Mega sign-in path on a fresh checkout.
 
-First time on a fresh local DB, seed the emulated D1 before hitting the app:
+To seed the emulated D1 manually (the auto-seed does this for you):
 
 ```sh
 npx wrangler d1 execute amc --local --file=schema.sql
