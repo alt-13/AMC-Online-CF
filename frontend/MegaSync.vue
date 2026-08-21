@@ -10,6 +10,13 @@
     <div class="head">
       <span class="label">Mega.nz sync</span>
       <span v-if="state.connected" class="conn">· {{ state.email }}</span>
+      <!-- upper-right: leave the connection → back to the provider dropdown -->
+      <div v-if="state.connected" class="headactions">
+        <button v-if="settings.hasCredential" class="btn ghost sm" @click="forget">
+          Forget saved login
+        </button>
+        <button class="btn ghost sm" @click="disconnect">Disconnect</button>
+      </div>
     </div>
 
     <!-- reconnecting from a stored credential -->
@@ -75,12 +82,8 @@
         search subfolders
       </label>
 
-      <div class="bar">
+      <div class="actions">
         <button class="btn ghost" :disabled="busy" @click="applyPath">Refresh</button>
-        <button class="btn ghost" @click="disconnect">Disconnect</button>
-        <button v-if="settings.hasCredential" class="btn ghost" @click="forget">
-          Forget saved login
-        </button>
       </div>
 
       <ul v-if="files.length" class="files">
@@ -289,9 +292,10 @@ function msg(e: unknown): string {
   border: 1px solid var(--c-border, #2a2a48);
   border-radius: var(--radius, 8px);
 }
-.head { display: flex; align-items: baseline; gap: 0.4rem; }
+.head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .label { font-weight: 600; color: var(--c-text, #e8e0d5); }
 .conn { font-size: 0.78rem; color: var(--c-muted, #7e7a90); }
+.headactions { margin-left: auto; display: flex; gap: 0.4rem; }
 .form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .form input {
   flex: 1 1 12rem;
@@ -327,7 +331,7 @@ function msg(e: unknown): string {
   font-size: 0.85rem;
 }
 .rememberrow { flex-basis: 100%; display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
-.bar { display: flex; gap: 0.5rem; }
+.actions { display: flex; gap: 0.5rem; }
 .files { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; margin: 0.4rem 0 0; padding: 0; }
 .frow { display: flex; align-items: center; gap: 0.6rem; }
 .fname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-text, #e8e0d5); font-size: 0.85rem; }
@@ -343,6 +347,7 @@ function msg(e: unknown): string {
   cursor: pointer;
 }
 .btn.ghost { background: transparent; color: var(--c-gold, #c9a84c); border: 1px solid var(--c-border, #2a2a48); }
+.btn.sm { padding: 0.25rem 0.6rem; font-size: 0.75rem; }
 .btn:disabled { opacity: 0.7; cursor: default; }
 .err { color: var(--c-danger, #e05252); font-size: 0.82rem; margin: 0; }
 
