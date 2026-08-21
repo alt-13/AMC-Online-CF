@@ -84,18 +84,28 @@ export interface UserCloudRow {
   updated_at: number;
 }
 
-export async function getUserCloud(env: Env, userId: string): Promise<UserCloudRow | null> {
-  return env.DB.prepare(`SELECT * FROM user_cloud WHERE user_id = ?`)
-    .bind(userId)
+export async function getUserCloud(
+  env: Env,
+  userId: string,
+  provider: string,
+): Promise<UserCloudRow | null> {
+  return env.DB.prepare(`SELECT * FROM user_cloud WHERE user_id = ? AND provider = ?`)
+    .bind(userId, provider)
     .first<UserCloudRow>();
+}
+
+export async function listUserClouds(env: Env, userId: string): Promise<UserCloudRow[]> {
+  const { results } = await env.DB.prepare(`SELECT * FROM user_cloud WHERE user_id = ?`)
+    .bind(userId)
+    .all<UserCloudRow>();
+  return results ?? [];
 }
 
 export async function upsertUserCloud(env: Env, row: UserCloudRow): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO user_cloud (user_id, provider, path, credential, updated_at)
        VALUES (?,?,?,?,?)
-     ON CONFLICT(user_id) DO UPDATE SET
-       provider   = excluded.provider,
+     ON CONFLICT(user_id, provider) DO UPDATE SET
        path       = excluded.path,
        credential = excluded.credential,
        updated_at = excluded.updated_at`,
