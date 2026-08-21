@@ -30,17 +30,17 @@
           <button
             v-if="c.source_ref"
             class="btn ghost"
-            :disabled="busyId === c.id"
+            :disabled="!!busyId"
             @click.stop="onSync(c)"
           >
-            {{ busyId === c.id ? busyLabel : "Sync ↑" }}
+            {{ busyId === c.id && busyKind === 'sync' ? busyLabel : "Sync ↑" }}
           </button>
           <button
             class="btn"
-            :disabled="busyId === c.id"
+            :disabled="!!busyId"
             @click.stop="onExport(c)"
           >
-            {{ busyId === c.id && !c.source_ref ? busyLabel : "Export" }}
+            {{ busyId === c.id && busyKind === 'export' ? busyLabel : "Export" }}
           </button>
           <button
             class="btn ghost danger"
@@ -94,12 +94,14 @@ function onImported() {
 }
 
 const busyId = ref<string | null>(null);
+const busyKind = ref<"sync" | "export" | null>(null);
 const busyLabel = ref("");
 
 /** Origin catalog: push back to where it came from. */
 async function onSync(c: CatalogRow) {
   if (busyId.value) return;
   busyId.value = c.id;
+  busyKind.value = "sync";
   busyLabel.value = "Building…";
   error.value = "";
   try {
@@ -117,6 +119,7 @@ async function onSync(c: CatalogRow) {
     }
   } finally {
     busyId.value = null;
+    busyKind.value = null;
     busyLabel.value = "";
   }
 }
@@ -146,24 +149,36 @@ async function onExport(c: CatalogRow) {
   const dest = prompt(`Upload path on ${provider}:`, suggested);
   if (dest === null) return;
   busyId.value = c.id;
+  busyKind.value = "export";
   busyLabel.value = "Building…";
   error.value = "";
   try {
     const ref = await pushAdoptingOrigin(c, provider, dest.trim(), (d, t) => {
       busyLabel.value = t ? `Posters ${d}/${t}` : "Uploading…";
     });
-    await cf.setSourceRef(c.id, ref);
+    try {
+      await cf.setSourceRef(c.id, ref);
+    } catch {
+      try {
+        await cf.setSourceRef(c.id, ref); // one retry for a transient blip
+      } catch {
+        error.value =
+          `Uploaded to ${provider}, but couldn't save the origin. Re-export to the SAME path to avoid a duplicate.`;
+      }
+    }
     await refresh(); // re-list so the row now shows Sync ↑
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     busyId.value = null;
+    busyKind.value = null;
     busyLabel.value = "";
   }
 }
 
 async function downloadLocal(c: CatalogRow) {
   busyId.value = c.id;
+  busyKind.value = "export";
   busyLabel.value = "Building…";
   error.value = "";
   try {
@@ -177,6 +192,7 @@ async function downloadLocal(c: CatalogRow) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     busyId.value = null;
+    busyKind.value = null;
     busyLabel.value = "";
   }
 }
