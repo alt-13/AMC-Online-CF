@@ -369,15 +369,17 @@ export interface CloudConfig {
   provider: string;
   path: string;
   hasCredential: boolean;
+  updatedAt: number;
 }
 
 export const cloud = {
-  get: () => jget<CloudConfig>("/api/cloud"),
+  /** All of this user's provider rows (empty when nothing configured). */
+  get: () => jget<CloudConfig[]>("/api/cloud"),
 
-  /** Save provider/path and, optionally, the credential:
+  /** Save one provider's path and, optionally, its credential:
    *  omit / "" = keep stored, `null` = forget it, a string = encrypt + store. */
   save: async (patch: {
-    provider?: string;
+    provider: string;
     path?: string;
     credential?: string | null;
   }): Promise<CloudConfig> => {
@@ -389,9 +391,12 @@ export const cloud = {
     return res.json() as Promise<CloudConfig>;
   },
 
-  /** Fetch the DECRYPTED credential (provider-specific JSON) to log in with. */
-  connect: async (): Promise<{ provider: string; path: string; credential: string }> => {
-    const res = await authedFetch("/api/cloud/connect", { method: "POST" });
+  /** Fetch the DECRYPTED credential for one provider to log in with. */
+  connect: async (provider: string): Promise<{ provider: string; path: string; credential: string }> => {
+    const res = await authedFetch("/api/cloud/connect", {
+      method: "POST",
+      body: JSON.stringify({ provider }),
+    }, { "content-type": "application/json" });
     if (!res.ok) throw new Error(`cloud connect -> ${res.status}`);
     return res.json() as Promise<{ provider: string; path: string; credential: string }>;
   },

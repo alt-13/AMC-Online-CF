@@ -173,16 +173,19 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
   // exactly like pm's email settings. The decrypted credential is only ever
   // handed back by the explicit POST /api/cloud/connect below.
   if (p === "/api/cloud" && m === "GET") {
-    const row = await db.getUserCloud(env, t);
-    return json({
-      provider: row?.provider ?? "mega",
-      path: row?.path ?? "",
-      hasCredential: !!row?.credential,
-    });
+    const rows = await db.listUserClouds(env, t);
+    return json(
+      rows.map((r) => ({
+        provider: r.provider,
+        path: r.path,
+        hasCredential: !!r.credential,
+        updatedAt: r.updated_at,
+      })),
+    );
   }
 
-  // PUT /api/cloud  { provider?, path?, credential? }
-  //   credential omitted / ""  -> keep the stored one (pm's "empty = keep")
+  // PUT /api/cloud  { provider, path?, credential? }  — provider identifies the row.
+  //   credential omitted / ""  -> keep the stored one
   //   credential === null       -> clear it ("forget saved login")
   //   credential is a string    -> encrypt and store it
   if (p === "/api/cloud" && m === "PUT") {
@@ -191,7 +194,9 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       path?: string;
       credential?: string | null;
     };
-    const existing = await db.getUserCloud(env, t);
+    const provider = body.provider;
+    if (!provider) return err(400, "provider required");
+    const existing = await db.getUserCloud(env, t, provider);
     let credential: string | null;
     if (body.credential === undefined || body.credential === "") {
       credential = existing?.credential ?? null;
@@ -200,31 +205,23 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     } else {
       credential = await encryptSecret(body.credential, cryptoSecret(env));
     }
-    const provider = body.provider ?? existing?.provider ?? "mega";
     const path = body.path ?? existing?.path ?? "";
-    await db.upsertUserCloud(env, {
-      user_id: t,
-      provider,
-      path,
-      credential,
-      updated_at: Date.now(),
-    });
-    return json({ provider, path, hasCredential: !!credential });
+    const updated_at = Date.now();
+    await db.upsertUserCloud(env, { user_id: t, provider, path, credential, updated_at });
+    return json({ provider, path, hasCredential: !!credential, updatedAt: updated_at });
   }
 
-  // POST /api/cloud/connect — hand back the DECRYPTED credential so the browser
-  // can log in to the provider (megajs runs in the browser, never the Worker).
-  // Access-token gated; 404 when nothing is stored.
+  // POST /api/cloud/connect { provider } — hand back the DECRYPTED credential so
+  // the browser can log in (megajs runs in the browser, never the Worker).
   if (p === "/api/cloud/connect" && m === "POST") {
-    const row = await db.getUserCloud(env, t);
+    const { provider } = (await req.json().catch(() => ({}))) as { provider?: string };
+    if (!provider) return err(400, "provider required");
+    const row = await db.getUserCloud(env, t, provider);
     if (!row?.credential) return err(404, "no stored credential");
     let credential: string;
     try {
       credential = await decryptSecret(row.credential, cryptoSecret(env));
     } catch {
-      // The key changed (e.g. AUTH_SECRET was rotated with no ENCRYPTION_SECRET),
-      // so the stored blob can't be read. Tell the client to re-enter it rather
-      // than 500 forever with an opaque AES-GCM error.
       return err(409, "stored credential can no longer be decrypted — please reconnect and re-save it");
     }
     return json({ provider: row.provider, path: row.path, credential });
