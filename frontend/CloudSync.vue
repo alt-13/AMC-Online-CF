@@ -1,42 +1,42 @@
 <!--
-  MegaSync.vue — connect a Mega.nz account (in-browser, credentials never leave
-  the tab) and import an .amc from it. The per-catalog "push to Mega" button
-  lives in CatalogsView.vue and shares this component's connection via mega.ts.
+  CloudSync.vue — pick a cloud provider (header switcher), connect in-browser
+  (credentials never leave the tab unless the user opts to remember them,
+  encrypted at rest), and import an .amc from it. Connections are ephemeral:
+  after a successful import the session is dropped (see cloud.ts). Per-catalog
+  export/push lives in CatalogsView.vue and targets each catalog's own origin.
 
   Emits `imported(catalogId)` after a successful pull so the parent can refresh.
 -->
 <template>
-  <div class="mega">
+  <div class="cloud">
     <div class="head">
-      <span class="label">Mega.nz sync</span>
-      <span v-if="state.connected" class="conn">· {{ state.email }}</span>
+      <span class="label">Cloud sync</span>
+      <!-- provider switcher: relocating a wrong pick is one dropdown away -->
+      <select class="switcher" :value="settings.active" @change="onSwitch">
+        <option value="mega">Mega.nz</option>
+        <option value="drive" disabled>Google Drive (soon)</option>
+        <option value="dropbox" disabled>Dropbox (soon)</option>
+        <option value="s3" disabled>S3 (soon)</option>
+      </select>
+      <span v-if="session.connected" class="conn">· {{ session.email }}</span>
+      <div v-if="session.connected" class="headactions">
+        <button v-if="active.hasCredential" class="btn ghost sm" @click="forget">
+          Forget saved login
+        </button>
+        <button class="btn ghost sm" @click="disconnect">Disconnect</button>
+      </div>
     </div>
 
     <!-- reconnecting from a stored credential -->
-    <p v-if="!state.connected && reconnecting" class="hint">Reconnecting to Mega…</p>
+    <p v-if="!session.connected && reconnecting" class="hint">Reconnecting…</p>
 
     <!-- connect -->
-    <form v-else-if="!state.connected" class="form" @submit.prevent="connect">
-      <label class="providerrow">
-        <span class="plabel">cloud service</span>
-        <select v-model="settings.provider" class="provider">
-          <option value="mega">Mega.nz</option>
-          <option value="drive" disabled>Google Drive (soon)</option>
-          <option value="dropbox" disabled>Dropbox (soon)</option>
-          <option value="s3" disabled>S3 (soon)</option>
-        </select>
-      </label>
-      <input
-        v-model="email"
-        type="email"
-        placeholder="Mega email"
-        autocomplete="username"
-        required
-      />
+    <form v-else-if="!session.connected" class="form" @submit.prevent="onConnect">
+      <input v-model="email" type="email" placeholder="Email" autocomplete="username" required />
       <input
         v-model="password"
         type="password"
-        placeholder="Mega password"
+        placeholder="Password"
         autocomplete="current-password"
         required
       />
@@ -75,33 +75,24 @@
         search subfolders
       </label>
 
-      <div class="bar">
-        <button class="btn ghost" :disabled="busy" @click="applyPath">Refresh</button>
-        <button class="btn ghost" @click="disconnect">Disconnect</button>
-        <button v-if="settings.hasCredential" class="btn ghost" @click="forget">
-          Forget saved login
-        </button>
-      </div>
-
       <ul v-if="files.length" class="files">
         <li v-for="f in files" :key="f.name" class="frow">
           <span class="fname" :title="f.name">{{ f.name }}</span>
           <span class="fsize">{{ human(f.size) }}</span>
-          <button class="btn" :disabled="!!importing" @click="pull(f)">
+          <button class="btn" :disabled="!!importing" @click="pullFile(f)">
             {{ importing === f.name ? shortLabel : "Import" }}
           </button>
         </li>
       </ul>
 
-      <!-- import progress -->
       <div v-if="importing" class="progress">
         <div class="ptext">{{ phaseText }}</div>
-        <div class="bar" :class="{ indet: indeterminate }">
-          <div class="bar-fill" :style="indeterminate ? undefined : { width: pPct + '%' }" />
+        <div class="pbar" :class="{ indet: indeterminate }">
+          <div class="pbar-fill" :style="indeterminate ? undefined : { width: pPct + '%' }" />
         </div>
       </div>
       <p v-else class="hint">
-        No <code>.amc</code> files {{ path ? `at "${path}"` : "at your Mega account root" }}.
+        No <code>.amc</code> files {{ path ? `at "${path}"` : "at your account root" }}.
       </p>
     </div>
 
@@ -112,18 +103,19 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import {
-  megaState as state,
-  megaSettings as settings,
-  saveMegaPath,
+  cloudSession as session,
+  cloudSettings as settings,
+  saveActivePath,
   loadCloudConfig,
-  megaConnect,
-  megaAutoConnect,
-  megaForgetCredential,
-  megaDisconnect,
-  megaListAmc,
-  megaPull,
+  connect,
+  autoConnect,
+  switchProvider,
+  forgetCredential,
+  disconnect as cloudDisconnect,
+  listAmc,
+  pull,
   type MegaAmcFile,
-} from "./mega";
+} from "./cloud";
 import { withWakeLock } from "./wakelock";
 
 const emit = defineEmits<{ imported: [catalogId: string] }>();
@@ -136,14 +128,11 @@ const reconnecting = ref(false);
 const error = ref("");
 const files = ref<MegaAmcFile[]>([]);
 const importing = ref<string | null>(null);
-const path = ref(settings.path);
-// Default on: the account tree is already in memory after login, so recursing
-// subfolders is a free in-memory walk — auto-discover .amc files anywhere as
-// soon as you connect. The checkbox stays visible to opt out (root only).
+const path = ref("");
 const deep = ref(true);
 
-// Import progress. `phase` drives whether done/total are bytes (download) or
-// counts (posters/rows); "reading" is the uncountable parse step.
+const active = computed(() => settings.providers[settings.active] ?? { path: "", hasCredential: false });
+
 type Phase = "download" | "reading" | "posters" | "rows" | "";
 const phase = ref<Phase>("");
 const pDone = ref(0);
@@ -159,7 +148,6 @@ const phaseText = computed(() => {
     default: return "Starting…";
   }
 });
-// Compact word for the button itself.
 const shortLabel = computed(() => {
   switch (phase.value) {
     case "download": return pTotal.value ? `${pPct.value}%` : "Downloading…";
@@ -170,28 +158,44 @@ const shortLabel = computed(() => {
   }
 });
 
-// On load: fetch this user's saved config, then auto-reconnect if a credential
-// is stored — so a remembered user never has to log in again.
 onMounted(async () => {
   await loadCloudConfig();
-  path.value = settings.path;
-  remember.value = settings.hasCredential;
-  if (settings.hasCredential && !state.connected) {
+  path.value = active.value.path;
+  remember.value = active.value.hasCredential;
+  if (active.value.hasCredential && !session.connected) {
     reconnecting.value = true;
     try {
-      if (await megaAutoConnect()) refresh();
+      if (await autoConnect(settings.active)) refresh();
     } finally {
       reconnecting.value = false;
     }
   }
 });
 
-async function connect() {
+async function onSwitch(e: Event) {
+  const provider = (e.target as HTMLSelectElement).value;
+  error.value = "";
+  files.value = [];
+  reconnecting.value = true;
+  try {
+    await switchProvider(provider);
+    path.value = active.value.path;
+    remember.value = active.value.hasCredential;
+    if (session.connected) refresh();
+  } catch (e) {
+    error.value = msg(e);
+  } finally {
+    reconnecting.value = false;
+  }
+}
+
+async function onConnect() {
   busy.value = true;
   error.value = "";
   try {
-    await megaConnect({ email: email.value, password: password.value }, remember.value);
-    password.value = ""; // don't keep it in a reactive field longer than needed
+    await connect(settings.active, { email: email.value, password: password.value }, remember.value);
+    password.value = "";
+    path.value = active.value.path;
     refresh();
   } catch (e) {
     error.value = msg(e);
@@ -201,7 +205,7 @@ async function connect() {
 }
 
 function disconnect() {
-  megaDisconnect();
+  cloudDisconnect();
   files.value = [];
   error.value = "";
 }
@@ -209,7 +213,7 @@ function disconnect() {
 async function forget() {
   error.value = "";
   try {
-    await megaForgetCredential();
+    await forgetCredential(settings.active);
     remember.value = false;
   } catch (e) {
     error.value = msg(e);
@@ -219,26 +223,25 @@ async function forget() {
 function refresh() {
   error.value = "";
   try {
-    files.value = megaListAmc(path.value, deep.value);
+    files.value = listAmc(path.value, deep.value);
   } catch (e) {
     error.value = msg(e);
   }
 }
 
-/** Persist the path (per-user, server-side), then re-list from it. */
 async function applyPath() {
   const next = path.value.trim();
   path.value = next;
   error.value = "";
   try {
-    await saveMegaPath(next);
+    await saveActivePath(next);
   } catch (e) {
     error.value = msg(e);
   }
   refresh();
 }
 
-async function pull(f: MegaAmcFile) {
+async function pullFile(f: MegaAmcFile) {
   if (importing.value) return;
   importing.value = f.name;
   phase.value = "download";
@@ -247,12 +250,13 @@ async function pull(f: MegaAmcFile) {
   error.value = "";
   try {
     const id = await withWakeLock(() =>
-      megaPull(f.node, (d, t, ph) => {
+      pull(f, (d, t, ph) => {
         phase.value = ph;
         pDone.value = d;
         pTotal.value = t;
       }),
     );
+    files.value = []; // session dropped after import (ephemeral)
     emit("imported", id);
   } catch (e) {
     error.value = msg(e);
@@ -280,7 +284,7 @@ function msg(e: unknown): string {
 </script>
 
 <style scoped>
-.mega {
+.cloud {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
@@ -289,9 +293,18 @@ function msg(e: unknown): string {
   border: 1px solid var(--c-border, #2a2a48);
   border-radius: var(--radius, 8px);
 }
-.head { display: flex; align-items: baseline; gap: 0.4rem; }
+.head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .label { font-weight: 600; color: var(--c-text, #e8e0d5); }
+.switcher {
+  padding: 0.25rem 0.5rem;
+  background: var(--c-elevated, #1f1f38);
+  border: 1px solid var(--c-border, #2a2a48);
+  border-radius: 6px;
+  color: var(--c-text, #e8e0d5);
+  font-size: 0.8rem;
+}
 .conn { font-size: 0.78rem; color: var(--c-muted, #7e7a90); }
+.headactions { margin-left: auto; display: flex; gap: 0.4rem; }
 .form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .form input {
   flex: 1 1 12rem;
@@ -317,17 +330,7 @@ function msg(e: unknown): string {
   font-size: 0.85rem;
 }
 .deeprow { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
-.providerrow { display: flex; flex-direction: column; gap: 0.2rem; flex-basis: 100%; }
-.provider {
-  padding: 0.4rem 0.6rem;
-  background: var(--c-elevated, #1f1f38);
-  border: 1px solid var(--c-border, #2a2a48);
-  border-radius: 6px;
-  color: var(--c-text, #e8e0d5);
-  font-size: 0.85rem;
-}
 .rememberrow { flex-basis: 100%; display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
-.bar { display: flex; gap: 0.5rem; }
 .files { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; margin: 0.4rem 0 0; padding: 0; }
 .frow { display: flex; align-items: center; gap: 0.6rem; }
 .fname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-text, #e8e0d5); font-size: 0.85rem; }
@@ -343,15 +346,14 @@ function msg(e: unknown): string {
   cursor: pointer;
 }
 .btn.ghost { background: transparent; color: var(--c-gold, #c9a84c); border: 1px solid var(--c-border, #2a2a48); }
+.btn.sm { padding: 0.25rem 0.6rem; font-size: 0.75rem; }
 .btn:disabled { opacity: 0.7; cursor: default; }
 .err { color: var(--c-danger, #e05252); font-size: 0.82rem; margin: 0; }
-
 .progress { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.2rem; }
 .ptext { font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
-.bar { height: 8px; background: var(--c-elevated, #1f1f38); border-radius: 4px; overflow: hidden; }
-.bar-fill { height: 100%; background: var(--c-gold, #c9a84c); transition: width 0.2s; }
-/* Indeterminate: a sliding sliver for the uncountable parse step. */
-.bar.indet .bar-fill { width: 35%; animation: indet 1.1s ease-in-out infinite; }
+.pbar { height: 8px; background: var(--c-elevated, #1f1f38); border-radius: 4px; overflow: hidden; }
+.pbar-fill { height: 100%; background: var(--c-gold, #c9a84c); transition: width 0.2s; }
+.pbar.indet .pbar-fill { width: 35%; animation: indet 1.1s ease-in-out infinite; }
 @keyframes indet {
   0% { margin-left: -35%; }
   100% { margin-left: 100%; }

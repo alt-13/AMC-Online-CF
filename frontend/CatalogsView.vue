@@ -13,7 +13,7 @@
     <h2 class="title">Your libraries</h2>
 
     <CatalogImport @imported="onImported" />
-    <MegaSync @imported="onImported" />
+    <CloudSync @imported="onImported" />
 
     <div v-if="loading" class="muted">Loading…</div>
     <div v-else-if="!catalogs.length" class="muted">
@@ -28,19 +28,19 @@
         </div>
         <div class="actions">
           <button
-            v-if="megaState.connected"
+            v-if="c.source_ref"
             class="btn ghost"
-            :disabled="pushingId === c.id"
-            @click.stop="onPush(c)"
+            :disabled="!!busyId"
+            @click.stop="onSync(c)"
           >
-            {{ pushingId === c.id ? pushLabel : "→ Mega" }}
+            {{ busyId === c.id && busyKind === 'sync' ? busyLabel : "Sync ↑" }}
           </button>
           <button
             class="btn"
-            :disabled="exportingId === c.id"
+            :disabled="!!busyId"
             @click.stop="onExport(c)"
           >
-            {{ exportingId === c.id ? exportLabel : "Export .amc" }}
+            {{ busyId === c.id && busyKind === 'export' ? busyLabel : "Export" }}
           </button>
           <button
             class="btn ghost danger"
@@ -60,10 +60,10 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import CatalogImport from "./CatalogImport.vue";
-import MegaSync from "./MegaSync.vue";
+import CloudSync from "./CloudSync.vue";
 import MovieListView from "./MovieListView.vue";
 import { cf, downloadAmcFile, session, type CatalogRow } from "./api";
-import { megaState, megaPush } from "./mega";
+import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, switchProvider, CloudLoginRequiredError, cloudSettings } from "./cloud";
 import { pushView, goBack } from "./nav";
 
 // Remember the last library the user opened and jump straight back into it on
@@ -75,10 +75,6 @@ const catalogs = ref<CatalogRow[]>([]);
 const openCatalog = ref<CatalogRow | null>(null);
 const loading = ref(true);
 const error = ref("");
-const exportingId = ref<string | null>(null);
-const exportLabel = ref("Export .amc");
-const pushingId = ref<string | null>(null);
-const pushLabel = ref("→ Mega");
 const deletingId = ref<string | null>(null);
 
 async function refresh() {
@@ -97,42 +93,107 @@ function onImported() {
   void refresh();
 }
 
+const busyId = ref<string | null>(null);
+const busyKind = ref<"sync" | "export" | null>(null);
+const busyLabel = ref("");
+
+/** Origin catalog: push back to where it came from. */
+async function onSync(c: CatalogRow) {
+  if (busyId.value) return;
+  busyId.value = c.id;
+  busyKind.value = "sync";
+  busyLabel.value = "Building…";
+  error.value = "";
+  try {
+    await syncCatalogToOrigin(c, (d, t) => {
+      busyLabel.value = t ? `Posters ${d}/${t}` : "Uploading…";
+    });
+    busyLabel.value = "Done ✓";
+    await new Promise((r) => setTimeout(r, 1200));
+  } catch (e) {
+    if (e instanceof CloudLoginRequiredError) {
+      await switchProvider(e.provider).catch(() => {});
+      error.value = `Connect ${e.provider} in the Cloud sync panel above, then press Sync again.`;
+    } else {
+      error.value = e instanceof Error ? e.message : String(e);
+    }
+  } finally {
+    busyId.value = null;
+    busyKind.value = null;
+    busyLabel.value = "";
+  }
+}
+
+/** No-origin catalog: ask Download vs Upload-to-cloud. Download = local .amc;
+ *  Upload = push to a chosen path on the active provider and adopt an origin. */
 async function onExport(c: CatalogRow) {
-  if (exportingId.value) return;
-  exportingId.value = c.id;
-  exportLabel.value = "Building…";
+  if (busyId.value) return;
+  if (c.source_ref) {
+    // Already has an origin: plain local download (Sync ↑ handles cloud).
+    await downloadLocal(c);
+    return;
+  }
+  const toCloud = confirm(
+    `Export "${c.name || "(untitled)"}":\n\nOK = upload to your cloud provider\nCancel = download the .amc file`,
+  );
+  if (!toCloud) {
+    await downloadLocal(c);
+    return;
+  }
+  if (!cloudSession.connected) {
+    error.value = "Connect a provider in the Cloud sync panel above, then press Export again.";
+    return;
+  }
+  const provider = cloudSession.provider;
+  const suggested = cloudSettings.providers[provider]?.path || `/${(c.name || "catalog")}.amc`;
+  const dest = prompt(`Upload path on ${provider}:`, suggested);
+  if (dest === null) return;
+  busyId.value = c.id;
+  busyKind.value = "export";
+  busyLabel.value = "Building…";
+  error.value = "";
+  try {
+    const ref = await pushAdoptingOrigin(c, provider, dest.trim(), (d, t) => {
+      busyLabel.value = t ? `Posters ${d}/${t}` : "Uploading…";
+    });
+    try {
+      await cf.setSourceRef(c.id, ref);
+    } catch {
+      try {
+        await cf.setSourceRef(c.id, ref); // one retry for a transient blip
+      } catch {
+        error.value =
+          `Uploaded to ${provider}, but couldn't save the origin. Re-export to the SAME path to avoid a duplicate.`;
+      }
+    }
+    await refresh(); // re-list so the row now shows Sync ↑
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    busyId.value = null;
+    busyKind.value = null;
+    busyLabel.value = "";
+  }
+}
+
+async function downloadLocal(c: CatalogRow) {
+  busyId.value = c.id;
+  busyKind.value = "export";
+  busyLabel.value = "Building…";
   error.value = "";
   try {
     await downloadAmcFile(c.id, c.name || "catalog", {
       ...session(),
       onProgress: (d, t) => {
-        exportLabel.value = t ? `Posters ${d}/${t}` : "Building…";
+        busyLabel.value = t ? `Posters ${d}/${t}` : "Building…";
       },
     });
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    exportingId.value = null;
-    exportLabel.value = "Export .amc";
-  }
-}
-
-async function onPush(c: CatalogRow) {
-  if (pushingId.value) return;
-  pushingId.value = c.id;
-  pushLabel.value = "Building…";
-  error.value = "";
-  try {
-    await megaPush(c.id, c.name || "catalog", (d, t) => {
-      pushLabel.value = t ? `Posters ${d}/${t}` : "Uploading…";
-    });
-    pushLabel.value = "Done ✓";
-    await new Promise((r) => setTimeout(r, 1200));
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    pushingId.value = null;
-    pushLabel.value = "→ Mega";
+    busyId.value = null;
+    busyKind.value = null;
+    busyLabel.value = "";
   }
 }
 
