@@ -68,6 +68,11 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
   // ---- everything below requires a valid access token; tenant == user id --
   const t = await auth.authenticate(env.AUTH_SECRET, req, nowSec);
   if (!t) return err(401, "unauthorized");
+  // The token is validly signed, but the account it names may no longer exist
+  // (DB reset in dev, user deleted). Reject here so a write never reaches a
+  // FOREIGN KEY error downstream (user_cloud / user_settings REFERENCES users).
+  // The client treats 401 as "session gone" and re-auths.
+  if (!(await db.userExists(env, t))) return err(401, "unauthorized");
 
   const seg = p.split("/").filter(Boolean); // ["api", ...]
 
@@ -552,6 +557,12 @@ async function authRoute(
     if (!token) return err(401, "no session");
     const payload = await auth.verifyJwt(env.AUTH_SECRET, token, "refresh", nowSec);
     if (!payload) return err(401, "invalid session");
+    // The refresh token is valid but its account is gone — clear the cookie so
+    // the browser stops presenting a ghost session (otherwise the gate's 401 →
+    // refresh → 401 would loop), and force a fresh login.
+    if (!(await db.userExists(env, payload.sub))) {
+      return json({ error: "invalid session" }, 401, { "set-cookie": auth.clearRefreshCookie() });
+    }
     // Rotate: hand back a fresh access token (and slide the refresh cookie).
     return issueTokens(env, payload.sub, nowSec);
   }

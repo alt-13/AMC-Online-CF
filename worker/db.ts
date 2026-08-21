@@ -50,6 +50,15 @@ export async function getUserById(env: Env, id: string): Promise<UserRow | null>
   return env.DB.prepare(`SELECT * FROM users WHERE id = ?`).bind(id).first<UserRow>();
 }
 
+/** True if an account with this id still exists. A single indexed PK lookup —
+ *  cheap enough to run on the auth gate so a validly-signed token whose account
+ *  is gone (DB reset, user deleted) is rejected with 401 instead of blowing up
+ *  later on a FOREIGN KEY write (user_cloud / user_settings both REFERENCES users). */
+export async function userExists(env: Env, id: string): Promise<boolean> {
+  const row = await env.DB.prepare(`SELECT 1 AS ok FROM users WHERE id = ?`).bind(id).first<{ ok: number }>();
+  return row !== null;
+}
+
 /** How many accounts exist. 0 means first-run: registration is open to create
  *  the single operator account (see the pm-style bootstrap in worker/index.ts). */
 export async function countUsers(env: Env): Promise<number> {
