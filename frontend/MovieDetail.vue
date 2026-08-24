@@ -25,13 +25,13 @@
         <div class="header-left">
           <!-- Poster panel (inline, 110×160) -->
           <div class="picture-panel">
-            <div class="poster-wrap" @click="triggerUpload">
+            <div class="poster-wrap" @click="posterSrc ? (lightboxOpen = true) : triggerUpload()">
               <img v-if="posterSrc" :src="posterSrc" class="poster" alt="Movie poster" />
               <div v-else class="poster-placeholder">
                 <i class="pi pi-image" />
                 <span>Click to upload</span>
               </div>
-              <div class="poster-overlay"><i class="pi pi-upload" /></div>
+              <div class="poster-overlay"><i :class="posterSrc ? 'pi pi-search-plus' : 'pi pi-upload'" /></div>
             </div>
             <input
               ref="fileInput"
@@ -451,6 +451,16 @@
       @confirm="submitUrl"
       @cancel="urlOpen = false"
     />
+
+    <!-- Poster lightbox: click the inline poster to view it full-size. -->
+    <Teleport to="body">
+      <div v-if="lightboxOpen && posterSrc" class="lightbox" @click="lightboxOpen = false">
+        <img :src="posterSrc" class="lightbox-img" alt="Movie poster" @click.stop />
+        <button class="lightbox-close" title="Close" @click="lightboxOpen = false">
+          <i class="pi pi-times" />
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -481,6 +491,7 @@ const deleteOpen = ref(false);
 const deleting = ref(false);
 const urlOpen = ref(false);
 const urlBusy = ref(false);
+const lightboxOpen = ref(false);
 
 const form = reactive({} as MovieRow);
 const custom = reactive<Record<string, string>>({});
@@ -491,6 +502,12 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const posterSrc = ref("");
 const posterMsg = ref("");
 let objectUrl = "";
+// Bumped on every loadPoster() call. The component instance is reused across
+// row switches (no :key remount), so several poster fetches can be in flight at
+// once and — since they compete with the list's thumbnail fetches — resolve out
+// of order. A stale response must not clobber the current movie's poster, so
+// each call captures its generation and commits only while it is still latest.
+let posterGen = 0;
 
 const mode = ref<"desktop" | "mobile">(
   window.matchMedia("(max-width: 768px)").matches ? "mobile" : "desktop",
@@ -499,12 +516,17 @@ const _mq = window.matchMedia("(max-width: 768px)");
 const _mqListener = (e: MediaQueryListEvent) => { mode.value = e.matches ? "mobile" : "desktop"; };
 _mq.addEventListener("change", _mqListener);
 
+// Esc closes the poster lightbox.
+const _escListener = (e: KeyboardEvent) => { if (e.key === "Escape") lightboxOpen.value = false; };
+window.addEventListener("keydown", _escListener);
+
 // Reload whenever the selected movie changes (the component instance is reused
 // across row switches — no :key remount).
 watch(() => props.movieId, load, { immediate: true });
 
 onBeforeUnmount(() => {
   _mq.removeEventListener("change", _mqListener);
+  window.removeEventListener("keydown", _escListener);
   window.removeEventListener("beforeunload", onBeforeUnload);
   if (objectUrl) URL.revokeObjectURL(objectUrl);
 });
@@ -512,6 +534,7 @@ onBeforeUnmount(() => {
 async function load() {
   loading.value = true;
   hydrating.value = true;
+  lightboxOpen.value = false;
   error.value = "";
   try {
     const m = await cf.getMovie(props.movieId);
@@ -541,6 +564,7 @@ async function load() {
 }
 
 async function loadPoster(key: string | null) {
+  const gen = ++posterGen;
   if (objectUrl) {
     URL.revokeObjectURL(objectUrl);
     objectUrl = "";
@@ -548,8 +572,15 @@ async function loadPoster(key: string | null) {
   posterSrc.value = "";
   if (!key) return;
   try {
-    objectUrl = await cf.posterObjectUrl(key);
-    posterSrc.value = objectUrl;
+    const url = await cf.posterObjectUrl(key);
+    // A newer switch started while this fetch was in flight — drop the stale
+    // result (freeing its bytes) instead of overwriting the current poster.
+    if (gen !== posterGen) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    objectUrl = url;
+    posterSrc.value = url;
   } catch {
     /* leave empty */
   }
@@ -987,6 +1018,49 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 .pic-btn.danger:hover { color: var(--c-danger); }
 .poster-msg { font-size: 0.7rem; color: var(--c-muted); text-align: center; }
 .hidden-input { display: none; }
+
+/* ── Poster lightbox ── */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+  animation: lb-fade 0.15s ease;
+}
+.lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  cursor: default;
+  animation: lb-pop 0.15s ease;
+}
+.lightbox-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.lightbox-close:hover { background: rgba(0, 0, 0, 0.8); border-color: var(--c-gold); color: var(--c-gold); }
+@keyframes lb-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes lb-pop { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
 
 /* ── Scrollable body ── */
 .form-body {
