@@ -12,8 +12,15 @@ Two things are **not** in this repo — they stay in the AMC-Online monorepo and
 shared reference only:
 
 - The **self-hosted Vue frontend** (`frontend/src/` on `main`). `frontend/` here is
-  a separate, hand-maintained fork of it (its own components, no PrimeVue, no
-  store). The two must be kept **visually identical by hand** — they share no code.
+  a separate fork of it (its own components, no Pinia store). It now uses
+  **Tailwind v4 (inline utilities) + PrimeVue v4** — like the monorepo frontend uses
+  PrimeVue, but themed independently — so the two are **no longer kept
+  source-comparable by hand**; only the rendered look is kept in the same cinema
+  spirit. They share no code. Styling lives inline in the SFCs; the palette is the
+  Tailwind `@theme` block in `frontend/theme.css` and the PrimeVue `CinemaPreset`
+  (an Aura preset, adapted from the monorepo) is defined in `frontend/main.ts`. The
+  only remaining `<style>` blocks are `MovieDetail.vue`'s lightbox `@keyframes` and
+  `MovieListView.vue`'s workspace grid + a small DataTable `:deep()`.
 - The **binary-format reference material**: the Delphi sources
   (`original/amc_sources/…/*.pas`), the Python reference parser
   (`backend/app/parser/amc_file.py`), and `BinaryFormatResearch.md`. The `.amc`
@@ -80,7 +87,7 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── MegaSync.vue        ← provider picker + connect + list + import; auto-reconnect
 │   ├── CatalogImport.vue   ← drag/drop upload with poster+row progress
 │   ├── CatalogsView.vue    ← top-level screen: import, list catalogs, export/→Mega, drill into a library
-│   ├── MovieListView.vue   ← poster grid for one catalog: search, create, field-settings; drill into a movie
+│   ├── MovieListView.vue   ← two-pane workspace for one catalog: virtualized PrimeVue DataTable (search, create, field-settings) + MovieDetail; lazy-loaded chunk
 │   ├── MovieDetail.vue     ← edit one movie: poster (upload/URL/OMDb), every field (visibility-aware), custom fields, delete
 │   ├── OmdbDialog.vue      ← search IMDb, pick a title, fetch OMDb → patch + poster URL
 │   └── SettingsDialog.vue  ← per-user field visibility (desktop/mobile) + search field → user_settings
