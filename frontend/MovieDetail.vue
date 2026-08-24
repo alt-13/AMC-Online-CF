@@ -421,8 +421,9 @@
 
     <OmdbDialog
       v-if="omdbOpen"
-      :initial-query="form.original_title"
+      :initial-query="omdbSeed()"
       @close="omdbOpen = false"
+      @open-settings="omdbOpen = false; $emit('open-settings')"
       @apply="applyOmdb"
     />
 
@@ -483,6 +484,10 @@ const emit = defineEmits<{
   (e: "back"): void;
   (e: "deleted"): void;
   (e: "changed"): void;
+  // Bubble the OMDb dialog's "open Settings" request up to MovieListView, which
+  // owns the SettingsDialog (this view doesn't) — otherwise the key-setup link
+  // in the fetch dialog is a dead end when fetching from the editor.
+  (e: "open-settings"): void;
   // Optimistic list sync: the fields the movie list renders, pushed on every
   // edit so the row mirrors the open form instantly — the same immediacy poster
   // changes already have. The parent re-applies this over a server refetch while
@@ -526,9 +531,13 @@ const _mq = window.matchMedia("(max-width: 768px)");
 const _mqListener = (e: MediaQueryListEvent) => { mode.value = e.matches ? "mobile" : "desktop"; };
 _mq.addEventListener("change", _mqListener);
 
-// Esc closes the poster lightbox.
-const _escListener = (e: KeyboardEvent) => { if (e.key === "Escape") lightboxOpen.value = false; };
-window.addEventListener("keydown", _escListener);
+// Esc closes the poster lightbox; F6 opens the OMDb fetch dialog (matches the
+// self-hosted MovieForm shortcut).
+const _keyListener = (e: KeyboardEvent) => {
+  if (e.key === "Escape") lightboxOpen.value = false;
+  else if (e.key === "F6") { e.preventDefault(); omdbOpen.value = true; }
+};
+window.addEventListener("keydown", _keyListener);
 
 // Reload whenever the selected movie changes (the component instance is reused
 // across row switches — no :key remount).
@@ -536,7 +545,7 @@ watch(() => props.movieId, load, { immediate: true });
 
 onBeforeUnmount(() => {
   _mq.removeEventListener("change", _mqListener);
-  window.removeEventListener("keydown", _escListener);
+  window.removeEventListener("keydown", _keyListener);
   window.removeEventListener("beforeunload", onBeforeUnload);
   if (objectUrl) URL.revokeObjectURL(objectUrl);
 });
@@ -850,6 +859,15 @@ async function applyPosterUrl(url: string) {
 }
 
 // --- OMDb apply -------------------------------------------------------------
+// Seed the fetch dialog so it can auto-search on open: an existing IMDb URL wins
+// (the dialog fetches it directly), otherwise the original title, otherwise the
+// translated title — matching the self-hosted "search title/URL if filled".
+function omdbSeed(): string {
+  const url = form.url ?? "";
+  if (/tt\d+/.test(url)) return url;
+  return form.original_title || form.translated_title || "";
+}
+
 async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
   Object.assign(form, patch);
   dirty.value = true;

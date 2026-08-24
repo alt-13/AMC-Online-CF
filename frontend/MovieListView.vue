@@ -143,6 +143,7 @@
         @deleted="onDeleted"
         @changed="refresh"
         @live="applyLive"
+        @open-settings="settingsOpen = true"
       />
       <div v-else class="placeholder">
         <div class="empty-icon">🎞</div>

@@ -71,6 +71,13 @@ export const STATIC_SECTIONS: FieldSection[] = [
   },
 ];
 
+/** Flat field-key → human label lookup, derived from STATIC_SECTIONS so the
+ *  OMDb field-picker (and anything else) can name a column without repeating the
+ *  labels. Unknown keys fall back to the raw key at the call site. */
+export const FIELD_LABELS: Record<string, string> = Object.fromEntries(
+  STATIC_SECTIONS.flatMap((s) => s.fields.map((f) => [f.key, f.label] as const)),
+);
+
 /** Which columns are plain single-line text, big text, integer, or date. Any
  *  key not listed falls back to a single-line text input. */
 export const MULTILINE = new Set(["description", "comments", "actors"]);
