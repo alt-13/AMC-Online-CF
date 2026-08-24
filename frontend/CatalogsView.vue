@@ -60,11 +60,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { onMounted, ref, watch, defineAsyncComponent } from "vue";
 import Button from "primevue/button";
 import CatalogImport from "./CatalogImport.vue";
 import CloudSync from "./CloudSync.vue";
-import MovieListView from "./MovieListView.vue";
+// Lazy-loaded so the movie workspace (PrimeVue DataTable + virtual scroller) is
+// code-split into its own chunk and stays out of the entry bundle — it only
+// loads when a catalog is opened.
+const MovieListView = defineAsyncComponent(() => import("./MovieListView.vue"));
 import { cf, downloadAmcFile, session, type CatalogRow } from "./api";
 import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, switchProvider, CloudLoginRequiredError, cloudSettings } from "./cloud";
 import { pushView, goBack } from "./nav";

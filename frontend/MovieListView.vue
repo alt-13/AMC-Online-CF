@@ -9,126 +9,140 @@
   only structural add is the catalog bar (back/title/fields/fetch), which the
   self-hosted app keeps in a global topbar this per-catalog view doesn't have.
 
-  Two things make a 2880-row catalog usable: virtual scrolling (only the visible
-  rows are in the DOM) and lazy thumbnails (a poster is fetched only when its row
-  scrolls into view — never all at once).
+  Two things make a 2880-row catalog usable: PrimeVue DataTable virtual scrolling
+  (only the visible rows are in the DOM) and lazy thumbnails (a poster is fetched
+  only when its row scrolls into view — never all at once).
 -->
 <template>
   <div class="workspace" :class="{ 'has-detail': selectedId }">
     <!-- LEFT: list -->
-    <section class="movie-list">
+    <section class="movie-list flex flex-col min-w-0 min-h-0 h-full bg-surface border-r border-border max-[760px]:border-r-0 max-[760px]:h-[100dvh]">
       <!-- Catalog bar: back to libraries + name + field/fetch actions.
            (Self-hosted keeps these in a global topbar; this view is per-catalog.) -->
-      <div class="catalog-bar">
-        <button class="icon-btn" title="Back to libraries" @click="$emit('back')">
-          <i class="pi pi-arrow-left" />
-        </button>
-        <span class="catalog-title">{{ catalog.name || "(untitled)" }}</span>
-        <div class="bar-actions">
-          <button class="icon-btn" title="Field settings" @click="settingsOpen = true">
-            <i class="pi pi-cog" />
-          </button>
-          <button class="icon-btn" title="Fetch from OMDb → new film" @click="omdbOpen = true">
-            <i class="pi pi-bolt" />
-          </button>
+      <div class="flex items-center gap-2 px-3 py-2.5 border-b border-border shrink-0">
+        <Button icon="pi pi-arrow-left" text size="small" title="Back to libraries" @click="$emit('back')" />
+        <span class="flex-1 min-w-0 font-display font-bold text-gold text-[1.05rem] tracking-wide truncate">
+          {{ catalog.name || "(untitled)" }}
+        </span>
+        <div class="flex gap-1.5 shrink-0">
+          <Button icon="pi pi-cog" text size="small" title="Field settings" @click="settingsOpen = true" />
+          <Button icon="pi pi-bolt" text size="small" title="Fetch from OMDb → new film" @click="omdbOpen = true" />
         </div>
       </div>
 
-      <!-- Toolbar: search + new (matches the self-hosted MovieList toolbar) -->
-      <div class="list-toolbar">
-        <div class="search-wrap">
-          <i class="pi pi-search search-icon" />
-          <input
+      <!-- Toolbar: search + new (matches the self-hosted MovieList toolbar).
+           z-20 lifts the scope dropdown above the DataTable body. -->
+      <div class="relative z-20 flex items-center gap-2 px-3 py-2.5 border-b border-border shrink-0">
+        <div class="relative flex-1 flex items-center">
+          <i class="pi pi-search absolute left-2.5 text-xs text-muted pointer-events-none" />
+          <InputText
             v-model="searchInput"
-            class="search-input"
+            class="w-full pl-[1.8rem] pr-[3.1rem] text-[0.825rem]"
             :placeholder="searchField ? `Search ${activeScopeLabel}…` : 'Search films…'"
-            type="text"
           />
           <!-- Scope filter: pick which field the search matches (mirrors the
                self-hosted filter icon inside the search bar). -->
-          <div ref="scopeRef" class="scope">
+          <div ref="scopeRef" class="absolute right-6 top-1/2 -translate-y-1/2 flex">
             <button
-              class="scope-btn"
-              :class="{ active: !!searchField }"
+              class="inline-flex items-center justify-center bg-transparent border-none cursor-pointer text-xs px-1 leading-none transition-colors"
+              :class="searchField ? 'text-gold' : 'text-muted hover:text-text'"
               :title="searchField ? `Searching: ${activeScopeLabel}` : 'Search scope'"
               @click.stop="scopeOpen = !scopeOpen"
             >
               <i class="pi pi-filter" />
             </button>
-            <div v-if="scopeOpen" class="scope-menu">
+            <div
+              v-if="scopeOpen"
+              class="absolute top-[calc(100%+6px)] right-0 z-50 min-w-[190px] max-h-[340px] overflow-y-auto p-1 bg-elevated border border-border rounded-lg shadow-[0_10px_28px_rgba(0,0,0,0.4)]"
+            >
               <template v-for="g in scopeGroups" :key="g.label || 'all'">
-                <div v-if="g.label" class="scope-group">{{ g.label }}</div>
+                <div v-if="g.label" class="px-2 pt-1.5 pb-0.5 text-[0.66rem] font-semibold uppercase tracking-wider text-muted">
+                  {{ g.label }}
+                </div>
                 <button
                   v-for="it in g.items"
                   :key="it.value"
-                  class="scope-item"
-                  :class="{ sel: it.value === searchField }"
+                  class="block w-full text-left bg-transparent border-none px-2 py-1.5 rounded cursor-pointer text-[0.8rem] whitespace-nowrap text-text hover:bg-surface"
+                  :class="{ 'text-gold! bg-gold-dim': it.value === searchField }"
                   @click="pickScope(it.value)"
                 >{{ it.label }}</button>
               </template>
             </div>
           </div>
-          <button v-if="searchInput" class="search-clear" @click="searchInput = ''">
+          <button
+            v-if="searchInput"
+            class="absolute right-2 bg-transparent border-none text-muted hover:text-text cursor-pointer text-[0.7rem] p-0 leading-none"
+            @click="searchInput = ''"
+          >
             <i class="pi pi-times" />
           </button>
         </div>
-        <button
-          class="new-btn"
-          :disabled="creating"
-          title="New film"
-          @click="onCreate()"
-        >
-          <i class="pi pi-plus" />
-        </button>
+        <Button icon="pi pi-plus" outlined :disabled="creating" title="New film" @click="onCreate()" />
       </div>
 
       <!-- Table -->
-      <div class="table-wrap">
-        <div v-if="loading" class="state-msg">Loading catalog…</div>
-        <div v-else-if="!filtered.length" class="state-msg">
-          <i class="pi pi-search" />
-          No films match "{{ q }}"
+      <div class="flex-1 min-h-0">
+        <div v-if="loading" class="flex items-center justify-center gap-2 p-8 text-muted text-sm">Loading catalog…</div>
+        <div v-else-if="!filtered.length" class="flex items-center justify-center gap-2 p-8 text-muted text-sm">
+          <i class="pi pi-search" /> No films match "{{ q }}"
         </div>
-        <div v-else ref="scroller" class="scroller" @scroll.passive="onScroll">
-          <div class="spacer" :style="{ height: totalH + 'px' }">
-            <div class="window" :style="{ transform: `translateY(${offsetY}px)` }">
-              <button
-                v-for="m in visible"
-                :key="m.id"
-                class="trow"
-                :class="{ sel: m.id === selectedId }"
-                @click="select(m.id)"
-              >
+        <DataTable
+          v-else
+          :value="filtered"
+          dataKey="id"
+          scrollable
+          scrollHeight="flex"
+          :showHeaders="false"
+          :virtualScrollerOptions="{ itemSize: 52 }"
+          :rowClass="rowClass"
+          class="movie-dt text-sm"
+          @row-click="onRowClick"
+        >
+          <Column headerStyle="width:4px" bodyStyle="width:4px">
+            <template #body="{ data }">
+              <span
+                class="block w-1 h-8 rounded-sm"
+                :style="{ background: colorOf(data.color_tag) }"
+                :title="colorNameOf(data.color_tag)"
+              />
+            </template>
+          </Column>
+          <Column headerStyle="width:28px" bodyStyle="width:28px">
+            <template #body="{ data }">
+              <span class="block w-7 h-10 overflow-hidden rounded-sm bg-elevated" @vue:mounted="loadThumb(data)">
+                <img v-if="thumbs[data.id]" :src="thumbs[data.id]" class="w-full h-full object-cover" alt="" />
+                <span v-else class="w-full h-full flex items-center justify-center text-border-hi text-xs"><i class="pi pi-image" /></span>
+              </span>
+            </template>
+          </Column>
+          <Column>
+            <template #body="{ data }">
+              <span class="flex flex-col gap-px min-w-0 overflow-hidden">
+                <span class="text-[0.845rem] font-medium text-text truncate">{{ data.original_title || "—" }}</span>
                 <span
-                  class="color-dot"
-                  :style="{ background: colorOf(m.color_tag) }"
-                  :title="colorNameOf(m.color_tag)"
-                />
-                <span class="thumb-wrap">
-                  <img v-if="thumbs[m.id]" :src="thumbs[m.id]" class="thumb" alt="" />
-                  <span v-else class="thumb-placeholder"><i class="pi pi-image" /></span>
-                </span>
-                <span class="title-cell">
-                  <span class="orig-title">{{ m.original_title || "—" }}</span>
-                  <span
-                    v-if="m.translated_title && m.translated_title !== m.original_title"
-                    class="trans-title"
-                  >{{ m.translated_title }}</span>
-                </span>
-                <span class="year-cell">{{ m.year > 0 ? m.year : "" }}</span>
-                <span class="rating-cell">{{ m.rating > 0 ? (m.rating / 10).toFixed(1) : "" }}</span>
-                <span class="watched-cell">
-                  <i v-if="m.checked" class="pi pi-eye checked-icon" title="Watched" />
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
+                  v-if="data.translated_title && data.translated_title !== data.original_title"
+                  class="text-xs text-muted italic truncate"
+                >{{ data.translated_title }}</span>
+              </span>
+            </template>
+          </Column>
+          <Column headerStyle="width:3rem" bodyStyle="width:3rem">
+            <template #body="{ data }"><span class="text-sm text-muted tabular-nums text-center block">{{ data.year > 0 ? data.year : "" }}</span></template>
+          </Column>
+          <Column headerStyle="width:2.5rem" bodyStyle="width:2.5rem">
+            <template #body="{ data }"><span class="text-sm font-semibold text-gold tabular-nums text-right block">{{ data.rating > 0 ? (data.rating / 10).toFixed(1) : "" }}</span></template>
+          </Column>
+          <Column headerStyle="width:1.5rem" bodyStyle="width:1.5rem">
+            <template #body="{ data }"><i v-if="data.checked" class="pi pi-eye text-success text-sm" title="Watched" /></template>
+          </Column>
+        </DataTable>
       </div>
 
       <!-- Count -->
-      <div class="list-footer">{{ filtered.length }} / {{ movies.length }} films and series</div>
-      <p v-if="error" class="err">{{ error }}</p>
+      <div class="px-3 py-1.5 text-[0.72rem] text-muted border-t border-border shrink-0">
+        {{ filtered.length }} / {{ movies.length }} films and series
+      </div>
+      <p v-if="error" class="text-danger text-[0.82rem] px-3 pb-1.5">{{ error }}</p>
     </section>
 
     <!-- RIGHT: detail (overlays on mobile) -->
@@ -145,10 +159,10 @@
         @live="applyLive"
         @open-settings="settingsOpen = true"
       />
-      <div v-else class="placeholder">
-        <div class="empty-icon">🎞</div>
-        <p class="empty-title">No film selected</p>
-        <p class="empty-sub">Select a film from the list or create a new one</p>
+      <div v-else class="flex-1 flex flex-col items-center justify-center gap-2 text-muted">
+        <div class="text-5xl opacity-40">🎞</div>
+        <p class="font-display text-lg text-muted">No film selected</p>
+        <p class="text-[0.85rem]">Select a film from the list or create a new one</p>
       </div>
     </section>
 
@@ -181,7 +195,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import DataTable from "primevue/datatable";
+import Column from "primevue/column";
+import InputText from "primevue/inputtext";
+import Button from "primevue/button";
 import {
   cf, settings as settingsApi, type CatalogRow, type MovieRow, type CustomFieldDefRow,
 } from "./api";
@@ -344,51 +362,35 @@ function onDocClick(e: MouseEvent) {
   }
 }
 
-// --- virtual scroll --------------------------------------------------------
-const ROW_H = 52;
-const BUFFER = 8;
-const scroller = ref<HTMLElement | null>(null);
-const scrollTop = ref(0);
-const viewportH = ref(700);
-
-const start = computed(() => Math.max(0, Math.floor(scrollTop.value / ROW_H) - BUFFER));
-const visibleCount = computed(() => Math.ceil(viewportH.value / ROW_H) + BUFFER * 2);
-const end = computed(() => Math.min(filtered.value.length, start.value + visibleCount.value));
-const visible = computed(() => filtered.value.slice(start.value, end.value));
-const totalH = computed(() => filtered.value.length * ROW_H);
-const offsetY = computed(() => start.value * ROW_H);
-
-function onScroll() {
-  if (scroller.value) scrollTop.value = scroller.value.scrollTop;
+// --- DataTable row styling + click ------------------------------------------
+// Selection stays MANUAL (rowClass + row-click routed through the guard) so the
+// unsaved-changes prompt keeps control — DataTable's own selectionMode would
+// change the selection before the guard could prompt.
+function rowClass(data: MovieRow) {
+  return data.id === selectedId.value ? "amc-row amc-row-sel" : "amc-row";
 }
-function measure() {
-  if (scroller.value) viewportH.value = scroller.value.clientHeight || 700;
+function onRowClick(e: { data: MovieRow }) {
+  select(e.data.id); // existing guard — prompts if the open detail is dirty
 }
 
-// A new search resets the scroll to the top so you don't land mid-list.
-watch(q, () => {
-  scrollTop.value = 0;
-  if (scroller.value) scroller.value.scrollTop = 0;
-});
-
-// Lazy thumbnails: fetch a poster only for rows currently visible, and cap how
-// many are in flight at once. Without this, fast-scrolling a large catalog fires
-// a request for every row it passes — hundreds of pending fetches that saturate
-// the browser's per-host connection pool and stall the detail pane when you click
-// a row (its getMovie/poster request queues behind them). We keep a queue of the
-// currently-visible-and-unloaded rows and drain it through a small pool; rows that
-// scroll off before a slot frees are dropped, so on-screen posters win the slots.
-// The cap is kept below the ~6-per-host browser limit so the detail pane always
-// has a free connection.
+// Lazy thumbnails: fetch a poster only for rows currently on screen, and cap how
+// many are in flight at once. `loadThumb` is called from the poster cell's
+// `@vue:mounted`, so it fires exactly when a row scrolls into view (the virtual
+// scroller only mounts visible rows). Without the cap, fast-scrolling a large
+// catalog would fire a request for every row it passes — hundreds of pending
+// fetches that saturate the browser's per-host connection pool and stall the
+// detail pane when you click a row. The cap is kept below the ~6-per-host browser
+// limit so the detail pane always has a free connection.
 const MAX_CONCURRENT_THUMBS = 4;
 const requested = new Set<string>(); // loaded or in flight — never fetched twice
 let thumbQueue: MovieRow[] = [];
 let activeThumbs = 0;
 
-watch(visible, (rows) => {
-  thumbQueue = rows.filter((m) => m.poster_key && !thumbs[m.id] && !requested.has(m.id));
+function loadThumb(m: MovieRow) {
+  if (!m.poster_key || thumbs[m.id] || requested.has(m.id)) return;
+  thumbQueue.push(m);
   pumpThumbs();
-});
+}
 
 function pumpThumbs() {
   while (activeThumbs < MAX_CONCURRENT_THUMBS && thumbQueue.length) {
@@ -412,19 +414,11 @@ function colorNameOf(tag: number): string {
 }
 
 // --- lifecycle -------------------------------------------------------------
-let ro: ResizeObserver | null = null;
 onMounted(async () => {
   await load();
-  await nextTick();
-  measure();
-  if (typeof ResizeObserver !== "undefined" && scroller.value) {
-    ro = new ResizeObserver(measure);
-    ro.observe(scroller.value);
-  }
   document.addEventListener("click", onDocClick);
 });
 onBeforeUnmount(() => {
-  ro?.disconnect();
   document.removeEventListener("click", onDocClick);
   dropView(detailCloser); // don't leak a closer if we unmount with detail open
   objectUrls.forEach((u) => URL.revokeObjectURL(u));
@@ -544,340 +538,17 @@ function onDeleted() {
 
 <style scoped>
 /* Two-pane workspace: list left, detail right. List panel capped at 620px and
-   floored at 320px, tracking 42% — identical to the self-hosted .panel-list. */
+   floored at 320px, tracking 42% — identical to the self-hosted .panel-list.
+   minmax(0, 1fr) floors the single row at 0 so it stays viewport-sized and the
+   DataTable's flex scroll body stays scrollable/virtualized. */
 .workspace {
   display: grid;
   grid-template-columns: clamp(320px, 42%, 620px) 1fr;
-  /* Cap the single row at the viewport: a bare/auto grid row has a min-content
-     minimum and grows to fit content (the 150k-px virtual spacer), which makes
-     the .scroller's height:100% resolve to the full content height — defeating
-     virtual scrolling so every row (and every poster) renders. minmax(0, 1fr)
-     floors the row at 0 so it stays viewport-sized and the scroller stays
-     scrollable. min-height:0 on the items overrides their auto min so they can
-     shrink to the row instead of blowing it out. */
   grid-template-rows: minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
 }
 .pane-detail { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-
-.placeholder {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  color: var(--c-muted);
-}
-.empty-icon { font-size: 3rem; opacity: 0.4; }
-.empty-title { font-family: var(--font-display); font-size: 1.1rem; color: var(--c-muted); }
-.empty-sub { font-size: 0.85rem; }
-
-/* ── List panel ── */
-.movie-list {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  background: var(--c-surface);
-  border-right: 1px solid var(--c-border);
-}
-
-/* Catalog bar (per-catalog chrome) */
-.catalog-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  border-bottom: 1px solid var(--c-border);
-  flex-shrink: 0;
-}
-.catalog-title {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-display);
-  font-weight: 700;
-  color: var(--c-gold);
-  font-size: 1.05rem;
-  letter-spacing: 0.02em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bar-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
-
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  background: transparent;
-  color: var(--c-text);
-  border: 1px solid var(--c-border);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.85rem;
-  transition: border-color 0.15s, color 0.15s;
-}
-.icon-btn:hover { border-color: var(--c-gold); color: var(--c-gold); }
-
-/* Toolbar: search + new */
-.list-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  border-bottom: 1px solid var(--c-border);
-  flex-shrink: 0;
-  /* Lift the whole toolbar into a stacking context above the virtual table.
-     The table's .window uses will-change:transform, promoting it to its own
-     compositor layer that would otherwise paint the scope dropdown's overlap
-     region on top of the menu regardless of the menu's z-index. */
-  position: relative;
-  z-index: 20;
-}
-.search-wrap {
-  flex: 1;
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.search-icon {
-  position: absolute;
-  left: 0.6rem;
-  font-size: 0.75rem;
-  color: var(--c-muted);
-  pointer-events: none;
-}
-.search-input {
-  width: 100%;
-  background: var(--c-elevated);
-  border: 1px solid var(--c-border);
-  color: var(--c-text);
-  padding: 0.4rem 3.1rem 0.4rem 1.8rem;
-  border-radius: var(--radius);
-  font-family: var(--font-body);
-  font-size: 0.825rem;
-  outline: none;
-  transition: border-color 0.15s;
-}
-.search-input:focus { border-color: var(--c-gold); }
-.search-input::placeholder { color: var(--c-muted); }
-.search-clear {
-  position: absolute;
-  right: 0.5rem;
-  background: none;
-  border: none;
-  color: var(--c-muted);
-  cursor: pointer;
-  font-size: 0.7rem;
-  padding: 0;
-  line-height: 1;
-}
-.search-clear:hover { color: var(--c-text); }
-
-/* Scope filter — minimal icon trigger inside the search bar + its dropdown */
-.scope {
-  position: absolute;
-  right: 1.65rem;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-}
-.scope-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  color: var(--c-muted);
-  cursor: pointer;
-  font-size: 0.75rem;
-  padding: 0 0.2rem;
-  line-height: 1;
-  transition: color 0.15s;
-}
-.scope-btn:hover { color: var(--c-text); }
-.scope-btn.active { color: var(--c-gold); }
-
-.scope-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 50;
-  min-width: 190px;
-  max-height: 340px;
-  overflow-y: auto;
-  padding: 0.25rem;
-  background: var(--c-elevated);
-  border: 1px solid var(--c-border);
-  border-radius: 8px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
-}
-.scope-group {
-  padding: 0.4rem 0.5rem 0.15rem;
-  font-size: 0.66rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--c-muted);
-}
-.scope-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--c-text);
-  padding: 0.35rem 0.5rem;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 0.8rem;
-  white-space: nowrap;
-}
-.scope-item:hover { background: var(--c-surface); }
-.scope-item.sel { color: var(--c-gold); background: var(--c-gold-dim); }
-
-.new-btn {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: transparent;
-  color: var(--c-gold);
-  border: 1px solid var(--c-gold);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.85rem;
-  transition: background 0.15s, color 0.15s;
-}
-.new-btn:hover { background: var(--c-gold-dim); }
-.new-btn:disabled { opacity: 0.6; cursor: default; }
-
-/* ── Virtual table ── */
-.table-wrap { flex: 1; min-height: 0; overflow: hidden; }
-.scroller { height: 100%; overflow-y: auto; overflow-x: hidden; }
-.spacer { position: relative; width: 100%; }
-.window { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
-
-.trow {
-  display: grid;
-  grid-template-columns: 4px 28px 1fr auto auto auto;
-  align-items: center;
-  /* Tight 4px column gap so the poster hugs the left edge and the title gets the
-     reclaimed pixels; the numeric cells on the right restore their breathing room
-     via their own margins below. */
-  column-gap: 4px;
-  height: 52px;
-  width: 100%;
-  /* 4px left so the poster sits close to the panel edge (was 0.75rem). */
-  padding: 0 0.75rem 0 4px;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--c-border);
-  color: var(--c-text);
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.trow:hover:not(.sel) { background: var(--c-elevated); }
-.trow.sel { background: var(--c-gold-dim); }
-
-.color-dot {
-  width: 4px;
-  height: 32px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-.thumb-wrap {
-  width: 28px;
-  height: 40px;
-  overflow: hidden;
-  border-radius: 3px;
-  background: var(--c-elevated);
-  flex-shrink: 0;
-}
-.thumb { width: 100%; height: 100%; object-fit: cover; }
-.thumb-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--c-border-hi);
-  font-size: 0.7rem;
-}
-
-.title-cell {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  overflow: hidden;
-}
-.orig-title {
-  font-size: 0.845rem;
-  font-weight: 500;
-  color: var(--c-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.trans-title {
-  font-size: 0.72rem;
-  color: var(--c-muted);
-  font-style: italic;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* The row's column-gap is a tight 4px (to pull the poster left); the numeric
-   cells add ~0.35rem of their own left margin to restore ~0.6rem of breathing
-   room between title/year/rating/watched. */
-.year-cell {
-  font-size: 0.8rem;
-  color: var(--c-muted);
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  margin-left: 0.35rem;
-}
-.rating-cell {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--c-gold);
-  font-variant-numeric: tabular-nums;
-  min-width: 1.8rem;
-  text-align: right;
-  margin-left: 0.35rem;
-}
-.watched-cell { width: 1.2rem; text-align: center; margin-left: 0.35rem; }
-.checked-icon { color: var(--c-success); font-size: 0.8rem; }
-
-/* States */
-.state-msg {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 2rem;
-  color: var(--c-muted);
-  font-size: 0.875rem;
-}
-
-.list-footer {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.72rem;
-  color: var(--c-muted);
-  border-top: 1px solid var(--c-border);
-  flex-shrink: 0;
-}
-.err { color: var(--c-danger); font-size: 0.82rem; padding: 0 0.75rem 0.35rem; }
 
 /* Mobile: single column; the detail slides over the full screen when a row is picked. */
 @media (max-width: 760px) {
@@ -890,6 +561,20 @@ function onDeleted() {
     display: none;
   }
   .workspace.has-detail .pane-detail { display: block; }
-  .movie-list { border-right: none; height: 100dvh; }
 }
+
+/* Compress the PrimeVue DataTable to the ~52px row geometry and apply the row
+   hover/selection styling by hand (selection is manual, via rowClass). Scoped
+   :deep() is unlayered, so it wins over PrimeVue's `primevue` cascade layer. */
+:deep(.movie-dt .p-datatable-thead) { display: none; }
+:deep(.movie-dt .p-datatable-tbody > tr) { background: transparent; }
+:deep(.movie-dt .p-datatable-tbody > tr > td) {
+  padding: 0 4px;
+  border: none;
+  border-bottom: 1px solid var(--c-border);
+  height: 52px;
+}
+:deep(.movie-dt .amc-row) { cursor: pointer; transition: background 0.15s; }
+:deep(.movie-dt .amc-row:hover:not(.amc-row-sel)) { background: var(--c-elevated); }
+:deep(.movie-dt .amc-row-sel) { background: var(--c-gold-dim); }
 </style>
