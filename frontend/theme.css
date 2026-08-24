@@ -1,42 +1,48 @@
-/*
- * Global theme for the CF app.
- *
- * Every component references CSS variables with a hard-coded fallback
- * (e.g. `var(--c-card, #181828)`), but nothing defined the variables or themed
- * the page itself — so <body> fell back to white behind the dark cards. This
- * defines the palette once and paints the page background dark.
- */
-:root {
-  /* Palette mirrors the self-hosted (Unraid) build's App.vue tokens exactly,
-     so the two frontends render with the identical cinema theme. */
-  --c-bg:        #0a0a14;    /* page background */
-  --c-surface:   #11111e;    /* top bar / list chrome */
-  --c-card:      #181828;    /* cards / panels */
-  --c-elevated:  #1f1f38;    /* inputs, raised rows */
-  --c-border:    #2a2a48;
-  --c-border-hi: #3a3a60;
-  --c-gold:      #c9a84c;    /* accent */
-  --c-gold-dim:  rgba(201,168,76,.18);
-  --c-text:      #e8e0d5;
-  --c-muted:     #7e7a90;
-  --c-danger:    #e05252;
-  --c-success:   #4caf7a;
-  --radius:      8px;
+@import "tailwindcss";
+@plugin "tailwindcss-primeui";
+
+/* Palette → Tailwind utilities (bg-gold, text-muted, border-border, font-display…). */
+@theme {
+  --color-bg:        #0a0a14;
+  --color-surface:   #11111e;
+  --color-card:      #181828;
+  --color-elevated:  #1f1f38;
+  --color-border:    #2a2a48;
+  --color-border-hi: #3a3a60;
+  --color-gold:      #c9a84c;
+  --color-gold-dim:  rgba(201, 168, 76, 0.18);
+  --color-text:      #e8e0d5;
+  --color-muted:     #7e7a90;
+  --color-danger:    #e05252;
+  --color-success:   #4caf7a;
   --font-display: 'Playfair Display', Georgia, serif;
   --font-body:    'DM Sans', system-ui, sans-serif;
+}
 
+/* Back-compat aliases: kept <style> blocks (lightbox, DataTable :deep) still use
+   var(--c-*). These map onto the @theme values so nothing breaks during migration. */
+:root {
+  --c-bg: var(--color-bg);
+  --c-surface: var(--color-surface);
+  --c-card: var(--color-card);
+  --c-elevated: var(--color-elevated);
+  --c-border: var(--color-border);
+  --c-border-hi: var(--color-border-hi);
+  --c-gold: var(--color-gold);
+  --c-gold-dim: var(--color-gold-dim);
+  --c-text: var(--color-text);
+  --c-muted: var(--color-muted);
+  --c-danger: var(--color-danger);
+  --c-success: var(--color-success);
+  --radius: 8px;
   color-scheme: dark;
 }
 
 html, body {
   margin: 0;
   min-height: 100dvh;
-  background: var(--c-bg);
-  color: var(--c-text);
+  background: var(--color-bg);
+  color: var(--color-text);
   font-family: var(--font-body);
 }
-
-#app {
-  min-height: 100dvh;
-  background: var(--c-bg);
-}
+#app { min-height: 100dvh; background: var(--color-bg); }

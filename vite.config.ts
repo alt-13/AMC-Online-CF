@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import tailwindcss from "@tailwindcss/vite";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
 
 // Vite build for the Cloudflare port's browser app.
@@ -16,6 +17,7 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 export default defineConfig({
   plugins: [
     vue(),
+    tailwindcss(),
     nodePolyfills({
       include: ["buffer", "process"],
       globals: { Buffer: true, global: true, process: true },
