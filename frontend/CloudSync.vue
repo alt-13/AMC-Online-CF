@@ -37,11 +37,11 @@
       <Password
         v-model="password"
         placeholder="Password"
-        autocomplete="current-password"
         required
         :feedback="false"
         toggleMask
         inputClass="w-full"
+        :inputProps="{ autocomplete: 'current-password' }"
         class="flex-1 min-w-48"
       />
       <Button :label="busy ? 'Connecting…' : 'Connect'" :disabled="busy" type="submit" />
