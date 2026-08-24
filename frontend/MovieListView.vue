@@ -142,6 +142,7 @@
         @back="requestClose"
         @deleted="onDeleted"
         @changed="refresh"
+        @live="applyLive"
       />
       <div v-else class="placeholder">
         <div class="empty-icon">🎞</div>
@@ -245,6 +246,10 @@ async function confirmSave() {
 }
 function confirmDiscard() {
   detailRef.value?.discard();
+  // Drop any optimistic edits and refetch so the row reverts to server truth
+  // (discard() cleared `dirty`, so refresh won't re-apply the stale livePatch).
+  livePatch = null;
+  void refresh();
   finishConfirm();
 }
 function confirmCancel() {
@@ -443,8 +448,25 @@ async function load() {
   }
 }
 
+// Optimistic list sync from the open detail form. `livePatch` holds the last
+// snapshot the detail pushed so a refetch (e.g. triggered by an immediate poster
+// save) doesn't overwrite still-unsaved text edits with server truth — we
+// re-apply it while the detail reports itself dirty. A clean detail (just
+// saved / discarded) skips the re-apply, letting the server data win.
+let livePatch: (Partial<MovieRow> & { id: string }) | null = null;
+
+function applyLive(patch: Partial<MovieRow> & { id: string }) {
+  livePatch = patch;
+  const row = movies.value.find((mv) => mv.id === patch.id);
+  if (row) Object.assign(row, patch);
+}
+
 async function refresh() {
   movies.value = await cf.listMovies(props.catalog.id);
+  if (livePatch && detailRef.value?.dirty) {
+    const row = movies.value.find((mv) => mv.id === livePatch!.id);
+    if (row) Object.assign(row, livePatch);
+  }
 }
 
 // Opening a movie is a history level so the OS Back button returns to the list

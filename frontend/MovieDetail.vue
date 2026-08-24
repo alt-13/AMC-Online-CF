@@ -479,7 +479,17 @@ const props = defineProps<{
   defs: CustomFieldDefRow[];
   settings: AppSettings;
 }>();
-const emit = defineEmits<{ (e: "back"): void; (e: "deleted"): void; (e: "changed"): void }>();
+const emit = defineEmits<{
+  (e: "back"): void;
+  (e: "deleted"): void;
+  (e: "changed"): void;
+  // Optimistic list sync: the fields the movie list renders, pushed on every
+  // edit so the row mirrors the open form instantly — the same immediacy poster
+  // changes already have. The parent re-applies this over a server refetch while
+  // the detail is still dirty, so a poster-triggered refresh can't clobber
+  // unsaved text (this was the OMDb-fetch bug: poster synced, title didn't).
+  (e: "live", patch: Partial<MovieRow> & { id: string }): void;
+}>();
 
 const loading = ref(true);
 const hydrating = ref(false); // suppresses the dirty watcher while load() populates the form
@@ -591,6 +601,24 @@ watch([() => ({ ...form }), custom, extras], () => {
   if (!hydrating.value) dirty.value = true;
 }, { deep: true });
 
+// Push the list-visible fields to the parent on every change so the row updates
+// live — matching how poster changes already appear at once. Guarded by
+// `hydrating` (same as the dirty watcher) so a load / server-response sync
+// doesn't emit; genuine edits do.
+watch(
+  () => ({
+    original_title: form.original_title,
+    translated_title: form.translated_title,
+    year: form.year,
+    rating: form.rating,
+    checked: form.checked,
+    color_tag: form.color_tag,
+  }),
+  (snap) => {
+    if (!hydrating.value && form.id) emit("live", { id: form.id, ...snap });
+  },
+);
+
 // --- extras editing ---------------------------------------------------------
 function toggleExtra(i: number) {
   if (openSet.has(i)) openSet.delete(i);
@@ -628,6 +656,9 @@ function setInt(k: string, v: string) {
 }
 function setDate(k: string, iso: string) {
   (form as Record<string, unknown>)[k] = inputToDelphi(iso);
+  // Picking a watch date implies the film was watched — flip the flag so the
+  // header toggle, the Watched switch, and the list's watched icon all agree.
+  if (k === "date_watched" && iso) form.checked = 1;
 }
 const ratingDec = (k: string) => {
   const v = num(k);
