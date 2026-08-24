@@ -178,7 +178,7 @@
               <label class="field-label top-label">Description</label>
               <div class="field-control"><textarea class="full-width" rows="3" v-model="form.description" /></div>
             </div>
-            <div class="field-row align-top" v-show="showField('comments')">
+            <div class="field-row align-top comments-row" v-show="showField('comments')">
               <label class="field-label top-label">Comments</label>
               <div class="field-control"><textarea class="full-width" rows="2" v-model="form.comments" /></div>
             </div>
@@ -1107,24 +1107,35 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 /* ── Two-column main ── */
 .form-main {
   display: flex;
-  flex-wrap: wrap;
   gap: 0.75rem;
-  align-items: flex-start;
+  align-items: stretch; /* left column stretches to the right column's height */
   min-width: 0;
+  margin-bottom: 0.5rem; /* breathing room between Comments and the Media separator */
 }
-.col-left { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
-.col-right { flex: 0 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
+/* One flex box holding every left-hand field; it grows to fill the width left by
+   the fixed-width right column, so all its fields share the same width. */
+.col-left { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
+.col-right { flex: 0 0 300px; min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
 
 /* ── Crew + Actors side-by-side ── */
-.crew-actors-row { display: flex; flex-direction: row; gap: 0.5rem; align-items: stretch; margin: 0.1rem 0; }
-.crew-stack { flex: 1; display: flex; flex-direction: column; gap: 0.18rem; }
-.actors-stack { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.crew-actors-row { display: flex; flex-direction: row; gap: 0.5rem; align-items: stretch; }
+.crew-stack { flex: 3; display: flex; flex-direction: column; gap: 0.18rem; }
+.actors-stack { flex: 2; display: flex; flex-direction: column; gap: 0.18rem; min-width: 0; }
 .inline-label { font-size: 0.78rem; color: var(--c-muted); display: block; padding-left: 0.1rem; }
 .actors-area { flex: 1; resize: none; min-height: 90px; line-height: 1.4; }
 
 /* ── Field layout ── */
 .field-row { display: flex; align-items: center; gap: 0.35rem; min-height: 26px; }
 .field-row.align-top { align-items: flex-start; }
+/* Comments is the last row of the (usually shorter) left column: let it grow to
+   fill the leftover vertical space so its bottom aligns with the right column.
+   The align-items override needs to out-specify `.field-row.align-top` (which
+   forces flex-start) or the field-control won't stretch and the textarea stays
+   at its content height. */
+.comments-row { flex: 1 1 auto; }
+.field-row.align-top.comments-row { align-items: stretch; }
+.comments-row .field-control { align-items: stretch; }
+.comments-row textarea { height: 100%; min-height: 3rem; }
 .field-label {
   flex: 0 0 100px;
   font-size: 0.78rem;
@@ -1149,6 +1160,10 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 .field-control input[type="date"],
 .field-control select,
 .field-control textarea {
+  /* Without border-box, `width: 100%` is the CONTENT width and padding+border are
+     added on top, so every control overflowed its container to the right (the
+     Actors textarea spilling past .actors-stack was the visible symptom). */
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
   max-width: 100%;
@@ -1314,7 +1329,8 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
   .header-info { overflow: hidden; }
   .movie-title { font-size: 1rem; }
   .form-body { padding: 0.5rem 0.5rem 1rem; }
-  .col-left, .col-right { flex: 1 1 100%; }
+  .form-main { flex-direction: column; }
+  .col-left, .col-right { flex: 0 0 auto; }
   .crew-actors-row { flex-direction: column; }
   .field-row { flex-direction: column; align-items: stretch; gap: 0.15rem; min-height: unset; }
   .field-row.align-top { align-items: stretch; }
