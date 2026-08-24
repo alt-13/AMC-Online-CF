@@ -15,18 +15,18 @@
   <Dialog
     :visible="true"
     modal
+    dismissable-mask
     :header="title"
     :closable="!busy"
     :style="{ width: '420px' }"
     :breakpoints="{ '760px': '95vw' }"
     @update:visible="(v: boolean) => { if (!v) $emit('cancel'); }"
-    @show="onShow"
   >
     <p v-if="message" class="m-0 mb-4 text-sm text-muted leading-relaxed">{{ message }}</p>
     <InputText
       v-if="input"
-      ref="inputEl"
       v-model="localValue"
+      autofocus
       class="w-full"
       :type="inputType"
       :placeholder="inputPlaceholder"
@@ -86,12 +86,8 @@ const emit = defineEmits<{
 }>();
 
 const localValue = ref(props.inputValue);
-const inputEl = ref<InstanceType<typeof InputText> | null>(null);
 
 function onConfirm() {
   emit("confirm", props.input ? localValue.value : undefined);
-}
-function onShow() {
-  if (props.input) (inputEl.value as unknown as { $el?: HTMLInputElement })?.$el?.focus();
 }
 </script>
