@@ -6,96 +6,109 @@
   overwrite fields on an existing movie).
 -->
 <template>
-  <div class="backdrop" @click.self="close">
-    <div class="dialog">
-      <header class="head">
-        <h3>Fetch from IMDb / OMDb</h3>
-        <button class="x" @click="close">✕</button>
-      </header>
+  <Dialog
+    :visible="true"
+    modal
+    dismissable-mask
+    header="Fetch from IMDb / OMDb"
+    :closable="true"
+    :style="{ width: '480px' }"
+    :breakpoints="{ '760px': '95vw' }"
+    @update:visible="(v: boolean) => { if (!v) close(); }"
+  >
+    <!-- ── Step 1: search ── -->
+    <template v-if="phase === 'search'">
+      <div class="flex gap-2 mb-3">
+        <InputText
+          v-model="query"
+          autofocus
+          class="flex-1"
+          placeholder="Title, IMDb URL, or tt-id…"
+          @keydown.enter="run"
+        />
+        <Button label="Search" :loading="busy" :disabled="busy || !query.trim()" @click="run" />
+      </div>
 
-      <!-- ── Step 1: search ── -->
-      <template v-if="phase === 'search'">
-        <div class="search">
-          <input
-            ref="input"
-            v-model="query"
-            placeholder="Title, IMDb URL, or tt-id…"
-            @keydown.enter="run"
-          />
-          <button class="primary" :disabled="busy || !query.trim()" @click="run">
-            {{ busy ? "…" : "Search" }}
-          </button>
-        </div>
-
-        <div class="body">
-          <p v-if="error" class="err">{{ error }}</p>
-          <p v-else-if="!results.length && !busy && searched" class="muted">No matches.</p>
-          <ul v-else class="list">
-            <li v-for="r in results" :key="r.tt">
-              <button class="pick" :disabled="fetching === r.tt" @click="pick(r.tt)">
-                <span class="label">{{ r.label }}</span>
-                <span class="go">{{ fetching === r.tt ? "Fetching…" : "Use →" }}</span>
-              </button>
-            </li>
-          </ul>
-        </div>
-      </template>
-
-      <!-- ── Step 2: choose fields to import ── -->
-      <template v-else>
-        <div class="fields-head">
-          <button class="back" @click="backToSearch"><i class="pi pi-arrow-left" /> Back</button>
-          <span class="fields-title">Fields found — check which to import:</span>
-          <button class="mini text" @click="selectAll">All</button>
-          <button class="mini text" @click="clearSel">None</button>
-        </div>
-
-        <div class="body">
-          <p v-if="error" class="err">{{ error }}</p>
-          <p v-else-if="!rows.length" class="muted">No importable fields returned.</p>
-          <div v-else class="results-grid">
-            <label
-              v-for="row in rows"
-              :key="row.key"
-              class="result-row"
-              :class="{ selected: importKeys.has(row.key) }"
+      <div class="min-h-[60px] max-h-[60vh] overflow-y-auto">
+        <p v-if="error" class="text-danger text-sm m-0">{{ error }}</p>
+        <p v-else-if="!results.length && !busy && searched" class="text-muted text-sm m-0">No matches.</p>
+        <ul v-else class="list-none flex flex-col gap-1.5 m-0 p-0">
+          <li v-for="r in results" :key="r.tt">
+            <button
+              class="w-full flex items-center justify-between gap-2 text-left p-2 bg-elevated border border-border rounded-md text-text hover:border-gold disabled:opacity-60 disabled:cursor-default"
+              :disabled="fetching === r.tt"
+              @click="pick(r.tt)"
             >
-              <input type="checkbox" :checked="importKeys.has(row.key)" @change="toggleKey(row.key)" />
-              <span class="result-key">{{ row.label }}</span>
-              <span class="result-val">{{ row.display }}</span>
-            </label>
-          </div>
-        </div>
+              <span class="text-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{{ r.label }}</span>
+              <span class="text-xs text-gold flex-shrink-0">{{ fetching === r.tt ? "Fetching…" : "Use →" }}</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+    </template>
 
-        <div class="fields-footer">
-          <button
-            class="primary"
-            :disabled="importKeys.size === 0"
-            @click="doImport"
-          >Import {{ importKeys.size }} field{{ importKeys.size === 1 ? "" : "s" }}</button>
+    <!-- ── Step 2: choose fields to import ── -->
+    <template v-else>
+      <div class="flex items-center gap-2 mb-3">
+        <Button label="Back" icon="pi pi-arrow-left" text @click="backToSearch" />
+        <span class="flex-1 min-w-0 text-xs text-muted">Fields found — check which to import:</span>
+        <Button label="All" link @click="selectAll" />
+        <Button label="None" link @click="clearSel" />
+      </div>
+
+      <div class="min-h-[60px] max-h-[60vh] overflow-y-auto">
+        <p v-if="error" class="text-danger text-sm m-0">{{ error }}</p>
+        <p v-else-if="!rows.length" class="text-muted text-sm m-0">No importable fields returned.</p>
+        <div v-else class="flex flex-col border border-border rounded-md overflow-hidden">
+          <label
+            v-for="row in rows"
+            :key="row.key"
+            class="grid grid-cols-[20px_120px_1fr] items-baseline gap-2 py-1.5 px-2.5 cursor-pointer border-b border-border last:border-b-0 text-sm hover:bg-elevated"
+            :class="{ 'bg-gold-dim': importKeys.has(row.key) }"
+          >
+            <Checkbox
+              :binary="true"
+              :modelValue="importKeys.has(row.key)"
+              @update:modelValue="() => toggleKey(row.key)"
+            />
+            <span class="text-xs text-muted">{{ row.label }}</span>
+            <span class="text-text overflow-hidden text-ellipsis whitespace-nowrap">{{ row.display }}</span>
+          </label>
         </div>
+      </div>
+    </template>
+
+    <p class="text-xs m-0 mt-3" :class="keyState && !keyState.hasKey ? 'text-danger' : 'text-muted'">
+      <template v-if="keyState && !keyState.hasKey">
+        <i class="pi pi-exclamation-triangle" />
+        OMDb API key not configured.
+        <a class="text-gold" href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">Get one</a>,
+        then <Button label="add it in Settings →" link class="p-0 align-baseline" @click="emit('open-settings')" />
+        <i class="pi pi-info-circle text-muted cursor-help ml-1" :title="KEY_INFO" />
       </template>
+      <template v-else>
+        Metadata from IMDb / OMDb. Manage your key in
+        <Button label="Settings" link class="p-0 align-baseline" @click="emit('open-settings')" />.
+        <i class="pi pi-info-circle text-muted cursor-help ml-1" :title="KEY_INFO" />
+      </template>
+    </p>
 
-      <p class="hint" :class="{ warn: keyState && !keyState.hasKey }">
-        <template v-if="keyState && !keyState.hasKey">
-          <i class="pi pi-exclamation-triangle" />
-          OMDb API key not configured.
-          <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">Get one</a>,
-          then <button class="inline-link" @click="emit('open-settings')">add it in Settings →</button>
-          <i class="pi pi-info-circle info" :title="KEY_INFO" />
-        </template>
-        <template v-else>
-          Metadata from IMDb / OMDb. Manage your key in
-          <button class="inline-link" @click="emit('open-settings')">Settings</button>.
-          <i class="pi pi-info-circle info" :title="KEY_INFO" />
-        </template>
-      </p>
-    </div>
-  </div>
+    <template v-if="phase === 'fields'" #footer>
+      <Button
+        :label="'Import ' + importKeys.size + ' field' + (importKeys.size === 1 ? '' : 's')"
+        :disabled="importKeys.size === 0"
+        @click="doImport"
+      />
+    </template>
+  </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
+import Dialog from "primevue/dialog";
+import InputText from "primevue/inputtext";
+import Button from "primevue/button";
+import Checkbox from "primevue/checkbox";
 import { omdb, type MovieRow, type OmdbSuggestion, type OmdbKeyState } from "./api";
 import { FIELD_LABELS } from "./fields";
 
@@ -118,7 +131,6 @@ const POSTER_KEY = "__poster__";
 
 type FieldRow = { key: string; label: string; display: string; poster?: boolean };
 
-const input = ref<HTMLInputElement>();
 const query = ref(props.initialQuery ?? "");
 const results = ref<OmdbSuggestion[]>([]);
 const busy = ref(false);
@@ -153,7 +165,6 @@ function saveExcluded(s: Set<string>) {
 const excludedKeys = loadExcluded();
 
 onMounted(() => {
-  input.value?.focus();
   void omdb.keyState().then((s) => (keyState.value = s)).catch(() => {});
   if (query.value.trim()) void run();
 });
@@ -261,45 +272,3 @@ function close() {
   emit("close");
 }
 </script>
-
-<style scoped>
-.backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 1rem; }
-.dialog { width: 480px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; background: var(--c-card, #181828); border: 1px solid var(--c-border, #2a2a48); border-radius: var(--radius, 8px); color: var(--c-text, #e8e0d5); }
-.head { display: flex; align-items: center; justify-content: space-between; padding: 0.9rem 1rem; border-bottom: 1px solid var(--c-border, #2a2a48); }
-.head h3 { font-family: var(--font-display, serif); color: var(--c-gold, #c9a84c); font-size: 1.05rem; }
-.x { background: none; border: none; color: var(--c-muted, #7e7a90); font-size: 1rem; cursor: pointer; }
-.search { display: flex; gap: 0.5rem; padding: 0.8rem 1rem; }
-.search input { flex: 1; padding: 0.45rem 0.6rem; background: var(--c-elevated, #1f1f38); color: var(--c-text, #e8e0d5); border: 1px solid var(--c-border, #2a2a48); border-radius: 6px; }
-.body { overflow-y: auto; padding: 0 1rem; min-height: 60px; }
-.list { list-style: none; display: flex; flex-direction: column; gap: 0.3rem; }
-.pick { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; text-align: left; padding: 0.5rem 0.6rem; background: var(--c-elevated, #1f1f38); border: 1px solid var(--c-border, #2a2a48); border-radius: 6px; color: var(--c-text, #e8e0d5); cursor: pointer; }
-.pick:hover { border-color: var(--c-gold, #c9a84c); }
-.pick:disabled { opacity: 0.6; cursor: default; }
-.label { font-size: 0.85rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.go { font-size: 0.72rem; color: var(--c-gold, #c9a84c); flex-shrink: 0; }
-.muted { color: var(--c-muted, #7e7a90); font-size: 0.85rem; }
-.err { color: var(--c-danger, #e05252); font-size: 0.82rem; }
-
-/* ── Field picker (step 2) ── */
-.fields-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1rem 0.4rem; }
-.fields-title { flex: 1; min-width: 0; font-size: 0.78rem; color: var(--c-muted, #7e7a90); }
-.back { display: inline-flex; align-items: center; gap: 0.3rem; background: none; border: none; color: var(--c-gold, #c9a84c); font: inherit; font-size: 0.78rem; cursor: pointer; padding: 0; }
-.mini.text { background: none; border: none; color: var(--c-gold, #c9a84c); font-size: 0.75rem; cursor: pointer; padding: 0 0.15rem; }
-.results-grid { display: flex; flex-direction: column; border: 1px solid var(--c-border, #2a2a48); border-radius: 6px; overflow: hidden; }
-.result-row { display: grid; grid-template-columns: 20px 120px 1fr; align-items: baseline; gap: 0.5rem; padding: 0.4rem 0.6rem; cursor: pointer; border-bottom: 1px solid var(--c-border, #2a2a48); font-size: 0.82rem; }
-.result-row:last-child { border-bottom: none; }
-.result-row:hover { background: var(--c-elevated, #1f1f38); }
-.result-row.selected { background: var(--c-gold-dim, rgba(201,168,76,0.12)); }
-.result-row input { cursor: pointer; accent-color: var(--c-gold, #c9a84c); }
-.result-key { color: var(--c-muted, #7e7a90); font-size: 0.78rem; }
-.result-val { color: var(--c-text, #e8e0d5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fields-footer { display: flex; justify-content: flex-end; padding: 0.7rem 1rem 0.3rem; }
-
-.hint { padding: 0.6rem 1rem 0.9rem; font-size: 0.72rem; color: var(--c-muted, #7e7a90); }
-.hint.warn { color: var(--c-danger, #e05252); }
-.hint a { color: var(--c-gold, #c9a84c); }
-.hint .info { margin-left: 0.3rem; color: var(--c-muted, #7e7a90); cursor: help; }
-.inline-link { background: none; border: none; padding: 0; font: inherit; color: var(--c-gold, #c9a84c); cursor: pointer; text-decoration: underline; }
-button.primary { background: var(--c-gold, #c9a84c); color: #0a0a14; border: none; border-radius: 6px; padding: 0.45rem 0.9rem; font-weight: 600; font-size: 0.82rem; cursor: pointer; }
-button.primary:disabled { opacity: 0.6; cursor: default; }
-</style>
