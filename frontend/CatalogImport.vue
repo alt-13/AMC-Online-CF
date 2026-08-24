@@ -7,10 +7,10 @@
   catalog id when done.
 -->
 <template>
-  <div class="import-card">
+  <div class="w-full">
     <label
-      class="dropzone"
-      :class="{ busy }"
+      class="flex flex-col items-center justify-center gap-1.5 min-h-35 p-6 border-[1.5px] border-dashed border-border-hi rounded-lg bg-card text-text cursor-pointer transition-colors hover:border-gold"
+      :class="{ 'cursor-default': busy }"
       @dragover.prevent
       @drop.prevent="onDrop"
     >
@@ -22,20 +22,24 @@
         @change="onPick"
       />
       <template v-if="!busy">
-        <span class="dz-icon">🎬</span>
-        <span class="dz-title">Drop an <code>.amc</code> file here</span>
-        <span class="dz-sub">or click to choose — parsed in your browser, never uploaded whole</span>
+        <span class="text-3xl">🎬</span>
+        <span class="text-[0.95rem] font-semibold">Drop an <code class="bg-elevated px-1.5 rounded">.amc</code> file here</span>
+        <span class="text-xs text-muted text-center">or click to choose — parsed in your browser, never uploaded whole</span>
       </template>
       <template v-else>
-        <span class="dz-title">{{ phaseLabel }}</span>
-        <div class="bar" :class="{ indet: indeterminate }">
-          <div class="bar-fill" :style="indeterminate ? undefined : { width: pct + '%' }" />
+        <span class="text-[0.95rem] font-semibold">{{ phaseLabel }}</span>
+        <div class="w-4/5 h-2 rounded overflow-hidden bg-elevated relative">
+          <div
+            class="h-full bg-gold transition-[width] duration-200"
+            :class="indeterminate ? 'w-[35%] animate-pulse' : ''"
+            :style="indeterminate ? undefined : { width: pct + '%' }"
+          />
         </div>
-        <span v-if="!indeterminate" class="dz-sub">{{ done }} / {{ total }}</span>
+        <span v-if="!indeterminate" class="text-xs text-muted text-center">{{ done }} / {{ total }}</span>
       </template>
     </label>
 
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="mt-2.5 text-danger text-sm">{{ error }}</p>
   </div>
 </template>
 
@@ -101,43 +105,3 @@ async function run(file: File) {
   }
 }
 </script>
-
-<style scoped>
-.import-card { width: 100%; }
-.dropzone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  min-height: 140px;
-  padding: 1.5rem;
-  border: 1.5px dashed var(--c-border-hi, #3a3a60);
-  border-radius: var(--radius, 8px);
-  background: var(--c-card, #181828);
-  color: var(--c-text, #e8e0d5);
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-}
-.dropzone:hover { border-color: var(--c-gold, #c9a84c); }
-.dropzone.busy { cursor: default; }
-.dz-icon { font-size: 1.8rem; }
-.dz-title { font-size: 0.95rem; font-weight: 600; }
-.dz-title code { background: var(--c-elevated, #1f1f38); padding: 0 0.3rem; border-radius: 4px; }
-.dz-sub { font-size: 0.78rem; color: var(--c-muted, #7e7a90); text-align: center; }
-.bar {
-  width: 80%;
-  height: 8px;
-  background: var(--c-elevated, #1f1f38);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.bar-fill { height: 100%; background: var(--c-gold, #c9a84c); transition: width 0.2s; }
-.bar.indet { position: relative; }
-.bar.indet .bar-fill { width: 35%; animation: indet 1.1s ease-in-out infinite; }
-@keyframes indet {
-  0% { margin-left: -35%; }
-  100% { margin-left: 100%; }
-}
-.err { margin-top: 0.6rem; color: var(--c-danger, #e05252); font-size: 0.82rem; }
-</style>

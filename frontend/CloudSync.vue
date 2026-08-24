@@ -8,44 +8,48 @@
   Emits `imported(catalogId)` after a successful pull so the parent can refresh.
 -->
 <template>
-  <div class="cloud">
-    <div class="head">
-      <span class="label">Cloud sync</span>
+  <div class="flex flex-col gap-2.5 p-4 bg-card border border-border rounded-lg">
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="font-semibold text-text">Cloud sync</span>
       <!-- provider switcher: relocating a wrong pick is one dropdown away -->
-      <select class="switcher" :value="settings.active" @change="onSwitch">
-        <option value="mega">Mega.nz</option>
-        <option value="drive" disabled>Google Drive (soon)</option>
-        <option value="dropbox" disabled>Dropbox (soon)</option>
-        <option value="s3" disabled>S3 (soon)</option>
-      </select>
-      <span v-if="session.connected" class="conn">· {{ session.email }}</span>
-      <div v-if="session.connected" class="headactions">
-        <button v-if="active.hasCredential" class="btn ghost sm" @click="forget">
-          Forget saved login
-        </button>
-        <button class="btn ghost sm" @click="disconnect">Disconnect</button>
+      <Select
+        :modelValue="settings.active"
+        :options="providerOptions"
+        optionLabel="label"
+        optionValue="value"
+        optionDisabled="disabled"
+        class="text-sm w-44"
+        @update:modelValue="onSwitch"
+      />
+      <span v-if="session.connected" class="text-xs text-muted">· {{ session.email }}</span>
+      <div v-if="session.connected" class="ml-auto flex gap-2">
+        <Button v-if="active.hasCredential" outlined size="small" label="Forget saved login" @click="forget" />
+        <Button outlined size="small" label="Disconnect" @click="disconnect" />
       </div>
     </div>
 
     <!-- reconnecting from a stored credential -->
-    <p v-if="!session.connected && reconnecting" class="hint">Reconnecting…</p>
+    <p v-if="!session.connected && reconnecting" class="basis-full m-0 text-[0.72rem] text-muted">Reconnecting…</p>
 
     <!-- connect -->
-    <form v-else-if="!session.connected" class="form" @submit.prevent="onConnect">
-      <input v-model="email" type="email" placeholder="Email" autocomplete="username" required />
-      <input
+    <form v-else-if="!session.connected" class="flex flex-wrap gap-2 items-center" @submit.prevent="onConnect">
+      <InputText v-model="email" type="email" placeholder="Email" autocomplete="username" required class="flex-1 min-w-48" />
+      <Password
         v-model="password"
-        type="password"
         placeholder="Password"
         autocomplete="current-password"
         required
+        :feedback="false"
+        toggleMask
+        inputClass="w-full"
+        class="flex-1 min-w-48"
       />
-      <button class="btn" :disabled="busy">{{ busy ? "Connecting…" : "Connect" }}</button>
-      <label class="rememberrow">
-        <input type="checkbox" v-model="remember" />
+      <Button :label="busy ? 'Connecting…' : 'Connect'" :disabled="busy" type="submit" />
+      <label class="basis-full flex items-center gap-2 text-xs text-muted">
+        <Checkbox v-model="remember" :binary="true" />
         keep me signed in on this account (stored encrypted)
       </label>
-      <p class="hint">
+      <p class="basis-full m-0 text-[0.72rem] text-muted">
         {{ remember
           ? "Saved encrypted to your own server so you don't log in again — decrypted only in this browser to connect."
           : "Stays in this browser tab only — never saved, never sent to the server." }}
@@ -53,10 +57,10 @@
     </form>
 
     <!-- connected -->
-    <div v-else class="connected">
-      <label class="pathrow">
-        <span class="plabel">.amc file path</span>
-        <input
+    <div v-else class="flex flex-col gap-2.5">
+      <label class="flex flex-col gap-0.5">
+        <span class="text-[0.7rem] uppercase tracking-wide text-muted">.amc file path</span>
+        <InputText
           v-model="path"
           type="text"
           placeholder="/Backups/movies.amc — full path to the file (a folder or blank also works)"
@@ -65,43 +69,55 @@
           @keyup.enter="applyPath"
           @blur="applyPath"
         />
-        <span class="phelp">
+        <span class="text-[0.7rem] text-muted">
           Point this at a specific file (recommended). Import reads it; push writes
           back to exactly this path.
         </span>
       </label>
-      <label class="deeprow">
-        <input type="checkbox" v-model="deep" @change="refresh" />
+      <label class="flex items-center gap-2 text-xs text-muted">
+        <Checkbox v-model="deep" :binary="true" @change="refresh" />
         search subfolders
       </label>
 
-      <ul v-if="files.length" class="files">
-        <li v-for="f in files" :key="f.name" class="frow">
-          <span class="fname" :title="f.name">{{ f.name }}</span>
-          <span class="fsize">{{ human(f.size) }}</span>
-          <button class="btn" :disabled="!!importing" @click="pullFile(f)">
-            {{ importing === f.name ? shortLabel : "Import" }}
-          </button>
+      <ul v-if="files.length" class="list-none flex flex-col gap-2 mt-1 p-0 m-0">
+        <li v-for="f in files" :key="f.name" class="flex items-center gap-2.5">
+          <span class="flex-1 min-w-0 truncate text-text text-sm" :title="f.name">{{ f.name }}</span>
+          <span class="text-[0.72rem] text-muted flex-shrink-0">{{ human(f.size) }}</span>
+          <Button
+            size="small"
+            :disabled="!!importing"
+            :label="importing === f.name ? shortLabel : 'Import'"
+            @click="pullFile(f)"
+          />
         </li>
       </ul>
 
-      <div v-if="importing" class="progress">
-        <div class="ptext">{{ phaseText }}</div>
-        <div class="pbar" :class="{ indet: indeterminate }">
-          <div class="pbar-fill" :style="indeterminate ? undefined : { width: pPct + '%' }" />
+      <div v-if="importing" class="flex flex-col gap-1 mt-0.5">
+        <div class="text-xs text-muted">{{ phaseText }}</div>
+        <div class="h-2 bg-elevated rounded overflow-hidden">
+          <div
+            class="h-full bg-gold transition-[width] duration-200"
+            :class="indeterminate ? 'w-[35%] animate-pulse' : ''"
+            :style="indeterminate ? undefined : { width: pPct + '%' }"
+          />
         </div>
       </div>
-      <p v-else class="hint">
-        No <code>.amc</code> files {{ path ? `at "${path}"` : "at your account root" }}.
+      <p v-else class="basis-full m-0 text-[0.72rem] text-muted">
+        No <code class="bg-elevated px-1.5 rounded">.amc</code> files {{ path ? `at "${path}"` : "at your account root" }}.
       </p>
     </div>
 
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="text-danger text-sm m-0">{{ error }}</p>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
+import Button from "primevue/button";
+import InputText from "primevue/inputtext";
+import Password from "primevue/password";
+import Select from "primevue/select";
+import Checkbox from "primevue/checkbox";
 import {
   cloudSession as session,
   cloudSettings as settings,
@@ -117,6 +133,13 @@ import {
   type MegaAmcFile,
 } from "./cloud";
 import { withWakeLock } from "./wakelock";
+
+const providerOptions = [
+  { label: "Mega.nz", value: "mega", disabled: false },
+  { label: "Google Drive (soon)", value: "drive", disabled: true },
+  { label: "Dropbox (soon)", value: "dropbox", disabled: true },
+  { label: "S3 (soon)", value: "s3", disabled: true },
+];
 
 const emit = defineEmits<{ imported: [catalogId: string] }>();
 
@@ -172,8 +195,7 @@ onMounted(async () => {
   }
 });
 
-async function onSwitch(e: Event) {
-  const provider = (e.target as HTMLSelectElement).value;
+async function onSwitch(provider: string) {
   error.value = "";
   files.value = [];
   reconnecting.value = true;
@@ -282,80 +304,3 @@ function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 </script>
-
-<style scoped>
-.cloud {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  padding: 1rem;
-  background: var(--c-card, #181828);
-  border: 1px solid var(--c-border, #2a2a48);
-  border-radius: var(--radius, 8px);
-}
-.head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
-.label { font-weight: 600; color: var(--c-text, #e8e0d5); }
-.switcher {
-  padding: 0.25rem 0.5rem;
-  background: var(--c-elevated, #1f1f38);
-  border: 1px solid var(--c-border, #2a2a48);
-  border-radius: 6px;
-  color: var(--c-text, #e8e0d5);
-  font-size: 0.8rem;
-}
-.conn { font-size: 0.78rem; color: var(--c-muted, #7e7a90); }
-.headactions { margin-left: auto; display: flex; gap: 0.4rem; }
-.form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-.form input {
-  flex: 1 1 12rem;
-  min-width: 0;
-  padding: 0.4rem 0.6rem;
-  background: var(--c-elevated, #1f1f38);
-  border: 1px solid var(--c-border, #2a2a48);
-  border-radius: 6px;
-  color: var(--c-text, #e8e0d5);
-  font-size: 0.85rem;
-}
-.hint { flex-basis: 100%; margin: 0; font-size: 0.72rem; color: var(--c-muted, #7e7a90); }
-.hint code { background: var(--c-elevated, #1f1f38); padding: 0 0.3rem; border-radius: 4px; }
-.pathrow { display: flex; flex-direction: column; gap: 0.2rem; }
-.plabel { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--c-muted, #7e7a90); }
-.phelp { font-size: 0.7rem; color: var(--c-muted, #7e7a90); }
-.pathrow input {
-  padding: 0.4rem 0.6rem;
-  background: var(--c-elevated, #1f1f38);
-  border: 1px solid var(--c-border, #2a2a48);
-  border-radius: 6px;
-  color: var(--c-text, #e8e0d5);
-  font-size: 0.85rem;
-}
-.deeprow { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
-.rememberrow { flex-basis: 100%; display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
-.files { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; margin: 0.4rem 0 0; padding: 0; }
-.frow { display: flex; align-items: center; gap: 0.6rem; }
-.fname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-text, #e8e0d5); font-size: 0.85rem; }
-.fsize { font-size: 0.72rem; color: var(--c-muted, #7e7a90); flex: 0 0 auto; }
-.btn {
-  background: var(--c-gold, #c9a84c);
-  color: #0a0a14;
-  border: none;
-  border-radius: 6px;
-  padding: 0.4rem 0.8rem;
-  font-weight: 600;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-.btn.ghost { background: transparent; color: var(--c-gold, #c9a84c); border: 1px solid var(--c-border, #2a2a48); }
-.btn.sm { padding: 0.25rem 0.6rem; font-size: 0.75rem; }
-.btn:disabled { opacity: 0.7; cursor: default; }
-.err { color: var(--c-danger, #e05252); font-size: 0.82rem; margin: 0; }
-.progress { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.2rem; }
-.ptext { font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
-.pbar { height: 8px; background: var(--c-elevated, #1f1f38); border-radius: 4px; overflow: hidden; }
-.pbar-fill { height: 100%; background: var(--c-gold, #c9a84c); transition: width 0.2s; }
-.pbar.indet .pbar-fill { width: 35%; animation: indet 1.1s ease-in-out infinite; }
-@keyframes indet {
-  0% { margin-left: -35%; }
-  100% { margin-left: 100%; }
-}
-</style>

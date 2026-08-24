@@ -9,56 +9,59 @@
   <!-- drilled into one library -->
   <MovieListView v-if="openCatalog" :catalog="openCatalog" @back="goBack" />
 
-  <div v-else class="catalogs">
-    <h2 class="title">Your libraries</h2>
+  <div v-else class="max-w-160 mx-auto px-4 py-6 flex flex-col gap-4">
+    <h2 class="font-display text-gold text-xl">Your libraries</h2>
 
     <CatalogImport @imported="onImported" />
     <CloudSync @imported="onImported" />
 
-    <div v-if="loading" class="muted">Loading…</div>
-    <div v-else-if="!catalogs.length" class="muted">
-      No libraries yet — import an <code>.amc</code> file above to get started.
+    <div v-if="loading" class="text-muted text-sm">Loading…</div>
+    <div v-else-if="!catalogs.length" class="text-muted text-sm">
+      No libraries yet — import an <code class="bg-elevated px-1.5 rounded">.amc</code> file above to get started.
     </div>
 
-    <ul v-else class="list">
-      <li v-for="c in catalogs" :key="c.id" class="row" @click="openCatalog = c">
-        <div class="info">
-          <span class="name">{{ c.name || "(untitled)" }}</span>
-          <span class="sub">v{{ (c.version / 10).toFixed(1) }} · updated {{ fmt(c.updated_at) }}</span>
+    <ul v-else class="list-none flex flex-col gap-2 p-0 m-0">
+      <li v-for="c in catalogs" :key="c.id"
+          class="flex items-center justify-between gap-x-4 gap-y-3 flex-wrap p-3 px-4 bg-card border border-border rounded-lg cursor-pointer hover:border-gold"
+          @click="openCatalog = c">
+        <div class="flex flex-col gap-0.5 min-w-0 flex-1">
+          <span class="font-semibold text-text truncate">{{ c.name || "(untitled)" }}</span>
+          <span class="text-xs text-muted">v{{ (c.version / 10).toFixed(1) }} · updated {{ fmt(c.updated_at) }}</span>
         </div>
-        <div class="actions">
-          <button
+        <div class="flex gap-2 items-center flex-wrap">
+          <Button
             v-if="c.source_ref"
-            class="btn ghost"
+            outlined
+            size="small"
             :disabled="!!busyId"
+            :label="busyId === c.id && busyKind === 'sync' ? busyLabel : 'Sync ↑'"
             @click.stop="onSync(c)"
-          >
-            {{ busyId === c.id && busyKind === 'sync' ? busyLabel : "Sync ↑" }}
-          </button>
-          <button
-            class="btn"
+          />
+          <Button
+            size="small"
             :disabled="!!busyId"
+            :label="busyId === c.id && busyKind === 'export' ? busyLabel : 'Export'"
             @click.stop="onExport(c)"
-          >
-            {{ busyId === c.id && busyKind === 'export' ? busyLabel : "Export" }}
-          </button>
-          <button
-            class="btn ghost danger"
+          />
+          <Button
+            outlined
+            severity="danger"
+            size="small"
             :disabled="deletingId === c.id"
+            :label="deletingId === c.id ? 'Deleting…' : 'Delete'"
             @click.stop="onDelete(c)"
-          >
-            {{ deletingId === c.id ? "Deleting…" : "Delete" }}
-          </button>
+          />
         </div>
       </li>
     </ul>
 
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="text-danger text-sm basis-full">{{ error }}</p>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
+import Button from "primevue/button";
 import CatalogImport from "./CatalogImport.vue";
 import CloudSync from "./CloudSync.vue";
 import MovieListView from "./MovieListView.vue";
@@ -249,45 +252,3 @@ onMounted(async () => {
   }
 });
 </script>
-
-<style scoped>
-.catalogs { max-width: 640px; margin: 0 auto; padding: 1.5rem 1rem; display: flex; flex-direction: column; gap: 1rem; }
-.title { font-family: var(--font-display, serif); color: var(--c-gold, #c9a84c); font-size: 1.3rem; }
-.muted { color: var(--c-muted, #7e7a90); font-size: 0.9rem; }
-.muted code { background: var(--c-elevated, #1f1f38); padding: 0 0.3rem; border-radius: 4px; }
-.list { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem 1rem;
-  flex-wrap: wrap;
-  padding: 0.75rem 1rem;
-  background: var(--c-card, #181828);
-  border: 1px solid var(--c-border, #2a2a48);
-  border-radius: var(--radius, 8px);
-  cursor: pointer;
-}
-.row:hover { border-color: var(--c-gold, #c9a84c); }
-.info { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1 1 auto; }
-.name { font-weight: 600; color: var(--c-text, #e8e0d5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sub { font-size: 0.75rem; color: var(--c-muted, #7e7a90); }
-.btn {
-  background: var(--c-gold, #c9a84c);
-  color: #0a0a14;
-  border: none;
-  border-radius: 6px;
-  padding: 0.4rem 0.8rem;
-  font-weight: 600;
-  font-size: 0.82rem;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.btn.ghost { background: transparent; color: var(--c-gold, #c9a84c); border: 1px solid var(--c-border, #2a2a48); }
-.btn.ghost.danger { color: var(--c-danger, #e05252); }
-.btn.ghost.danger:hover { border-color: var(--c-danger, #e05252); }
-.btn:disabled { opacity: 0.7; cursor: default; }
-/* On a phone the three actions wrap under the name instead of overlapping it. */
-.actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-.err { color: var(--c-danger, #e05252); font-size: 0.82rem; flex-basis: 100%; }
-</style>
