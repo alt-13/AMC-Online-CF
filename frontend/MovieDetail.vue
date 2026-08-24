@@ -7,83 +7,89 @@
   Layout is a deliberate visual match of the self-hosted MovieForm.vue: the same
   header (inline poster + meta pills + rating badges + watched toggle + colour
   dot), the same two-column body in the same field order, and the same 4-column
-  media grid — rebuilt on native controls (this build carries no PrimeVue) styled
-  to match the themed PrimeVue look via the shared tokens.
+  media grid — built on PrimeVue form controls + inline Tailwind utilities so it
+  matches the themed CinemaPreset look.
 
-  Not ported: the Extras editor. The Worker only writes extras on import
-  (insertExtras); there is no PUT path to persist per-movie extra edits, so an
-  editable accordion here would silently drop changes. Add a worker endpoint
-  first, then the section.
+  Not ported: the Extras editor is edit-only in the UI; the Worker only writes
+  extras on import (insertExtras) — a PUT path is wired through updateMovie here.
 -->
 <template>
-  <div class="movie-form">
-    <div v-if="loading" class="loading-msg">Loading…</div>
+  <div class="flex flex-col h-full overflow-hidden bg-bg">
+    <div v-if="loading" class="p-8 text-muted text-sm">Loading…</div>
 
     <template v-else>
       <!-- ── Header ── -->
-      <div class="form-header">
-        <div class="header-left">
+      <div
+        class="flex items-start justify-between gap-4 px-5 pt-4 pb-3 bg-surface border-b border-border shrink-0
+               max-md:items-center max-md:px-3 max-md:py-2 max-md:max-h-[20vh] max-md:overflow-hidden"
+      >
+        <div class="flex gap-4 flex-1 min-w-0 max-md:items-center max-md:gap-2 max-md:overflow-hidden">
           <!-- Poster panel (inline, 110×160) -->
-          <div class="picture-panel">
-            <div class="poster-wrap" @click="posterSrc ? (lightboxOpen = true) : triggerUpload()">
-              <img v-if="posterSrc" :src="posterSrc" class="poster" alt="Movie poster" />
-              <div v-else class="poster-placeholder">
-                <i class="pi pi-image" />
+          <div class="flex flex-col items-center gap-1.5 w-[110px] shrink-0">
+            <div
+              class="group relative w-[110px] h-[160px] rounded-md overflow-hidden bg-elevated border border-border
+                     cursor-pointer transition-colors hover:border-gold max-md:w-12 max-md:h-[70px] max-md:shrink-0"
+              @click="posterSrc ? (lightboxOpen = true) : triggerUpload()"
+            >
+              <img v-if="posterSrc" :src="posterSrc" class="w-full h-full object-cover block" alt="Movie poster" />
+              <div v-else class="w-full h-full flex flex-col items-center justify-center gap-1.5 text-muted text-[0.7rem]">
+                <i class="pi pi-image text-[1.4rem]" />
                 <span>Click to upload</span>
               </div>
-              <div class="poster-overlay"><i :class="posterSrc ? 'pi pi-search-plus' : 'pi pi-upload'" /></div>
+              <div class="absolute inset-0 bg-black/55 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 text-white text-xl">
+                <i :class="posterSrc ? 'pi pi-search-plus' : 'pi pi-upload'" />
+              </div>
             </div>
             <input
               ref="fileInput"
               type="file"
               accept="image/*"
-              class="hidden-input"
+              class="hidden"
               @change="onFile"
             />
-            <div class="picture-actions">
-              <button class="pic-btn" title="Upload poster" @click="triggerUpload">
-                <i class="pi pi-upload" />
-              </button>
-              <button class="pic-btn" title="From URL" @click="fromUrl">
-                <i class="pi pi-link" />
-              </button>
-              <button v-if="posterSrc" class="pic-btn danger" title="Remove poster" @click="removePoster">
-                <i class="pi pi-trash" />
-              </button>
+            <div class="flex gap-0.5 max-md:hidden">
+              <Button icon="pi pi-upload" text size="small" title="Upload poster" @click="triggerUpload" />
+              <Button icon="pi pi-link" text size="small" title="From URL" @click="fromUrl" />
+              <Button v-if="posterSrc" icon="pi pi-trash" text severity="danger" size="small" title="Remove poster" @click="removePoster" />
             </div>
-            <p v-if="posterMsg" class="poster-msg">{{ posterMsg }}</p>
+            <p v-if="posterMsg" class="text-[0.7rem] text-muted text-center max-md:hidden">{{ posterMsg }}</p>
           </div>
 
           <!-- Title + meta + ratings -->
-          <div class="header-info">
-            <h1 class="movie-title">{{ form.original_title || "Untitled" }}</h1>
+          <div class="flex-1 min-w-0 flex flex-col gap-1.5 pt-1 max-md:overflow-hidden">
+            <h1 class="font-display text-[1.35rem] font-bold text-text leading-tight whitespace-nowrap overflow-hidden text-ellipsis m-0 max-md:text-base">
+              {{ form.original_title || "Untitled" }}
+            </h1>
             <p
               v-if="form.translated_title && form.translated_title !== form.original_title"
-              class="movie-sub mobile-hide"
+              class="text-[0.85rem] text-muted italic m-0 max-md:hidden"
             >{{ form.translated_title }}</p>
-            <div class="header-meta">
-              <span v-if="form.year > 0" class="meta-tag">{{ form.year }}</span>
-              <span v-if="form.category" class="meta-tag mobile-hide">{{ form.category }}</span>
-              <span v-if="form.length > 0" class="meta-tag">{{ form.length }} min</span>
-              <span v-if="form.director" class="meta-tag mobile-hide">Dir. {{ form.director }}</span>
+            <div class="flex flex-wrap gap-1">
+              <span v-if="form.year > 0" class="text-[0.72rem] text-muted bg-elevated border border-border px-[0.45rem] py-[0.1rem] rounded-[10px]">{{ form.year }}</span>
+              <span v-if="form.category" class="text-[0.72rem] text-muted bg-elevated border border-border px-[0.45rem] py-[0.1rem] rounded-[10px] max-md:hidden">{{ form.category }}</span>
+              <span v-if="form.length > 0" class="text-[0.72rem] text-muted bg-elevated border border-border px-[0.45rem] py-[0.1rem] rounded-[10px]">{{ form.length }} min</span>
+              <span v-if="form.director" class="text-[0.72rem] text-muted bg-elevated border border-border px-[0.45rem] py-[0.1rem] rounded-[10px] max-md:hidden">Dir. {{ form.director }}</span>
             </div>
-            <div class="ratings-row">
-              <div v-if="form.rating > 0" class="rating-badge">
-                <i class="pi pi-star-fill" />
+            <div class="flex items-center gap-2 flex-wrap">
+              <div v-if="form.rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-gold">
+                <i class="pi pi-star-fill text-[0.7rem]" />
                 {{ (form.rating / 10).toFixed(1) }}
-                <span class="rating-label">score</span>
+                <span class="font-light text-[0.7rem] text-muted">score</span>
               </div>
-              <div v-if="form.user_rating > 0" class="rating-badge user">
-                <i class="pi pi-user" />
+              <div v-if="form.user_rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-[#7ec8e3]">
+                <i class="pi pi-user text-[0.7rem]" />
                 {{ (form.user_rating / 10).toFixed(1) }}
-                <span class="rating-label">mine</span>
+                <span class="font-light text-[0.7rem] text-muted">mine</span>
               </div>
-              <div class="checked-toggle mobile-hide" @click="form.checked = form.checked ? 0 : 1">
+              <div
+                class="flex items-center gap-1 text-[0.78rem] text-muted cursor-pointer px-2 py-[0.2rem] rounded-[10px] border border-border transition-colors hover:border-gold hover:text-gold max-md:hidden"
+                @click="form.checked = form.checked ? 0 : 1"
+              >
                 <i :class="form.checked ? 'pi pi-eye' : 'pi pi-eye-slash'" />
                 <span>{{ form.checked ? "Watched" : "Unwatched" }}</span>
               </div>
               <div
-                class="color-tag-badge mobile-hide"
+                class="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0 max-md:hidden"
                 :style="{ background: colorOf(form.color_tag ?? 0) }"
                 :title="colorNameOf(form.color_tag ?? 0)"
               />
@@ -91,200 +97,183 @@
           </div>
         </div>
 
-        <div class="header-actions">
-          <button class="hbtn mobile-only" title="Back to list" @click="$emit('back')">
-            <i class="pi pi-arrow-left" />
-          </button>
-          <button class="hbtn" title="Fetch from OMDb" @click="omdbOpen = true">
-            <i class="pi pi-bolt" />
-            <span class="hbtn-label">Fetch</span>
-          </button>
-          <button class="save-btn" :disabled="saving || !dirty" @click="save">
-            <i v-if="saving" class="pi pi-spin pi-spinner" />
-            {{ saving ? "Saving…" : dirty ? "Save" : "Saved ✓" }}
-          </button>
-          <button class="hbtn danger" title="Delete film" @click="deleteOpen = true">
-            <i class="pi pi-trash" />
-          </button>
+        <div class="flex gap-1.5 items-start shrink-0 pt-1 max-md:flex-col max-md:gap-1 max-md:items-center">
+          <Button icon="pi pi-arrow-left" text class="hidden max-md:inline-flex" title="Back to list" @click="$emit('back')" />
+          <Button icon="pi pi-bolt" label="Fetch" text title="Fetch from OMDb" @click="omdbOpen = true" />
+          <Button
+            :label="saving ? 'Saving…' : dirty ? 'Save' : 'Saved ✓'"
+            :loading="saving"
+            :disabled="saving || !dirty"
+            @click="save"
+          />
+          <Button icon="pi pi-trash" text severity="danger" title="Delete film" @click="deleteOpen = true" />
         </div>
       </div>
 
       <!-- ── Body ── -->
-      <div class="form-body">
-        <div class="form-main">
+      <div class="flex-1 overflow-y-auto overflow-x-clip px-3 pt-2 pb-4 flex flex-col gap-1.5 max-md:px-2">
+        <div class="flex gap-3 items-stretch min-w-0 mb-2 max-md:flex-col">
           <!-- Left column -->
-          <div class="col-left">
-            <div class="field-row">
-              <label class="field-label">Original Title</label>
-              <div class="field-control"><input type="text" class="full-width" v-model="form.original_title" /></div>
+          <div class="flex-1 min-w-0 flex flex-col gap-[0.18rem] max-md:flex-none">
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Original Title</label>
+              <InputText v-model="form.original_title" class="w-full" size="small" />
             </div>
-            <div class="field-row" v-show="showField('translated_title')">
-              <label class="field-label">Translated Title</label>
-              <div class="field-control"><input type="text" class="full-width" v-model="form.translated_title" /></div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('translated_title')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Translated Title</label>
+              <InputText v-model="form.translated_title" class="w-full" size="small" />
             </div>
 
             <!-- Crew fields alongside Actors -->
             <div
-              class="crew-actors-row"
+              class="flex flex-row gap-2 items-stretch max-md:flex-col"
               v-show="showField('director') || showField('producer') || showField('writer') ||
                       showField('composer') || showField('actors')"
             >
               <div
-                class="crew-stack"
+                class="flex-[3] flex flex-col gap-[0.18rem]"
                 v-show="showField('director') || showField('producer') ||
                         showField('writer') || showField('composer')"
               >
-                <div class="field-row" v-show="showField('director')">
-                  <label class="field-label">Director</label>
-                  <div class="field-control"><input type="text" class="full-width" v-model="form.director" /></div>
+                <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('director')">
+                  <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Director</label>
+                  <InputText v-model="form.director" class="w-full" size="small" />
                 </div>
-                <div class="field-row" v-show="showField('producer')">
-                  <label class="field-label">Producer</label>
-                  <div class="field-control"><input type="text" class="full-width" v-model="form.producer" /></div>
+                <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('producer')">
+                  <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Producer</label>
+                  <InputText v-model="form.producer" class="w-full" size="small" />
                 </div>
-                <div class="field-row" v-show="showField('writer')">
-                  <label class="field-label">Writer</label>
-                  <div class="field-control"><input type="text" class="full-width" v-model="form.writer" /></div>
+                <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('writer')">
+                  <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Writer</label>
+                  <InputText v-model="form.writer" class="w-full" size="small" />
                 </div>
-                <div class="field-row" v-show="showField('composer')">
-                  <label class="field-label">Composer</label>
-                  <div class="field-control"><input type="text" class="full-width" v-model="form.composer" /></div>
+                <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('composer')">
+                  <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Composer</label>
+                  <InputText v-model="form.composer" class="w-full" size="small" />
                 </div>
               </div>
-              <div class="actors-stack" v-show="showField('actors')">
-                <span class="inline-label">Actors</span>
-                <textarea class="full-width actors-area" v-model="form.actors" />
+              <div class="flex-[2] flex flex-col gap-[0.18rem] min-w-0" v-show="showField('actors')">
+                <span class="text-[0.78rem] text-muted block pl-0.5">Actors</span>
+                <Textarea v-model="form.actors" class="w-full flex-1 min-h-[90px] resize-none leading-[1.4]" />
               </div>
             </div>
 
-            <div class="field-row" v-show="showField('category')">
-              <label class="field-label">Category</label>
-              <div class="field-control"><input type="text" class="full-width" v-model="form.category" /></div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('category')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Category</label>
+              <InputText v-model="form.category" class="w-full" size="small" />
             </div>
-            <div class="field-row" v-show="showField('country')">
-              <label class="field-label">Country</label>
-              <div class="field-control"><input type="text" class="full-width" v-model="form.country" /></div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('country')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Country</label>
+              <InputText v-model="form.country" class="w-full" size="small" />
             </div>
-            <div class="field-row" v-show="showField('url')">
-              <label class="field-label">URL</label>
-              <div class="field-control url-row">
-                <input type="text" class="full-width" v-model="form.url" />
-                <a v-if="form.url" :href="form.url" target="_blank" class="url-link">
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('url')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">URL</label>
+              <div class="flex items-center gap-1.5 min-w-0 w-full">
+                <InputText v-model="form.url" class="w-full" size="small" />
+                <a v-if="form.url" :href="form.url" target="_blank" class="text-gold text-[0.85rem] shrink-0 no-underline opacity-80 hover:opacity-100 transition-opacity">
                   <i class="pi pi-external-link" />
                 </a>
               </div>
             </div>
-            <div class="field-row align-top" v-show="showField('description')">
-              <label class="field-label top-label">Description</label>
-              <div class="field-control"><textarea class="full-width" rows="3" v-model="form.description" /></div>
+            <div class="grid grid-cols-[100px_1fr] items-start gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('description')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap pt-[0.3rem] max-md:text-left max-md:pr-0 max-md:whitespace-normal max-md:pt-0">Description</label>
+              <Textarea v-model="form.description" rows="3" autoResize class="w-full" />
             </div>
-            <div class="field-row align-top comments-row" v-show="showField('comments')">
-              <label class="field-label top-label">Comments</label>
-              <div class="field-control"><textarea class="full-width" rows="2" v-model="form.comments" /></div>
+            <div class="grid grid-cols-[100px_1fr] items-stretch gap-1.5 flex-1 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('comments')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap pt-[0.3rem] max-md:text-left max-md:pr-0 max-md:whitespace-normal max-md:pt-0">Comments</label>
+              <Textarea v-model="form.comments" class="w-full h-full min-h-[3rem]" />
             </div>
           </div>
 
           <!-- Right column -->
-          <div class="col-right">
-            <div class="field-row" v-show="showField('media')">
-              <label class="field-label">Media</label>
-              <div class="field-control"><input type="text" class="full-width" v-model="form.media" /></div>
+          <div class="flex-none basis-[300px] min-w-0 flex flex-col gap-[0.18rem] max-md:basis-auto">
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('media')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Media</label>
+              <InputText v-model="form.media" class="w-full" size="small" />
             </div>
-            <div class="field-row" v-show="showField('date')">
-              <label class="field-label">Date Added</label>
-              <div class="field-control">
-                <input type="date" :value="delphiToInput(num('date'))"
-                  @change="setDate('date', ($event.target as HTMLInputElement).value)" />
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('date')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Date Added</label>
+              <InputText type="date" class="w-full [color-scheme:dark]" size="small"
+                :modelValue="delphiToInput(num('date'))"
+                @update:modelValue="(v: string | undefined) => setDate('date', v ?? '')" />
+            </div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('date_watched')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Date Watched</label>
+              <InputText type="date" class="w-full [color-scheme:dark]" size="small"
+                :modelValue="delphiToInput(num('date_watched'))"
+                @update:modelValue="(v: string | undefined) => setDate('date_watched', v ?? '')" />
+            </div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('year')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Year</label>
+              <InputText type="number" class="w-full" size="small"
+                :modelValue="String(numOrBlank('year'))"
+                @update:modelValue="(v: string | undefined) => setInt('year', v ?? '')" />
+            </div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('length')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Length (min)</label>
+              <InputText type="number" class="w-full" size="small"
+                :modelValue="String(numOrBlank('length'))"
+                @update:modelValue="(v: string | undefined) => setInt('length', v ?? '')" />
+            </div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('rating')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Rating</label>
+              <InputText type="number" step="0.1" min="0" max="10" class="w-full" size="small"
+                :modelValue="String(ratingDec('rating'))"
+                @update:modelValue="(v: string | undefined) => setRating('rating', v ?? '')" />
+            </div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('user_rating')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">My Rating</label>
+              <InputText type="number" step="0.1" min="0" max="10" class="w-full" size="small"
+                :modelValue="String(ratingDec('user_rating'))"
+                @update:modelValue="(v: string | undefined) => setRating('user_rating', v ?? '')" />
+            </div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('certification')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Certification</label>
+              <InputText v-model="form.certification" class="w-full" size="small" />
+            </div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('checked')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Watched</label>
+              <div class="flex items-center gap-1.5 min-w-0">
+                <Checkbox :binary="true" :modelValue="!!form.checked"
+                  @update:modelValue="(v: boolean) => form.checked = v ? 1 : 0" />
               </div>
             </div>
-            <div class="field-row" v-show="showField('date_watched')">
-              <label class="field-label">Date Watched</label>
-              <div class="field-control">
-                <input type="date" :value="delphiToInput(num('date_watched'))"
-                  @change="setDate('date_watched', ($event.target as HTMLInputElement).value)" />
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('color_tag')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Color Tag</label>
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="w-3 h-3 rounded-full border border-white/15 shrink-0" :style="{ background: colorOf(form.color_tag ?? 0) }" />
+                <Select v-model.number="form.color_tag" :options="colorTagOptions" optionLabel="label" optionValue="value" class="w-full" size="small" />
               </div>
             </div>
-            <div class="field-row" v-show="showField('year')">
-              <label class="field-label">Year</label>
-              <div class="field-control">
-                <input type="number" :value="numOrBlank('year')"
-                  @input="setInt('year', ($event.target as HTMLInputElement).value)" />
-              </div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('borrower')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Borrower</label>
+              <InputText v-model="form.borrower" class="w-full" size="small" />
             </div>
-            <div class="field-row" v-show="showField('length')">
-              <label class="field-label">Length (min)</label>
-              <div class="field-control">
-                <input type="number" :value="numOrBlank('length')"
-                  @input="setInt('length', ($event.target as HTMLInputElement).value)" />
-              </div>
-            </div>
-            <div class="field-row" v-show="showField('rating')">
-              <label class="field-label">Rating</label>
-              <div class="field-control">
-                <input type="number" step="0.1" min="0" max="10" :value="ratingDec('rating')"
-                  @input="setRating('rating', ($event.target as HTMLInputElement).value)" />
-              </div>
-            </div>
-            <div class="field-row" v-show="showField('user_rating')">
-              <label class="field-label">My Rating</label>
-              <div class="field-control">
-                <input type="number" step="0.1" min="0" max="10" :value="ratingDec('user_rating')"
-                  @input="setRating('user_rating', ($event.target as HTMLInputElement).value)" />
-              </div>
-            </div>
-            <div class="field-row" v-show="showField('certification')">
-              <label class="field-label">Certification</label>
-              <div class="field-control"><input type="text" class="full-width" v-model="form.certification" /></div>
-            </div>
-            <div class="field-row" v-show="showField('checked')">
-              <label class="field-label">Watched</label>
-              <div class="field-control">
-                <label class="switch">
-                  <input type="checkbox" :checked="!!form.checked"
-                    @change="form.checked = ($event.target as HTMLInputElement).checked ? 1 : 0" />
-                  <span class="slider" />
-                </label>
-              </div>
-            </div>
-            <div class="field-row" v-show="showField('color_tag')">
-              <label class="field-label">Color Tag</label>
-              <div class="field-control color-tag-control">
-                <span class="dot" :style="{ background: colorOf(form.color_tag ?? 0) }" />
-                <select class="full-width" v-model.number="form.color_tag">
-                  <option v-for="(name, n) in COLOR_TAG_NAMES" :key="n" :value="Number(n)">{{ name }}</option>
-                </select>
-              </div>
-            </div>
-            <div class="field-row" v-show="showField('borrower')">
-              <label class="field-label">Borrower</label>
-              <div class="field-control"><input type="text" class="full-width" v-model="form.borrower" /></div>
-            </div>
-            <div class="field-row" v-show="showField('series_number')">
-              <label class="field-label" title="Series grouping number — entries sharing the same number are listed as a series">Number (#)</label>
-              <div class="field-control">
-                <input type="number" min="0" v-model.number="form.number" />
-              </div>
+            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('series_number')">
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal" title="Series grouping number — entries sharing the same number are listed as a series">Number (#)</label>
+              <InputText type="number" min="0" class="w-full" size="small"
+                :modelValue="String(form.number)"
+                @update:modelValue="(v: string | undefined) => form.number = v ? Number(v) : 0" />
             </div>
 
             <!-- Custom fields -->
             <template v-if="defs.length > 0">
-              <div class="mini-sep">Custom</div>
+              <div class="text-[0.6rem] font-bold tracking-[0.1em] uppercase text-muted pt-1.5 mt-1 border-t border-border">Custom</div>
               <div
                 v-for="def in defs"
                 :key="def.tag"
-                class="field-row"
+                class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0"
                 v-show="showField('custom_' + def.tag)"
               >
-                <label class="field-label">{{ def.name || def.tag }}</label>
-                <div class="field-control">
-                  <label v-if="customTypeOf(def.tag) === 'ftBoolean'" class="switch">
-                    <input type="checkbox" :checked="custom[def.tag] === '1'"
-                      @change="custom[def.tag] = ($event.target as HTMLInputElement).checked ? '1' : '0'" />
-                    <span class="slider" />
-                  </label>
-                  <input
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">{{ def.name || def.tag }}</label>
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <Checkbox v-if="customTypeOf(def.tag) === 'ftBoolean'" :binary="true"
+                    :modelValue="custom[def.tag] === '1'"
+                    @update:modelValue="(v: boolean) => custom[def.tag] = v ? '1' : '0'" />
+                  <InputText
                     v-else
-                    class="full-width"
+                    class="w-full"
+                    size="small"
                     :type="customTypeOf(def.tag) === 'ftInteger' ? 'number' : 'text'"
                     v-model="custom[def.tag]"
                   />
@@ -298,75 +287,75 @@
         <div v-show="['media_type','source','disks','size','file_path','video_format',
                       'video_bitrate','resolution','framerate','audio_format',
                       'audio_bitrate','languages','subtitles'].some((k) => showField(k))">
-          <div class="section-sep">Media</div>
-          <div class="media-grid">
-            <div class="media-col">
-              <div class="field-row" v-show="showField('media_type')">
-                <label class="field-label">Media Type</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.media_type" /></div>
+          <div class="flex items-center gap-3 text-[0.62rem] font-bold tracking-[0.12em] uppercase text-muted mt-1">
+            <span>Media</span>
+            <span class="flex-1 h-px bg-border" />
+          </div>
+          <div class="grid grid-cols-4 gap-x-3 gap-y-[0.18rem] items-start max-md:grid-cols-2">
+            <div class="min-w-0 flex flex-col gap-[0.18rem]">
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('media_type')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Media Type</label>
+                <InputText v-model="form.media_type" class="w-full" size="small" />
               </div>
-              <div class="field-row" v-show="showField('source')">
-                <label class="field-label">Source</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.source" /></div>
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('source')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Source</label>
+                <InputText v-model="form.source" class="w-full" size="small" />
               </div>
-              <div class="field-row" v-show="showField('disks')">
-                <label class="field-label">Disks</label>
-                <div class="field-control">
-                  <input type="number" :value="numOrBlank('disks')"
-                    @input="setInt('disks', ($event.target as HTMLInputElement).value)" />
-                </div>
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('disks')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Disks</label>
+                <InputText type="number" class="w-full" size="small"
+                  :modelValue="String(numOrBlank('disks'))"
+                  @update:modelValue="(v: string | undefined) => setInt('disks', v ?? '')" />
               </div>
-              <div class="field-row" v-show="showField('size')">
-                <label class="field-label">Size</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.size" /></div>
-              </div>
-            </div>
-            <div class="media-col">
-              <div class="field-row" v-show="showField('file_path')">
-                <label class="field-label">File Path</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.file_path" /></div>
-              </div>
-              <div class="field-row" v-show="showField('video_format')">
-                <label class="field-label">Video Format</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.video_format" /></div>
-              </div>
-              <div class="field-row" v-show="showField('video_bitrate')">
-                <label class="field-label">Video kbps</label>
-                <div class="field-control">
-                  <input type="number" :value="numOrBlank('video_bitrate')"
-                    @input="setInt('video_bitrate', ($event.target as HTMLInputElement).value)" />
-                </div>
-              </div>
-              <div class="field-row" v-show="showField('resolution')">
-                <label class="field-label">Resolution</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.resolution" /></div>
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('size')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Size</label>
+                <InputText v-model="form.size" class="w-full" size="small" />
               </div>
             </div>
-            <div class="media-col">
-              <div class="field-row" v-show="showField('framerate')">
-                <label class="field-label">Framerate</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.framerate" /></div>
+            <div class="min-w-0 flex flex-col gap-[0.18rem]">
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('file_path')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">File Path</label>
+                <InputText v-model="form.file_path" class="w-full" size="small" />
               </div>
-              <div class="field-row" v-show="showField('audio_format')">
-                <label class="field-label">Audio Format</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.audio_format" /></div>
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('video_format')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Video Format</label>
+                <InputText v-model="form.video_format" class="w-full" size="small" />
               </div>
-              <div class="field-row" v-show="showField('audio_bitrate')">
-                <label class="field-label">Audio kbps</label>
-                <div class="field-control">
-                  <input type="number" :value="numOrBlank('audio_bitrate')"
-                    @input="setInt('audio_bitrate', ($event.target as HTMLInputElement).value)" />
-                </div>
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('video_bitrate')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Video kbps</label>
+                <InputText type="number" class="w-full" size="small"
+                  :modelValue="String(numOrBlank('video_bitrate'))"
+                  @update:modelValue="(v: string | undefined) => setInt('video_bitrate', v ?? '')" />
               </div>
-              <div class="field-row" v-show="showField('languages')">
-                <label class="field-label">Languages</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.languages" /></div>
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('resolution')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Resolution</label>
+                <InputText v-model="form.resolution" class="w-full" size="small" />
               </div>
             </div>
-            <div class="media-col">
-              <div class="field-row" v-show="showField('subtitles')">
-                <label class="field-label">Subtitles</label>
-                <div class="field-control"><input type="text" class="full-width" v-model="form.subtitles" /></div>
+            <div class="min-w-0 flex flex-col gap-[0.18rem]">
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('framerate')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Framerate</label>
+                <InputText v-model="form.framerate" class="w-full" size="small" />
+              </div>
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('audio_format')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Audio Format</label>
+                <InputText v-model="form.audio_format" class="w-full" size="small" />
+              </div>
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('audio_bitrate')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Audio kbps</label>
+                <InputText type="number" class="w-full" size="small"
+                  :modelValue="String(numOrBlank('audio_bitrate'))"
+                  @update:modelValue="(v: string | undefined) => setInt('audio_bitrate', v ?? '')" />
+              </div>
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('languages')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Languages</label>
+                <InputText v-model="form.languages" class="w-full" size="small" />
+              </div>
+            </div>
+            <div class="min-w-0 flex flex-col gap-[0.18rem]">
+              <div class="grid grid-cols-[75px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('subtitles')">
+                <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Subtitles</label>
+                <InputText v-model="form.subtitles" class="w-full" size="small" />
               </div>
             </div>
           </div>
@@ -374,40 +363,35 @@
 
         <!-- ── Extras ── -->
         <div v-show="showField('extras')">
-          <div class="section-sep extras-sep">
+          <div class="flex items-center justify-between text-[0.62rem] font-bold tracking-[0.12em] uppercase text-muted mt-1">
             <span>Extras</span>
-            <button class="mini-btn" @click="addExtra"><i class="pi pi-plus" /> Add Extra</button>
+            <Button icon="pi pi-plus" label="Add Extra" outlined size="small" @click="addExtra" />
           </div>
-          <div v-if="!extras.length" class="no-extras">No extras yet.</div>
-          <div v-else class="extras-accordion">
-            <div v-for="(extra, idx) in extras" :key="idx" class="extra-panel">
-              <div class="extra-header" @click="toggleExtra(idx)">
-                <label class="switch" @click.stop>
-                  <input type="checkbox" :checked="!!extra.checked"
-                    @change="extra.checked = ($event.target as HTMLInputElement).checked ? 1 : 0" />
-                  <span class="slider" />
-                </label>
-                <span class="extra-title">{{ extra.title || `Extra ${idx + 1}` }}</span>
-                <span v-if="extra.tag" class="extra-tag-badge">{{ extra.tag }}</span>
-                <button class="pic-btn danger extra-del" title="Remove extra" @click.stop="removeExtra(idx)">
-                  <i class="pi pi-trash" />
-                </button>
-                <i class="pi extra-chevron" :class="openSet.has(idx) ? 'pi-chevron-down' : 'pi-chevron-right'" />
+          <div v-if="!extras.length" class="text-muted text-sm py-2">No extras yet.</div>
+          <div v-else class="flex flex-col gap-1 mt-1">
+            <div v-for="(extra, idx) in extras" :key="idx" class="border border-border rounded-lg overflow-hidden">
+              <div class="flex items-center gap-2.5 px-2.5 py-2 bg-elevated cursor-pointer transition-colors hover:bg-border" @click="toggleExtra(idx)">
+                <Checkbox :binary="true" :modelValue="!!extra.checked"
+                  @update:modelValue="(v: boolean) => extra.checked = v ? 1 : 0" @click.stop />
+                <span class="flex-1 min-w-0 text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap">{{ extra.title || `Extra ${idx + 1}` }}</span>
+                <span v-if="extra.tag" class="text-[0.7rem] bg-gold-dim text-gold px-1.5 py-[0.1rem] rounded-lg border border-[rgba(201,168,76,0.3)]">{{ extra.tag }}</span>
+                <Button icon="pi pi-trash" text severity="danger" size="small" title="Remove extra" @click.stop="removeExtra(idx)" />
+                <i class="pi text-muted text-[0.7rem]" :class="openSet.has(idx) ? 'pi-chevron-down' : 'pi-chevron-right'" />
               </div>
-              <div v-show="openSet.has(idx)" class="extra-content">
-                <div class="section-cols">
-                  <div class="col-fields">
-                    <div class="group-label">Info</div>
-                    <div class="field-row"><label class="field-label">Title</label><div class="field-control"><input type="text" class="full-width" v-model="extra.title" /></div></div>
-                    <div class="field-row"><label class="field-label">Tag</label><div class="field-control"><input type="text" class="full-width" v-model="extra.tag" /></div></div>
-                    <div class="field-row"><label class="field-label">Category</label><div class="field-control"><input type="text" class="full-width" v-model="extra.category" /></div></div>
-                    <div class="field-row"><label class="field-label">URL</label><div class="field-control"><input type="text" class="full-width" v-model="extra.url" /></div></div>
-                    <div class="field-row"><label class="field-label">Created By</label><div class="field-control"><input type="text" class="full-width" v-model="extra.created_by" /></div></div>
+              <div v-show="openSet.has(idx)" class="px-2.5 py-3 bg-card">
+                <div class="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-5 items-start">
+                  <div class="flex flex-col gap-[0.18rem]">
+                    <div class="text-[0.6rem] font-semibold tracking-[0.1em] uppercase text-muted pb-1 border-b border-border mb-1.5">Info</div>
+                    <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0"><label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Title</label><InputText v-model="extra.title" class="w-full" size="small" /></div>
+                    <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0"><label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Tag</label><InputText v-model="extra.tag" class="w-full" size="small" /></div>
+                    <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0"><label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Category</label><InputText v-model="extra.category" class="w-full" size="small" /></div>
+                    <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0"><label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">URL</label><InputText v-model="extra.url" class="w-full" size="small" /></div>
+                    <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0"><label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Created By</label><InputText v-model="extra.created_by" class="w-full" size="small" /></div>
                   </div>
-                  <div class="col-fields">
-                    <div class="group-label">Notes</div>
-                    <div class="field-row align-top"><label class="field-label top-label">Description</label><div class="field-control"><textarea class="full-width" rows="3" v-model="extra.description" /></div></div>
-                    <div class="field-row align-top"><label class="field-label top-label">Comments</label><div class="field-control"><textarea class="full-width" rows="2" v-model="extra.comments" /></div></div>
+                  <div class="flex flex-col gap-[0.18rem]">
+                    <div class="text-[0.6rem] font-semibold tracking-[0.1em] uppercase text-muted pb-1 border-b border-border mb-1.5">Notes</div>
+                    <div class="grid grid-cols-[100px_1fr] items-start gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0"><label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap pt-[0.3rem] max-md:text-left max-md:pr-0 max-md:whitespace-normal max-md:pt-0">Description</label><Textarea v-model="extra.description" rows="3" autoResize class="w-full" /></div>
+                    <div class="grid grid-cols-[100px_1fr] items-start gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0"><label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap pt-[0.3rem] max-md:text-left max-md:pr-0 max-md:whitespace-normal max-md:pt-0">Comments</label><Textarea v-model="extra.comments" rows="2" autoResize class="w-full" /></div>
                   </div>
                 </div>
               </div>
@@ -417,7 +401,7 @@
       </div>
     </template>
 
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="text-danger text-[0.82rem] px-5 py-2">{{ error }}</p>
 
     <OmdbDialog
       v-if="omdbOpen"
@@ -455,9 +439,22 @@
 
     <!-- Poster lightbox: click the inline poster to view it full-size. -->
     <Teleport to="body">
-      <div v-if="lightboxOpen && posterSrc" class="lightbox" @click="lightboxOpen = false">
-        <img :src="posterSrc" class="lightbox-img" alt="Movie poster" @click.stop />
-        <button class="lightbox-close" title="Close" @click="lightboxOpen = false">
+      <div
+        v-if="lightboxOpen && posterSrc"
+        class="lightbox fixed inset-0 z-[1000] flex items-center justify-center p-8 bg-[rgba(0,0,0,0.82)] cursor-zoom-out"
+        @click="lightboxOpen = false"
+      >
+        <img
+          :src="posterSrc"
+          class="lightbox-img max-w-[90vw] max-h-[90vh] object-contain rounded-md shadow-[0_20px_60px_rgba(0,0,0,0.6)] cursor-default"
+          alt="Movie poster"
+          @click.stop
+        />
+        <button
+          class="absolute top-4 right-4 inline-flex items-center justify-center w-10 h-10 bg-black/50 text-white border border-white/25 rounded-full text-lg cursor-pointer transition-colors hover:bg-black/80 hover:border-gold hover:text-gold"
+          title="Close"
+          @click="lightboxOpen = false"
+        >
           <i class="pi pi-times" />
         </button>
       </div>
@@ -467,6 +464,11 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch, onBeforeUnmount, nextTick } from "vue";
+import InputText from "primevue/inputtext";
+import Textarea from "primevue/textarea";
+import Select from "primevue/select";
+import Checkbox from "primevue/checkbox";
+import Button from "primevue/button";
 import { cf, session, type MovieRow, type CustomFieldDefRow, type Extra } from "./api";
 import OmdbDialog from "./OmdbDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
@@ -512,6 +514,13 @@ const form = reactive({} as MovieRow);
 const custom = reactive<Record<string, string>>({});
 const extras = ref<Extra[]>([]);
 const openSet = reactive(new Set<number>()); // which extra panels are expanded
+
+// Colour-tag <Select> options, built once from the shared name table (ascending
+// tag order 0..12 — Object.entries preserves the numeric-key order).
+const colorTagOptions = Object.entries(COLOR_TAG_NAMES).map(([n, name]) => ({
+  label: name,
+  value: Number(n),
+}));
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const posterSrc = ref("");
@@ -876,484 +885,11 @@ async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
 </script>
 
 <style scoped>
-.movie-form {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  background: var(--c-bg);
-}
-.loading-msg { padding: 2rem; color: var(--c-muted); font-size: 0.875rem; }
-
-/* ── Header ── */
-.form-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.25rem 0.75rem;
-  background: var(--c-surface);
-  border-bottom: 1px solid var(--c-border);
-  flex-shrink: 0;
-}
-.header-left { display: flex; gap: 1rem; flex: 1; min-width: 0; }
-.header-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding-top: 0.25rem;
-}
-.movie-title {
-  font-family: var(--font-display);
-  font-size: 1.35rem;
-  font-weight: 700;
-  color: var(--c-text);
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin: 0;
-}
-.movie-sub { font-size: 0.85rem; color: var(--c-muted); font-style: italic; margin: 0; }
-.header-meta { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.meta-tag {
-  font-size: 0.72rem;
-  color: var(--c-muted);
-  background: var(--c-elevated);
-  border: 1px solid var(--c-border);
-  padding: 0.1rem 0.45rem;
-  border-radius: 10px;
-}
-.ratings-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-.rating-badge {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  background: var(--c-elevated);
-  border: 1px solid var(--c-border);
-  padding: 0.2rem 0.55rem;
-  border-radius: 12px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--c-gold);
-}
-.rating-badge.user { color: #7ec8e3; }
-.rating-badge .pi { font-size: 0.7rem; }
-.rating-label { font-weight: 300; font-size: 0.7rem; color: var(--c-muted); }
-.checked-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.78rem;
-  color: var(--c-muted);
-  cursor: pointer;
-  padding: 0.2rem 0.5rem;
-  border-radius: 10px;
-  border: 1px solid var(--c-border);
-  transition: all 0.15s;
-}
-.checked-toggle:hover { border-color: var(--c-gold); color: var(--c-gold); }
-.color-tag-badge {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.2);
-  flex-shrink: 0;
-}
-
-.header-actions {
-  display: flex;
-  gap: 0.4rem;
-  align-items: flex-start;
-  flex-shrink: 0;
-  padding-top: 0.25rem;
-}
-.hbtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  background: transparent;
-  color: var(--c-gold);
-  border: 1px solid var(--c-gold);
-  border-radius: 6px;
-  padding: 0.35rem 0.6rem;
-  font-size: 0.8rem;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.hbtn:hover { background: var(--c-gold-dim); }
-.hbtn.danger { color: var(--c-danger); border-color: var(--c-danger); }
-.hbtn.danger:hover { background: rgba(224,82,82,0.15); }
-.save-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  background: var(--c-gold);
-  color: #0a0a14;
-  border: 1px solid var(--c-gold);
-  border-radius: 6px;
-  padding: 0.35rem 0.75rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  font-family: var(--font-body);
-  cursor: pointer;
-}
-.save-btn:hover:not(:disabled) { background: #dbb85a; }
-.save-btn:disabled { opacity: 0.55; cursor: default; }
-.mobile-only { display: none; }
-
-/* ── Poster panel ── */
-.picture-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.4rem;
-  width: 110px;
-  flex-shrink: 0;
-}
-.poster-wrap {
-  position: relative;
-  width: 110px;
-  height: 160px;
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--c-elevated);
-  border: 1px solid var(--c-border);
-  cursor: pointer;
-  transition: border-color 0.15s;
-}
-.poster-wrap:hover { border-color: var(--c-gold); }
-.poster-wrap:hover .poster-overlay { opacity: 1; }
-.poster { width: 100%; height: 100%; object-fit: cover; display: block; }
-.poster-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  color: var(--c-muted);
-  font-size: 0.7rem;
-}
-.poster-placeholder .pi { font-size: 1.4rem; }
-.poster-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s;
-  color: #fff;
-  font-size: 1.2rem;
-}
-.picture-actions { display: flex; gap: 0.15rem; }
-.pic-btn {
-  background: transparent;
-  border: none;
-  color: var(--c-muted);
-  cursor: pointer;
-  padding: 0.25rem;
-  font-size: 0.85rem;
-  border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
-}
-.pic-btn:hover { color: var(--c-gold); background: var(--c-elevated); }
-.pic-btn.danger:hover { color: var(--c-danger); }
-.poster-msg { font-size: 0.7rem; color: var(--c-muted); text-align: center; }
-.hidden-input { display: none; }
-
-/* ── Poster lightbox ── */
-.lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  background: rgba(0, 0, 0, 0.82);
-  cursor: zoom-out;
-  animation: lb-fade 0.15s ease;
-}
-.lightbox-img {
-  max-width: 90vw;
-  max-height: 90vh;
-  object-fit: contain;
-  border-radius: 6px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-  cursor: default;
-  animation: lb-pop 0.15s ease;
-}
-.lightbox-close {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 50%;
-  font-size: 1.1rem;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.lightbox-close:hover { background: rgba(0, 0, 0, 0.8); border-color: var(--c-gold); color: var(--c-gold); }
+/* Poster lightbox — the fixed-overlay enlarge animation is the one thing plain
+   utilities can't express; the positioning/appearance is inline on the elements
+   (see the Teleport block), and only the entrance animation lives here. */
+.lightbox { animation: lb-fade 0.15s ease; }
+.lightbox-img { animation: lb-pop 0.15s ease; }
 @keyframes lb-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes lb-pop { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
-
-/* ── Scrollable body ── */
-.form-body {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: clip;
-  padding: 0.5rem 0.75rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-/* ── Two-column main ── */
-.form-main {
-  display: flex;
-  gap: 0.75rem;
-  align-items: stretch; /* left column stretches to the right column's height */
-  min-width: 0;
-  margin-bottom: 0.5rem; /* breathing room between Comments and the Media separator */
-}
-/* One flex box holding every left-hand field; it grows to fill the width left by
-   the fixed-width right column, so all its fields share the same width. */
-.col-left { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
-.col-right { flex: 0 0 300px; min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
-
-/* ── Crew + Actors side-by-side ── */
-.crew-actors-row { display: flex; flex-direction: row; gap: 0.5rem; align-items: stretch; }
-.crew-stack { flex: 3; display: flex; flex-direction: column; gap: 0.18rem; }
-.actors-stack { flex: 2; display: flex; flex-direction: column; gap: 0.18rem; min-width: 0; }
-.inline-label { font-size: 0.78rem; color: var(--c-muted); display: block; padding-left: 0.1rem; }
-.actors-area { flex: 1; resize: none; min-height: 90px; line-height: 1.4; }
-
-/* ── Field layout ── */
-.field-row { display: flex; align-items: center; gap: 0.35rem; min-height: 26px; }
-.field-row.align-top { align-items: flex-start; }
-/* Comments is the last row of the (usually shorter) left column: let it grow to
-   fill the leftover vertical space so its bottom aligns with the right column.
-   The align-items override needs to out-specify `.field-row.align-top` (which
-   forces flex-start) or the field-control won't stretch and the textarea stays
-   at its content height. */
-.comments-row { flex: 1 1 auto; }
-.field-row.align-top.comments-row { align-items: stretch; }
-.comments-row .field-control { align-items: stretch; }
-.comments-row textarea { height: 100%; min-height: 3rem; }
-.field-label {
-  flex: 0 0 100px;
-  font-size: 0.78rem;
-  color: var(--c-muted);
-  text-align: right;
-  padding-right: 0.25rem;
-  white-space: nowrap;
-}
-.top-label { padding-top: 0.3rem; }
-.field-control { flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.4rem; }
-.full-width { width: 100%; }
-.url-row { display: flex; align-items: center; gap: 0.4rem; width: 100%; }
-.url-link { color: var(--c-gold); font-size: 0.85rem; flex-shrink: 0; text-decoration: none; opacity: 0.8; transition: opacity 0.15s; }
-.url-link:hover { opacity: 1; }
-
-/* ── Native controls, themed to match the self-hosted PrimeVue look ── */
-/* .actors-area lives outside a .field-control (it sits in .actors-stack), so it
-   is listed explicitly or it would fall back to the browser's default textarea. */
-.actors-area,
-.field-control input[type="text"],
-.field-control input[type="number"],
-.field-control input[type="date"],
-.field-control select,
-.field-control textarea {
-  /* Without border-box, `width: 100%` is the CONTENT width and padding+border are
-     added on top, so every control overflowed its container to the right (the
-     Actors textarea spilling past .actors-stack was the visible symptom). */
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-  padding: 0.4rem 0.55rem;
-  background: var(--c-elevated);
-  color: var(--c-text);
-  border: 1px solid var(--c-border);
-  border-radius: 6px;
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.actors-area:focus,
-.field-control input:focus,
-.field-control select:focus,
-.field-control textarea:focus {
-  border-color: var(--c-gold);
-  box-shadow: 0 0 0 1px var(--c-gold);
-}
-.field-control textarea { resize: vertical; line-height: 1.4; }
-.field-control input[type="date"] { color-scheme: dark; }
-
-/* Color-tag select with a leading swatch */
-.color-tag-control { display: flex; align-items: center; gap: 0.4rem; }
-.color-tag-control .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.15); flex-shrink: 0; }
-
-/* ── Toggle switch (Watched + boolean custom fields) ── */
-.switch { position: relative; display: inline-block; width: 38px; height: 20px; flex-shrink: 0; }
-.switch input { opacity: 0; width: 0; height: 0; }
-.switch .slider {
-  position: absolute;
-  cursor: pointer;
-  inset: 0;
-  background: var(--c-elevated);
-  border: 1px solid var(--c-border);
-  border-radius: 20px;
-  transition: background 0.15s, border-color 0.15s;
-}
-.switch .slider::before {
-  content: "";
-  position: absolute;
-  height: 14px;
-  width: 14px;
-  left: 2px;
-  top: 2px;
-  background: var(--c-muted);
-  border-radius: 50%;
-  transition: transform 0.15s, background 0.15s;
-}
-.switch input:checked + .slider { background: var(--c-gold-dim); border-color: var(--c-gold); }
-.switch input:checked + .slider::before { transform: translateX(18px); background: var(--c-gold); }
-
-/* ── Separators ── */
-.mini-sep {
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--c-muted);
-  padding-top: 0.35rem;
-  margin-top: 0.2rem;
-  border-top: 1px solid var(--c-border);
-}
-.section-sep {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--c-muted);
-  margin-top: 0.3rem;
-}
-.section-sep::after { content: ""; flex: 1; height: 1px; background: var(--c-border); }
-
-/* ── Media grid ── */
-.media-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.18rem 0.75rem; align-items: start; }
-.media-col { min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
-.media-col .field-label { flex: 0 0 75px; }
-
-/* ── Extras (collapsible accordion) ── */
-.extras-sep { justify-content: space-between; }
-.extras-sep::after { display: none; }
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  background: transparent;
-  color: var(--c-gold);
-  border: 1px solid var(--c-gold);
-  border-radius: 6px;
-  padding: 0.2rem 0.5rem;
-  font-size: 0.72rem;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.mini-btn:hover { background: var(--c-gold-dim); }
-.no-extras { color: var(--c-muted); font-size: 0.875rem; padding: 0.5rem 0; }
-.extras-accordion { display: flex; flex-direction: column; gap: 4px; margin-top: 0.3rem; }
-.extra-panel { border: 1px solid var(--c-border); border-radius: var(--radius); overflow: hidden; }
-.extra-header {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.5rem 0.6rem;
-  background: var(--c-elevated);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.extra-header:hover { background: var(--c-border); }
-.extra-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.875rem;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.extra-tag-badge {
-  font-size: 0.7rem;
-  background: var(--c-gold-dim);
-  color: var(--c-gold);
-  padding: 0.1rem 0.4rem;
-  border-radius: 8px;
-  border: 1px solid rgba(201,168,76,0.3);
-}
-.extra-del { color: var(--c-muted); }
-.extra-chevron { color: var(--c-muted); font-size: 0.7rem; }
-.extra-content { padding: 0.75rem 0.6rem; background: var(--c-card); }
-.section-cols {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 1.25rem;
-  align-items: start;
-}
-.col-fields { display: flex; flex-direction: column; gap: 0.18rem; }
-.group-label {
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--c-muted);
-  padding-bottom: 0.3rem;
-  border-bottom: 1px solid var(--c-border);
-  margin-bottom: 0.4rem;
-}
-
-.err { color: var(--c-danger); font-size: 0.82rem; padding: 0.5rem 1.25rem; }
-
-/* ── Mobile ── */
-@media (max-width: 768px) {
-  .form-header { padding: 0.5rem 0.75rem; max-height: 20vh; overflow: hidden; align-items: center; }
-  .mobile-hide { display: none !important; }
-  .mobile-only { display: inline-flex; }
-  .header-actions { flex-direction: column; gap: 0.3rem; align-items: center; }
-  .header-left { flex-direction: row; align-items: center; gap: 0.5rem; overflow: hidden; }
-  .poster-wrap { width: 48px !important; height: 70px !important; flex-shrink: 0; }
-  .picture-actions, .poster-msg { display: none; }
-  .header-info { overflow: hidden; }
-  .movie-title { font-size: 1rem; }
-  .form-body { padding: 0.5rem 0.5rem 1rem; }
-  .form-main { flex-direction: column; }
-  .col-left, .col-right { flex: 0 0 auto; }
-  .crew-actors-row { flex-direction: column; }
-  .field-row { flex-direction: column; align-items: stretch; gap: 0.15rem; min-height: unset; }
-  .field-row.align-top { align-items: stretch; }
-  .field-label { flex: 0 0 auto; text-align: left; padding-right: 0; white-space: normal; }
-  .top-label { padding-top: 0; }
-  .media-grid { grid-template-columns: 1fr 1fr; }
-}
 </style>
