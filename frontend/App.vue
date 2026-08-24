@@ -5,7 +5,7 @@
   this is first run (no account yet) so LoginView can offer create-vs-sign-in.
 -->
 <template>
-  <div v-if="!ready" class="boot">Loading…</div>
+  <div v-if="!ready" class="min-h-dvh flex items-center justify-center text-muted">Loading…</div>
   <LoginView v-else-if="!authed" :setup-mode="setupMode" @authed="authed = true" />
   <CatalogsView v-else />
 </template>
@@ -26,13 +26,3 @@ onMounted(async () => {
   ready.value = true;
 });
 </script>
-
-<style scoped>
-.boot {
-  min-height: 100dvh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--c-muted, #7e7a90);
-}
-</style>

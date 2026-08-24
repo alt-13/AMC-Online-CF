@@ -8,44 +8,46 @@
   swap in CatalogsView.
 -->
 <template>
-  <div class="shell">
-    <form class="card" @submit.prevent="onSubmit">
-      <div class="head">
-        <span class="logo">🎬</span>
-        <span class="title">AMC Online</span>
+  <div class="min-h-dvh flex items-center justify-center p-4">
+    <form class="w-full max-w-sm flex flex-col gap-3 p-6 bg-card border border-border rounded-lg" @submit.prevent="onSubmit">
+      <div class="flex items-center gap-2">
+        <span class="text-2xl">🎬</span>
+        <span class="font-semibold text-lg text-text">AMC Online</span>
       </div>
 
-      <p v-if="setupMode" class="intro">
+      <p v-if="setupMode" class="m-0 text-xs leading-relaxed text-muted">
         First run — create the account for this catalog. It's the only login on
         this deployment, so keep the password safe.
       </p>
 
-      <label class="field">
-        <span class="flabel">Username</span>
-        <input
+      <label class="flex flex-col gap-1">
+        <span class="text-xs uppercase tracking-wider text-muted">Username</span>
+        <InputText
           v-model="username"
           autocomplete="username"
           :disabled="busy"
           autofocus
+          class="w-full"
         />
       </label>
 
-      <label class="field">
-        <span class="flabel">Password</span>
-        <input
+      <label class="flex flex-col gap-1">
+        <span class="text-xs uppercase tracking-wider text-muted">Password</span>
+        <Password
           v-model="password"
-          type="password"
-          :autocomplete="setupMode ? 'new-password' : 'current-password'"
+          :feedback="false"
+          toggleMask
+          inputClass="w-full"
+          class="w-full"
+          :inputProps="{ autocomplete: setupMode ? 'new-password' : 'current-password' }"
           :disabled="busy"
         />
-        <span v-if="setupMode" class="fhelp">At least 8 characters.</span>
+        <span v-if="setupMode" class="text-xs text-muted">At least 8 characters.</span>
       </label>
 
-      <p v-if="error" class="error">{{ error }}</p>
+      <p v-if="error" class="m-0 text-sm text-danger">{{ error }}</p>
 
-      <button class="btn" type="submit" :disabled="busy">
-        {{ busy ? "…" : setupMode ? "Create account" : "Sign in" }}
-      </button>
+      <Button type="submit" :disabled="busy" :label="busy ? '…' : setupMode ? 'Create account' : 'Sign in'" class="mt-1" />
     </form>
   </div>
 </template>
@@ -53,6 +55,9 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { auth } from "./api";
+import InputText from "primevue/inputtext";
+import Password from "primevue/password";
+import Button from "primevue/button";
 
 const props = defineProps<{ setupMode: boolean }>();
 const emit = defineEmits<{ authed: [] }>();
@@ -86,51 +91,3 @@ async function onSubmit() {
   }
 }
 </script>
-
-<style scoped>
-.shell {
-  min-height: 100dvh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-}
-.card {
-  width: 100%;
-  max-width: 22rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-  padding: 1.5rem;
-  background: var(--c-card, #181828);
-  border: 1px solid var(--c-border, #2a2a48);
-  border-radius: var(--radius, 8px);
-}
-.head { display: flex; align-items: center; gap: 0.5rem; }
-.logo { font-size: 1.4rem; }
-.title { font-weight: 600; font-size: 1.15rem; color: var(--c-text, #e8e0d5); }
-.intro { margin: 0; font-size: 0.8rem; line-height: 1.4; color: var(--c-muted, #7e7a90); }
-.field { display: flex; flex-direction: column; gap: 0.25rem; }
-.flabel { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--c-muted, #7e7a90); }
-.fhelp { font-size: 0.72rem; color: var(--c-muted, #7e7a90); }
-.field input {
-  padding: 0.45rem 0.6rem;
-  background: var(--c-elevated, #1f1f38);
-  border: 1px solid var(--c-border, #2a2a48);
-  border-radius: 6px;
-  color: var(--c-text, #e8e0d5);
-  font-size: 0.9rem;
-}
-.error { margin: 0; font-size: 0.8rem; color: #e08a8a; }
-.btn {
-  margin-top: 0.2rem;
-  background: var(--c-gold, #c9a84c);
-  color: #0a0a14;
-  border: none;
-  border-radius: 6px;
-  padding: 0.5rem 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-.btn:disabled { opacity: 0.6; cursor: default; }
-</style>
