@@ -90,18 +90,25 @@ export const BOOL_FIELDS = new Set(["checked"]);
 // Sentinel: AMC uses -1 for "unset" numeric fields; show those as blank.
 export const SENTINEL = -1;
 
-// --- Delphi date <-> yyyy-mm-dd --------------------------------------------
+// --- Delphi day number <-> Date ---------------------------------------------
 const DELPHI_EPOCH_MS = Date.UTC(1899, 11, 30);
 
-export function delphiToInput(days: number): string {
-  if (!days) return "";
-  return new Date(DELPHI_EPOCH_MS + days * 86_400_000).toISOString().slice(0, 10);
+// For PrimeVue's <DatePicker>, which binds a Date. A Delphi day number is a
+// calendar date with no timezone, so these deliberately cross the UTC/local
+// boundary by y/m/d parts rather than by milliseconds — reading the UTC parts
+// and rebuilding at LOCAL midnight (and back) keeps the displayed day identical
+// in every timezone. A plain `new Date(epoch + days*86400000)` would render as
+// the previous day west of UTC.
+export function delphiToDate(days: number): Date | null {
+  if (!days) return null;
+  const utc = new Date(DELPHI_EPOCH_MS + days * 86_400_000);
+  return new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
 }
 
-export function inputToDelphi(iso: string): number {
-  if (!iso) return 0;
-  const ms = Date.parse(iso + "T00:00:00Z");
-  return Number.isNaN(ms) ? 0 : Math.round((ms - DELPHI_EPOCH_MS) / 86_400_000);
+export function dateToDelphi(d: Date | null | undefined): number {
+  if (!d || Number.isNaN(d.getTime())) return 0;
+  const ms = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.round((ms - DELPHI_EPOCH_MS) / 86_400_000);
 }
 
 // --- colour tags ------------------------------------------------------------

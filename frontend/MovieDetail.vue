@@ -81,8 +81,14 @@
                 {{ (form.user_rating / 10).toFixed(1) }}
                 <span class="font-light text-[0.7rem] text-muted">mine</span>
               </div>
+              <!-- The only Watched control left (the form row is gone): the flag
+                   normally follows Date Watched, and this toggles it by hand for
+                   a film watched on an unknown date. Gated on the same
+                   visibility setting the removed row used. -->
               <div
+                v-show="showField('checked')"
                 class="flex items-center gap-1 text-[0.78rem] text-muted cursor-pointer px-2 py-[0.2rem] rounded-[10px] border border-border transition-colors hover:border-gold hover:text-gold max-md:hidden"
+                :title="form.checked ? 'Mark as unwatched' : 'Mark as watched'"
                 @click="form.checked = form.checked ? 0 : 1"
               >
                 <i :class="form.checked ? 'pi pi-eye' : 'pi pi-eye-slash'" />
@@ -196,15 +202,13 @@
             </div>
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('date')">
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Date Added</label>
-              <InputText type="date" class="w-full [color-scheme:dark]" size="small"
-                :modelValue="delphiToInput(num('date'))"
-                @update:modelValue="(v: string | undefined) => setDate('date', v ?? '')" />
+              <DatePicker v-model="dateAdded" dateFormat="yy-mm-dd" showIcon showButtonBar
+                iconDisplay="input" size="small" fluid inputClass="w-full" />
             </div>
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('date_watched')">
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Date Watched</label>
-              <InputText type="date" class="w-full [color-scheme:dark]" size="small"
-                :modelValue="delphiToInput(num('date_watched'))"
-                @update:modelValue="(v: string | undefined) => setDate('date_watched', v ?? '')" />
+              <DatePicker v-model="dateWatched" dateFormat="yy-mm-dd" showIcon showButtonBar
+                iconDisplay="input" size="small" fluid inputClass="w-full" />
             </div>
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('year')">
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Year</label>
@@ -234,19 +238,32 @@
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Certification</label>
               <InputText v-model="form.certification" class="w-full" size="small" />
             </div>
-            <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('checked')">
-              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Watched</label>
-              <div class="flex items-center gap-1.5 min-w-0">
-                <Checkbox :binary="true" :modelValue="!!form.checked"
-                  @update:modelValue="(v: boolean) => form.checked = v ? 1 : 0" />
-              </div>
-            </div>
+            <!-- No "Watched" checkbox: the flag is derived from Date Watched
+                 (set it → watched, clear it → unwatched, see `dateWatched`) with the
+                 header pill as the manual override for a date-less watch. -->
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('color_tag')">
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Color Tag</label>
-              <div class="flex items-center gap-1.5 min-w-0">
-                <span class="w-3 h-3 rounded-full border border-white/15 shrink-0" :style="{ background: colorOf(form.color_tag ?? 0) }" />
-                <Select v-model.number="form.color_tag" :options="colorTagOptions" optionLabel="label" optionValue="value" class="w-full" size="small" />
-              </div>
+              <Select
+                v-model.number="form.color_tag"
+                :options="colorTagOptions"
+                optionLabel="label"
+                optionValue="value"
+                class="w-full"
+                size="small"
+              >
+                <template #value="{ value }">
+                  <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full border border-white/25 shrink-0" :style="{ background: colorOf(value ?? 0) }" />
+                    <span>{{ colorNameOf(value ?? 0) }}</span>
+                  </div>
+                </template>
+                <template #option="{ option }">
+                  <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full border border-white/25 shrink-0" :style="{ background: option.color }" />
+                    <span>{{ option.label }}</span>
+                  </div>
+                </template>
+              </Select>
             </div>
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('borrower')">
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Borrower</label>
@@ -466,17 +483,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onBeforeUnmount, nextTick } from "vue";
+import { ref, reactive, computed, watch, onBeforeUnmount, nextTick } from "vue";
 import InputText from "primevue/inputtext";
 import Textarea from "primevue/textarea";
 import Select from "primevue/select";
 import Checkbox from "primevue/checkbox";
+import DatePicker from "primevue/datepicker";
 import Button from "primevue/button";
 import { cf, session, type MovieRow, type CustomFieldDefRow, type Extra } from "./api";
 import OmdbDialog from "./OmdbDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import {
-  isVisible, parseCustom, delphiToInput, inputToDelphi, SENTINEL,
+  isVisible, parseCustom, delphiToDate, dateToDelphi, SENTINEL,
   COLOR_TAG_COLORS, COLOR_TAG_NAMES, type AppSettings,
 } from "./fields";
 
@@ -519,10 +537,12 @@ const extras = ref<Extra[]>([]);
 const openSet = reactive(new Set<number>()); // which extra panels are expanded
 
 // Colour-tag <Select> options, built once from the shared name table (ascending
-// tag order 0..12 — Object.entries preserves the numeric-key order).
+// tag order 0..12 — Object.entries preserves the numeric-key order). `color`
+// feeds the swatch in the #option/#value slots.
 const colorTagOptions = Object.entries(COLOR_TAG_NAMES).map(([n, name]) => ({
   label: name,
   value: Number(n),
+  color: COLOR_TAG_COLORS[Number(n)] ?? "transparent",
 }));
 
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -675,12 +695,23 @@ const numOrBlank = (k: string) => (num(k) === SENTINEL ? "" : num(k));
 function setInt(k: string, v: string) {
   (form as Record<string, unknown>)[k] = v === "" ? SENTINEL : parseInt(v, 10) || 0;
 }
-function setDate(k: string, iso: string) {
-  (form as Record<string, unknown>)[k] = inputToDelphi(iso);
-  // Picking a watch date implies the film was watched — flip the flag so the
-  // header toggle, the Watched switch, and the list's watched icon all agree.
-  if (k === "date_watched" && iso) form.checked = 1;
-}
+// <DatePicker> binds a Date; the row stores a Delphi day number.
+const dateAdded = computed<Date | null>({
+  get: () => delphiToDate(num("date")),
+  set: (d) => { form.date = dateToDelphi(d); },
+});
+
+// Date Watched drives the `checked` flag (there is no Watched checkbox any
+// more): picking a date marks the film watched, clearing it marks it unwatched.
+// The header pill stays available for a watch with no known date.
+const dateWatched = computed<Date | null>({
+  get: () => delphiToDate(num("date_watched")),
+  set: (d) => {
+    const days = dateToDelphi(d);
+    form.date_watched = days;
+    form.checked = days ? 1 : 0;
+  },
+});
 const ratingDec = (k: string) => {
   const v = num(k);
   return v > 0 ? v / 10 : "";
