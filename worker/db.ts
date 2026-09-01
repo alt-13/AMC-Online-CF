@@ -348,7 +348,8 @@ export async function replaceExtras(
 }
 
 /** The next free on-disk `number` for a catalog (MAX + 1, or 1 when empty).
- *  Guarantees the UNIQUE(catalog_id, number) constraint holds for a new row. */
+ *  Numbers are not unique by design (see schema.sql) — this only keeps a new row
+ *  out of an existing series until the user deliberately renumbers it. */
 export async function nextMovieNumber(env: Env, catalogId: string): Promise<number> {
   const row = await env.DB.prepare(`SELECT MAX(number) AS mx FROM movies WHERE catalog_id = ?`)
     .bind(catalogId)
@@ -425,20 +426,43 @@ export async function getAllExtras(
   return results ?? [];
 }
 
-/** Update a whitelisted set of scalar movie columns. */
+/** Coerce a client-sent `movies.number` to something storable, or null when the
+ *  value is unusable and the column should be left alone. The column is
+ *  `INTEGER NOT NULL`, so binding a null/NaN would fail the whole save. */
+export function normalizeMovieNumber(v: unknown): number | null {
+  const n =
+    typeof v === "number" ? v
+    : typeof v === "string" && v.trim() !== "" ? Number(v)
+    : NaN;
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.trunc(n));
+}
+
+/** Update a whitelisted set of scalar movie columns.
+ *
+ *  `id`/`catalog_id` are identity and stay server-owned. `number` IS editable:
+ *  it is the on-disk catalog number, and AMC also uses it as the series grouping
+ *  key — a whole series shares one number — so the detail form exposes it
+ *  ("Number (#)"). Duplicates are expected and legal (schema.sql keeps no
+ *  UNIQUE(catalog_id, number) for exactly that reason); only CREATE assigns a
+ *  fresh number via nextMovieNumber(). */
 export async function updateMovie(
   env: Env,
   id: string,
   patch: Partial<MovieRow>,
 ): Promise<void> {
-  const editable = MOVIE_COLS.filter(
-    (c) => c !== "id" && c !== "catalog_id" && c !== "number",
-  );
-  const cols = editable.filter((c) => c in patch);
+  const editable = MOVIE_COLS.filter((c) => c !== "id" && c !== "catalog_id");
+  const clean = { ...patch } as Record<string, unknown>;
+  if ("number" in clean) {
+    const n = normalizeMovieNumber(clean.number);
+    if (n === null) delete clean.number;
+    else clean.number = n;
+  }
+  const cols = editable.filter((c) => c in clean);
   if (!cols.length) return;
   const set = cols.map((c) => `${c} = ?`).join(", ");
   await env.DB.prepare(`UPDATE movies SET ${set} WHERE id = ?`)
-    .bind(...cols.map((c) => (patch as Record<string, unknown>)[c]), id)
+    .bind(...cols.map((c) => clean[c]), id)
     .run();
 }
 

@@ -16,8 +16,9 @@ export function todayDelphi(nowMs: number): number {
   return Math.floor((nowMs - DELPHI_EPOCH_MS) / 86_400_000);
 }
 
-/** Columns a caller may set on create — everything except the server-owned
- *  identity/number/poster keys. Mirrors updateMovie's whitelist. */
+/** Columns a caller may set on create — everything except identity, the poster
+ *  keys, and `number` (create always takes the next free one via
+ *  nextMovieNumber; an edit may then change it, e.g. to join a series). */
 const CREATABLE: Array<keyof MovieRow> = [
   "date", "date_watched", "user_rating", "rating", "year", "length",
   "video_bitrate", "audio_bitrate", "disks", "color_tag", "checked",
