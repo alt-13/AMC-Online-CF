@@ -56,6 +56,17 @@
     </ul>
 
     <p v-if="error" class="text-danger text-sm basis-full">{{ error }}</p>
+
+    <!-- Themed replacement for native confirm()/prompt() on export + delete.
+         A fresh instance per ask (keyed) so the input field re-initialises. -->
+    <ConfirmDialog
+      v-if="dialog"
+      :key="dialogKey"
+      v-bind="dialog"
+      @confirm="(v?: string) => settleDialog('confirm', v)"
+      @discard="() => settleDialog('discard')"
+      @cancel="() => settleDialog('cancel')"
+    />
   </div>
 </template>
 
@@ -64,6 +75,7 @@ import { onMounted, ref, watch, defineAsyncComponent } from "vue";
 import Button from "primevue/button";
 import CatalogImport from "./CatalogImport.vue";
 import CloudSync from "./CloudSync.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
 // Lazy-loaded so the movie workspace (PrimeVue DataTable + virtual scroller) is
 // code-split into its own chunk and stays out of the entry bundle — it only
 // loads when a catalog is opened.
@@ -82,6 +94,43 @@ const openCatalog = ref<CatalogRow | null>(null);
 const loading = ref(true);
 const error = ref("");
 const deletingId = ref<string | null>(null);
+
+// --- themed confirm/prompt --------------------------------------------------
+// ConfirmDialog is event-based (emits confirm/discard/cancel), so `ask()` wraps
+// one instance in a promise: the export + delete flows `await ask(...)` in place
+// of the old blocking window.confirm()/prompt(). `dialogKey` forces a fresh
+// mount per ask so the input field re-seeds from `inputValue`.
+type DialogReq = {
+  title: string;
+  message?: string;
+  confirmLabel?: string;
+  discardLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  input?: boolean;
+  inputValue?: string;
+  inputPlaceholder?: string;
+  inputType?: string;
+};
+type DialogResult = { action: "confirm" | "discard" | "cancel"; value?: string };
+
+const dialog = ref<DialogReq | null>(null);
+const dialogKey = ref(0);
+let dialogResolve: ((r: DialogResult) => void) | null = null;
+
+function ask(req: DialogReq): Promise<DialogResult> {
+  return new Promise((resolve) => {
+    dialogKey.value++;
+    dialog.value = req;
+    dialogResolve = resolve;
+  });
+}
+function settleDialog(action: DialogResult["action"], value?: string) {
+  dialog.value = null;
+  const r = dialogResolve;
+  dialogResolve = null;
+  r?.({ action, value });
+}
 
 async function refresh() {
   loading.value = true;
@@ -139,27 +188,41 @@ async function onExport(c: CatalogRow) {
     await downloadLocal(c);
     return;
   }
-  const toCloud = confirm(
-    `Export "${c.name || "(untitled)"}":\n\nOK = upload to your cloud provider\nCancel = download the .amc file`,
-  );
-  if (!toCloud) {
+  const choice = await ask({
+    title: `Export "${c.name || "(untitled)"}"`,
+    message: "Upload this library to your cloud provider, or download the .amc file?",
+    confirmLabel: "Upload to cloud",
+    discardLabel: "Download .amc",
+    cancelLabel: "Cancel",
+  });
+  if (choice.action === "cancel") return;
+  if (choice.action === "discard") {
     await downloadLocal(c);
     return;
   }
+  // choice.action === "confirm" → upload to the active cloud provider.
   if (!cloudSession.connected) {
     error.value = "Connect a provider in the Cloud sync panel above, then press Export again.";
     return;
   }
   const provider = cloudSession.provider;
   const suggested = cloudSettings.providers[provider]?.path || `/${(c.name || "catalog")}.amc`;
-  const dest = prompt(`Upload path on ${provider}:`, suggested);
-  if (dest === null) return;
+  const destAsk = await ask({
+    title: `Upload path on ${provider}`,
+    input: true,
+    inputValue: suggested,
+    inputPlaceholder: "/path/to/library.amc",
+    confirmLabel: "Upload",
+    cancelLabel: "Cancel",
+  });
+  if (destAsk.action !== "confirm") return;
+  const dest = (destAsk.value ?? "").trim();
   busyId.value = c.id;
   busyKind.value = "export";
   busyLabel.value = "Building…";
   error.value = "";
   try {
-    const ref = await pushAdoptingOrigin(c, provider, dest.trim(), (d, t) => {
+    const ref = await pushAdoptingOrigin(c, provider, dest, (d, t) => {
       busyLabel.value = t ? `Posters ${d}/${t}` : "Uploading…";
     });
     try {
@@ -205,9 +268,14 @@ async function downloadLocal(c: CatalogRow) {
 
 async function onDelete(c: CatalogRow) {
   if (deletingId.value) return;
-  if (!confirm(`Delete "${c.name || "(untitled)"}" and all its movies and posters? This cannot be undone.`)) {
-    return;
-  }
+  const res = await ask({
+    title: "Delete library",
+    message: `Delete "${c.name || "(untitled)"}" and all its movies and posters? This cannot be undone.`,
+    confirmLabel: "Delete",
+    cancelLabel: "Cancel",
+    danger: true,
+  });
+  if (res.action !== "confirm") return;
   deletingId.value = c.id;
   error.value = "";
   try {
