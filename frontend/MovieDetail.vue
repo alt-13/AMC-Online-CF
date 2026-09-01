@@ -98,15 +98,18 @@
         </div>
 
         <div class="flex gap-1.5 items-start shrink-0 pt-1 max-md:flex-col max-md:gap-1 max-md:items-center">
-          <Button icon="pi pi-arrow-left" text class="hidden max-md:inline-flex" title="Back to list" @click="$emit('back')" />
-          <Button icon="pi pi-bolt" label="Fetch" text title="Fetch from OMDb" @click="omdbOpen = true" />
+          <!-- outlined, not text: these three were `.hbtn` (1px border in the
+               label's colour) before the PrimeVue migration, and outlined is
+               what the rest of the app uses for a secondary header action. -->
+          <Button icon="pi pi-arrow-left" outlined class="hidden max-md:inline-flex" title="Back to list" @click="$emit('back')" />
+          <Button icon="pi pi-bolt" label="Fetch" outlined title="Fetch from OMDb" @click="omdbOpen = true" />
           <Button
             :label="saving ? 'Saving…' : dirty ? 'Save' : 'Saved ✓'"
             :loading="saving"
             :disabled="saving || !dirty"
             @click="save"
           />
-          <Button icon="pi pi-trash" text severity="danger" title="Delete film" @click="deleteOpen = true" />
+          <Button icon="pi pi-trash" outlined severity="danger" title="Delete film" @click="deleteOpen = true" />
         </div>
       </div>
 

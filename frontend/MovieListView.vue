@@ -20,6 +20,9 @@
       <!-- Catalog bar: back to libraries + name + field/fetch actions.
            (Self-hosted keeps these in a global topbar; this view is per-catalog.) -->
       <div class="flex items-center gap-2 px-3 py-2.5 border-b border-border shrink-0">
+        <!-- Deliberately `text`, not `outlined`: the catalog bar is chrome, and
+             three bordered boxes flanking the title read heavier than the bar
+             needs. (The detail header's actions ARE outlined.) -->
         <Button icon="pi pi-arrow-left" text size="small" title="Back to libraries" @click="$emit('back')" />
         <span class="flex-1 min-w-0 font-display font-bold text-gold text-[1.05rem] tracking-wide truncate">
           {{ catalog.name || "(untitled)" }}

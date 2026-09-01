@@ -91,11 +91,25 @@ const CinemaPreset = definePreset(Aura, {
               color: "#c8c3d6", hoverBackground: "#2a2a48", activeBackground: "#3a3a60",
             },
           },
+          // An outlined button's border matches its own label/icon colour, the
+          // way the pre-PrimeVue `.hbtn` did (1px solid var(--c-gold), gold
+          // text). Aura instead borders one ramp step darker than the label
+          // ({primary.700} under a {primary.color} label), which on this dark
+          // navy reads as a muddy brown hairline. One rule, every severity, so
+          // "gold icon → gold border" holds wherever `outlined` is used.
           outlined: {
+            primary: { borderColor: "{primary.color}" },
             secondary: {
-              borderColor: "#2a2a48", color: "#c8c3d6",
+              borderColor: "#c8c3d6", color: "#c8c3d6",
               hoverBackground: "rgba(255,255,255,0.04)", activeBackground: "rgba(255,255,255,0.10)",
             },
+            success: { borderColor: "{green.400}" },
+            info: { borderColor: "{sky.400}" },
+            warn: { borderColor: "{orange.400}" },
+            help: { borderColor: "{purple.400}" },
+            danger: { borderColor: "{red.400}" },
+            contrast: { borderColor: "{surface.0}" },
+            plain: { borderColor: "{surface.0}" },
           },
         },
       },
