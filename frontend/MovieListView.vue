@@ -568,7 +568,15 @@ function onDeleted() {
 
 /* Compress the PrimeVue DataTable to the ~52px row geometry and apply the row
    hover/selection styling by hand (selection is manual, via rowClass). Scoped
-   :deep() is unlayered, so it wins over PrimeVue's `primevue` cascade layer. */
+   :deep() is unlayered, so it wins over PrimeVue's `primevue` cascade layer.
+   PrimeVue paints the row background on the <tr> (never the <td>), so the reset
+   below is what the manual rules have to beat.
+
+   Every manual rule keeps the full `.p-datatable-tbody > tr` shape on purpose:
+   a bare `.amc-row-sel` ties the reset on class count but loses on its extra
+   type selector, and `background: transparent` then swallowed the selected-row
+   highlight entirely (hover survived only because :hover + :not() pushed it one
+   class ahead). Same shape everywhere → source order decides, not arithmetic. */
 :deep(.movie-dt .p-datatable-thead) { display: none; }
 :deep(.movie-dt .p-datatable-tbody > tr) { background: transparent; }
 :deep(.movie-dt .p-datatable-tbody > tr > td) {
@@ -577,7 +585,7 @@ function onDeleted() {
   border-bottom: 1px solid var(--c-border);
   height: 52px;
 }
-:deep(.movie-dt .amc-row) { cursor: pointer; transition: background 0.15s; }
-:deep(.movie-dt .amc-row:hover:not(.amc-row-sel)) { background: var(--c-elevated); }
-:deep(.movie-dt .amc-row-sel) { background: var(--c-gold-dim); }
+:deep(.movie-dt .p-datatable-tbody > tr.amc-row) { cursor: pointer; transition: background 0.15s; }
+:deep(.movie-dt .p-datatable-tbody > tr.amc-row:hover:not(.amc-row-sel)) { background: var(--c-elevated); }
+:deep(.movie-dt .p-datatable-tbody > tr.amc-row-sel) { background: var(--c-gold-dim); }
 </style>
