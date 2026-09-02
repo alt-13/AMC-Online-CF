@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch, defineAsyncComponent } from "vue";
+import { onMounted, ref, watch, defineAsyncComponent, h } from "vue";
 import Button from "primevue/button";
 import CatalogImport from "./CatalogImport.vue";
 import CloudSync from "./CloudSync.vue";
@@ -79,7 +79,39 @@ import ConfirmDialog from "./ConfirmDialog.vue";
 // Lazy-loaded so the movie workspace (PrimeVue DataTable + virtual scroller) is
 // code-split into its own chunk and stays out of the entry bundle — it only
 // loads when a catalog is opened.
-const MovieListView = defineAsyncComponent(() => import("./MovieListView.vue"));
+//
+// The fallbacks are not optional polish: the catalog list is already hidden by
+// `v-if="openCatalog"` while this resolves, so a bare loader shows a blank
+// screen for the whole download on a slow link, and a chunk that 404s (a tab
+// left open across a redeploy, since the filename is content-hashed) fails
+// silently and blanks the app for good. `delay: 150` keeps the spinner from
+// flashing on a warm cache.
+// Render functions, not `template:` strings — the build pulls in Vue's
+// runtime-only bundle, which has no template compiler.
+const LoadingWorkspace = () =>
+  h("div", { class: "min-h-dvh flex items-center justify-center gap-2 text-muted text-sm" }, [
+    h("i", { class: "pi pi-spin pi-spinner" }),
+    "Loading workspace…",
+  ]);
+
+const WorkspaceLoadFailed = () =>
+  h("div", { class: "min-h-dvh flex flex-col items-center justify-center gap-3 p-6 text-center" }, [
+    h("i", { class: "pi pi-exclamation-triangle text-2xl text-danger" }),
+    h("p", { class: "m-0 text-sm text-text" }, "Couldn't load the movie workspace."),
+    h("p", { class: "m-0 text-xs text-muted" },
+      "This usually means the app was updated in the background. Reload to pick up the new version."),
+    h("button", {
+      class: "mt-1 px-3 py-1.5 rounded-md border border-border-hi bg-elevated text-text text-sm cursor-pointer hover:border-gold",
+      onClick: () => window.location.reload(),
+    }, "Reload"),
+  ]);
+
+const MovieListView = defineAsyncComponent({
+  loader: () => import("./MovieListView.vue"),
+  delay: 150, // don't flash a spinner when the chunk is already cached
+  loadingComponent: LoadingWorkspace,
+  errorComponent: WorkspaceLoadFailed,
+});
 import { cf, downloadAmcFile, session, type CatalogRow } from "./api";
 import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, switchProvider, CloudLoginRequiredError, cloudSettings } from "./cloud";
 import { pushView, goBack } from "./nav";
