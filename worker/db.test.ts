@@ -7,7 +7,7 @@
 // edit must reach D1.
 
 import { describe, it, expect } from "vitest";
-import { updateMovie, normalizeMovieNumber, type Env } from "./db";
+import { updateMovie, normalizeMovieNumber, MAX_MOVIE_NUMBER, type Env } from "./db";
 
 /** Minimal D1 stand-in: records the SQL + bound values of every statement. */
 function fakeEnv() {
@@ -72,6 +72,20 @@ describe("normalizeMovieNumber", () => {
     expect(normalizeMovieNumber("42")).toBe(42);
     expect(normalizeMovieNumber(2.7)).toBe(2);
     expect(normalizeMovieNumber(-5)).toBe(0);
+  });
+
+  // The exporter writes `number` with setInt32(v | 0), which wraps silently, so
+  // anything wider than int32 would come back out of the .amc as a negative.
+  it("clamps to what the .amc int32 field can actually hold", () => {
+    expect(normalizeMovieNumber(MAX_MOVIE_NUMBER)).toBe(MAX_MOVIE_NUMBER);
+    expect(normalizeMovieNumber(3_000_000_000)).toBe(MAX_MOVIE_NUMBER);
+    expect(normalizeMovieNumber(Number.MAX_SAFE_INTEGER)).toBe(MAX_MOVIE_NUMBER);
+    expect(normalizeMovieNumber("9999999999")).toBe(MAX_MOVIE_NUMBER);
+    // Whatever survives normalization must survive the int32 round-trip.
+    for (const v of [0, 1, 2.7, -5, 3_000_000_000, Number.MAX_SAFE_INTEGER]) {
+      const n = normalizeMovieNumber(v)!;
+      expect(n | 0).toBe(n);
+    }
   });
 
   it("rejects values that cannot go in a NOT NULL INTEGER column", () => {

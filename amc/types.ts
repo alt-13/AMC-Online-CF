@@ -105,6 +105,14 @@ export interface AMCCatalog {
   movies: AMCMovie[];
 }
 
+/** The widest value an int32 field (`w.i32` in parser.ts) can round-trip. The
+ *  writer does `setInt32(v | 0)`, which WRAPS silently rather than throwing, so
+ *  anything wider would come back out of the .amc as a negative. Anything that
+ *  lets a user type into an int32-backed column (today: `movies.number`) has to
+ *  clamp against this before it reaches storage — see rule 1, round-trip
+ *  fidelity. */
+export const MAX_INT32 = 2_147_483_647;
+
 export const HEADER_LEN = 65;
 
 /** Known 65-byte ASCII version headers (mirror of HEADERS in amc_file.py). */

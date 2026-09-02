@@ -10,6 +10,7 @@ import type {
   MovieRow,
   ImportResult,
 } from "../amc/mapping";
+import { MAX_INT32 } from "../amc/types";
 
 export type ExtraRow = ImportResult["extras"][number];
 
@@ -426,6 +427,12 @@ export async function getAllExtras(
   return results ?? [];
 }
 
+/** The widest `number` the .amc format can hold. `movies.number` is written back
+ *  out as a signed int32, which wraps silently, so a larger value would land in
+ *  the exported file as a negative. Clamped here, at the storage boundary, so D1
+ *  can never hold a number the exporter cannot write (rule 1). */
+export const MAX_MOVIE_NUMBER = MAX_INT32;
+
 /** Coerce a client-sent `movies.number` to something storable, or null when the
  *  value is unusable and the column should be left alone. The column is
  *  `INTEGER NOT NULL`, so binding a null/NaN would fail the whole save. */
@@ -435,17 +442,20 @@ export function normalizeMovieNumber(v: unknown): number | null {
     : typeof v === "string" && v.trim() !== "" ? Number(v)
     : NaN;
   if (!Number.isFinite(n)) return null;
-  return Math.max(0, Math.trunc(n));
+  return Math.min(Math.max(0, Math.trunc(n)), MAX_MOVIE_NUMBER);
 }
 
 /** Update a whitelisted set of scalar movie columns.
  *
  *  `id`/`catalog_id` are identity and stay server-owned. `number` IS editable:
- *  it is the on-disk catalog number, and AMC also uses it as the series grouping
- *  key — a whole series shares one number — so the detail form exposes it
- *  ("Number (#)"). Duplicates are expected and legal (schema.sql keeps no
- *  UNIQUE(catalog_id, number) for exactly that reason); only CREATE assigns a
- *  fresh number via nextMovieNumber(). */
+ *  it is the on-disk catalog number, and users lean on it as a grouping key
+ *  (one common convention parks every series under a single number so they sort
+ *  together), so the detail form exposes it as "Number (#)". Duplicates are
+ *  therefore expected and legal — schema.sql keeps no UNIQUE(catalog_id, number)
+ *  for exactly that reason. What counts as a "series" is a per-catalog
+ *  convention, NOT something this layer defines: the frontend asks the user for
+ *  the rule (see `SeriesRule` in frontend/fields.ts). Only CREATE assigns a
+ *  fresh number, via nextMovieNumber(). */
 export async function updateMovie(
   env: Env,
   id: string,

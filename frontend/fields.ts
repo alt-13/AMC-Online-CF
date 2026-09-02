@@ -6,6 +6,12 @@
 // here lets MovieDetail, SettingsDialog and MovieListView agree without a store.
 
 import type { MovieRow, CustomFieldDefRow } from "./api";
+import { MAX_INT32 } from "../amc/types";
+
+/** The widest value `movies.number` can hold and still round-trip through the
+ *  .amc int32 field. Re-exported here so the form can bound its input without
+ *  reaching into worker code. */
+export const MAX_MOVIE_NUMBER = MAX_INT32;
 
 export interface FieldDef {
   key: string; // MovieRow column, or "custom_<tag>", or a synthetic ("extras")

@@ -277,9 +277,9 @@
             </div>
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('series_number')">
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal" title="Series grouping number — entries sharing the same number are listed as a series">Number (#)</label>
-              <InputText type="number" min="0" class="w-full" size="small"
+              <InputText type="number" min="0" :max="MAX_MOVIE_NUMBER" class="w-full" size="small"
                 :modelValue="String(form.number)"
-                @update:modelValue="(v: string | undefined) => form.number = v ? Number(v) : 0" />
+                @update:modelValue="(v: string | undefined) => setNumber(v ?? '')" />
             </div>
 
             <!-- Custom fields -->
@@ -500,7 +500,7 @@ import { cf, session, type MovieRow, type CustomFieldDefRow, type Extra } from "
 import OmdbDialog from "./OmdbDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import {
-  isVisible, parseCustom, delphiToDate, dateToDelphi, SENTINEL,
+  isVisible, parseCustom, delphiToDate, dateToDelphi, SENTINEL, MAX_MOVIE_NUMBER,
   COLOR_TAG_COLORS, COLOR_TAG_NAMES, type AppSettings,
 } from "./fields";
 
@@ -700,6 +700,16 @@ const num = (k: string) => Number((form as Record<string, unknown>)[k] ?? 0);
 const numOrBlank = (k: string) => (num(k) === SENTINEL ? "" : num(k));
 function setInt(k: string, v: string) {
   (form as Record<string, unknown>)[k] = v === "" ? SENTINEL : parseInt(v, 10) || 0;
+}
+// `number` is not a SENTINEL field — blank means 0, not "unset". Guard both ends:
+// a non-numeric paste must not leave NaN sitting in the form (it would render as
+// "NaN" until reload), and the value has to stay inside what the .amc's int32
+// field can round-trip — the Worker clamps too, this just keeps the input honest.
+function setNumber(v: string) {
+  const n = Number(v);
+  form.number = v === "" || !Number.isFinite(n)
+    ? 0
+    : Math.min(Math.max(0, Math.trunc(n)), MAX_MOVIE_NUMBER);
 }
 // <DatePicker> binds a Date; the row stores a Delphi day number.
 const dateAdded = computed<Date | null>({
