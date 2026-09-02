@@ -5,7 +5,7 @@
   binary side-effects and persist immediately; text edits wait for Save.
 
   Layout is a deliberate visual match of the self-hosted MovieForm.vue: the same
-  header (inline poster + meta pills + rating badges + watched toggle + colour
+  header (inline poster + meta pills + rating badges + watched badge + colour
   dot), the same two-column body in the same field order, and the same 4-column
   media grid — built on PrimeVue form controls + inline Tailwind utilities so it
   matches the themed CinemaPreset look.
@@ -81,15 +81,21 @@
                 {{ (form.user_rating / 10).toFixed(1) }}
                 <span class="font-light text-[0.7rem] text-muted">mine</span>
               </div>
-              <!-- The only Watched control left (the form row is gone): the flag
-                   normally follows Date Watched, and this toggles it by hand for
-                   a film watched on an unknown date. Gated on the same
-                   visibility setting the removed row used. -->
+              <!-- Watched is a READ-ONLY badge: Date Watched decides the flag
+                   (see `dateWatched`), so there is nothing to click. It is NOT
+                   `max-md:hidden` — the old form row was the mobile-reachable
+                   control and it is gone, so hiding this too would leave a phone
+                   with no watched indicator at all. It reads the stored flag
+                   rather than the date, so a legacy row ticked in the Delphi app
+                   without a date still reads "Watched" and still exports as
+                   watched. -->
               <div
                 v-show="showField('checked')"
-                class="flex items-center gap-1 text-[0.78rem] text-muted cursor-pointer px-2 py-[0.2rem] rounded-[10px] border border-border transition-colors hover:border-gold hover:text-gold max-md:hidden"
-                :title="form.checked ? 'Mark as unwatched' : 'Mark as watched'"
-                @click="form.checked = form.checked ? 0 : 1"
+                class="flex items-center gap-1 text-[0.78rem] px-2 py-[0.2rem] rounded-[10px] border border-border select-none"
+                :class="form.checked ? 'text-success border-success/40' : 'text-muted'"
+                :title="form.checked
+                  ? 'Watched — set by Date Watched'
+                  : 'Not watched — set a Date Watched to mark it'"
               >
                 <i :class="form.checked ? 'pi pi-eye' : 'pi pi-eye-slash'" />
                 <span>{{ form.checked ? "Watched" : "Unwatched" }}</span>
@@ -239,8 +245,8 @@
               <InputText v-model="form.certification" class="w-full" size="small" />
             </div>
             <!-- No "Watched" checkbox: the flag is derived from Date Watched
-                 (set it → watched, clear it → unwatched, see `dateWatched`) with the
-                 header pill as the manual override for a date-less watch. -->
+                 (set it → watched, clear it → unwatched, see `dateWatched`). The
+                 header badge shows the result and is read-only. -->
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('color_tag')">
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Color Tag</label>
               <Select
