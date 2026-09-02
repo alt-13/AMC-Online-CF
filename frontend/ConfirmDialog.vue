@@ -2,7 +2,11 @@
   ConfirmDialog.vue — a themed, non-blocking confirm overlay used in place of the
   native window.confirm() (which freezes the whole tab). Built on PrimeVue Dialog,
   which owns the teleport-to-body, modal mask, Esc-to-close and focus trap.
-  Backdrop click and Esc both cancel.
+  Backdrop click and Esc both cancel — but only while `busy` is false: PrimeVue
+  gates the mask on `dismissableMask` and Esc on `closeOnEscape`, and NEITHER
+  consults `closable` (that only hides the header X), so all three have to be
+  driven off `busy` together. Otherwise an Esc during "Save & continue" cancels
+  the pending navigation out from under a save that is still in flight.
 
   One component, all shapes handled by Dialog's own responsive breakpoints.
 
@@ -15,9 +19,10 @@
   <Dialog
     :visible="true"
     modal
-    dismissable-mask
     :header="title"
     :closable="!busy"
+    :dismissable-mask="!busy"
+    :close-on-escape="!busy"
     :style="{ width: '420px' }"
     :breakpoints="{ '760px': '95vw' }"
     @update:visible="(v: boolean) => { if (!v) $emit('cancel'); }"
