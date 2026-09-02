@@ -24,9 +24,16 @@
              three bordered boxes flanking the title read heavier than the bar
              needs. (The detail header's actions ARE outlined.) -->
         <Button icon="pi pi-arrow-left" text size="small" title="Back to libraries" @click="$emit('back')" />
-        <span class="flex-1 min-w-0 font-display font-bold text-gold text-[1.05rem] tracking-wide truncate">
+        <span class="min-w-0 font-display font-bold text-gold text-[1.05rem] tracking-wide truncate">
           {{ catalog.name || "(untitled)" }}
         </span>
+        <!-- Counts, as in the self-hosted topbar: a "series" is an entry whose
+             on-disk number is 1 (the Delphi app's grouping convention). -->
+        <span v-if="!loading" class="flex-1 flex items-center gap-3 shrink min-w-0 text-[0.8rem] text-muted whitespace-nowrap">
+          <span>{{ filmCount }} films</span>
+          <span>{{ seriesCount }} series</span>
+        </span>
+        <span v-else class="flex-1" />
         <div class="flex gap-1.5 shrink-0">
           <Button icon="pi pi-cog" text size="small" title="Field settings" @click="settingsOpen = true" />
           <Button icon="pi pi-bolt" text size="small" title="Fetch from OMDb → new film" @click="omdbOpen = true" />
@@ -298,6 +305,11 @@ watch(searchInput, (val) => {
   if (!val) { q.value = ""; return; }
   searchTimer = setTimeout(() => { q.value = val; }, 250);
 });
+
+// A movie whose on-disk number is 1 is a series entry (the same rule the
+// self-hosted store uses for `is_series`); everything else counts as a film.
+const seriesCount = computed(() => movies.value.filter((m) => m.number === 1).length);
+const filmCount = computed(() => movies.value.length - seriesCount.value);
 
 // Sort by number descending (newest first), matching the self-hosted list, then
 // filter client-side over that order.
