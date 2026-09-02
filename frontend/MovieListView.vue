@@ -98,6 +98,7 @@
         </div>
         <DataTable
           v-else
+          ref="dt"
           :value="filtered"
           dataKey="id"
           scrollable
@@ -119,7 +120,11 @@
           </Column>
           <Column headerStyle="width:28px" bodyStyle="width:28px">
             <template #body="{ data }">
-              <span class="block w-7 h-10 overflow-hidden rounded-sm bg-elevated" @vue:mounted="loadThumb(data)">
+              <span
+                class="block w-7 h-10 overflow-hidden rounded-sm bg-elevated"
+                @vue:mounted="loadThumb(data)"
+                @vue:unmounted="dropThumb(data)"
+              >
                 <img v-if="thumbs[data.id]" :src="thumbs[data.id]" class="w-full h-full object-cover" alt="" />
                 <span v-else class="w-full h-full flex items-center justify-center text-border-hi text-xs"><i class="pi pi-image" /></span>
               </span>
@@ -295,6 +300,8 @@ function finishConfirm() {
 const thumbs = reactive<Record<string, string>>({});
 const objectUrls: string[] = [];
 
+const dt = ref<{ $el?: HTMLElement } | null>(null);
+
 // Search: `searchInput` tracks keystrokes; `q` is debounced 250 ms and drives the
 // filter (clearing is immediate) — same behaviour as the self-hosted MovieList.
 const searchInput = ref("");
@@ -305,6 +312,19 @@ watch(searchInput, (val) => {
   if (!val) { q.value = ""; return; }
   searchTimer = setTimeout(() => { q.value = val; }, 250);
 });
+
+// A new search should land you on the first match. PrimeVue's VirtualScroller
+// re-init()s when the row count changes but never touches scrollTop (it only
+// gets clamped to the new maximum), so searching from deep in a 2880-row catalog
+// would drop you at the END of the result set. Reset it by hand, after the
+// re-render so the ref is live even when the table was hidden by the empty state.
+watch(q, () => {
+  const root = dt.value?.$el;
+  const scroller =
+    root?.querySelector<HTMLElement>(".p-virtualscroller") ??
+    root?.querySelector<HTMLElement>(".p-datatable-table-container");
+  if (scroller) scroller.scrollTop = 0;
+}, { flush: "post" });
 
 // A movie whose on-disk number is 1 is a series entry (the same rule the
 // self-hosted store uses for `is_series`); everything else counts as a film.
@@ -389,27 +409,44 @@ function onRowClick(e: { data: MovieRow }) {
 }
 
 // Lazy thumbnails: fetch a poster only for rows currently on screen, and cap how
-// many are in flight at once. `loadThumb` is called from the poster cell's
-// `@vue:mounted`, so it fires exactly when a row scrolls into view (the virtual
-// scroller only mounts visible rows). Without the cap, fast-scrolling a large
-// catalog would fire a request for every row it passes — hundreds of pending
-// fetches that saturate the browser's per-host connection pool and stall the
-// detail pane when you click a row. The cap is kept below the ~6-per-host browser
-// limit so the detail pane always has a free connection.
+// many are in flight at once. The poster cell's `@vue:mounted`/`@vue:unmounted`
+// bracket exactly the time a row spends inside the virtual scroller's window, so
+// `onScreen` IS the visible set.
+//
+// Queueing alone is not enough — the queue must also FORGET rows that scrolled
+// away. Drag the scrollbar across a few thousand rows and every row it passes
+// mounts once, so the queue fills with rows nobody is looking at any more; drain
+// it blindly and the posters for the rows actually on screen sit at the back and
+// load last, while the pool stays saturated and the detail pane's
+// getMovie/poster request queues behind all of it. Dropping stale ids at drain
+// time is what keeps on-screen posters winning the slots. The cap is kept below
+// the ~6-per-host browser limit so the detail pane always has a free connection.
 const MAX_CONCURRENT_THUMBS = 4;
 const requested = new Set<string>(); // loaded or in flight — never fetched twice
+const onScreen = new Set<string>(); // currently mounted by the virtual scroller
+const queued = new Set<string>(); // in `thumbQueue`, waiting for a slot
 let thumbQueue: MovieRow[] = [];
 let activeThumbs = 0;
 
 function loadThumb(m: MovieRow) {
-  if (!m.poster_key || thumbs[m.id] || requested.has(m.id)) return;
+  onScreen.add(m.id);
+  if (!m.poster_key || thumbs[m.id] || requested.has(m.id) || queued.has(m.id)) return;
+  queued.add(m.id);
   thumbQueue.push(m);
   pumpThumbs();
+}
+
+// A row left the scroller's window. Its queue entry stays put and is skipped on
+// drain (cheaper than splicing); scrolling back re-mounts it and re-queues it.
+function dropThumb(m: MovieRow) {
+  onScreen.delete(m.id);
 }
 
 function pumpThumbs() {
   while (activeThumbs < MAX_CONCURRENT_THUMBS && thumbQueue.length) {
     const m = thumbQueue.shift()!;
+    queued.delete(m.id);
+    if (!onScreen.has(m.id)) continue; // scrolled away before a slot freed
     if (!m.poster_key || thumbs[m.id] || requested.has(m.id)) continue;
     requested.add(m.id);
     activeThumbs++;
