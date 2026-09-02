@@ -21,14 +21,25 @@
       <!-- ── Header ── -->
       <div
         class="flex items-start justify-between gap-4 px-5 pt-4 pb-3 bg-surface border-b border-border shrink-0
-               max-md:items-center max-md:px-3 max-md:py-2 max-md:max-h-[20vh] max-md:overflow-hidden"
+               max-md:items-center max-md:gap-2 max-md:px-2 max-md:py-1.5 max-md:max-h-[20vh] max-md:overflow-hidden"
       >
-        <div class="flex gap-4 flex-1 min-w-0 max-md:items-center max-md:gap-2 max-md:overflow-hidden">
-          <!-- Poster panel (inline, 110×160) -->
-          <div class="flex flex-col items-center gap-1.5 w-[110px] shrink-0">
+        <!-- Poster ↔ title gap is fluid, not a breakpoint step: `main`'s
+             `.header-left` used a flat 1rem that dropped to 0.5rem under 768px,
+             and at both ends the poster read as glued to the title. `clamp()`
+             in one declaration gives 12px on the narrowest phone, ~17px at the
+             breakpoint and 28px on a wide screen — a flex `gap` rather than a
+             margin on the poster so the spacing stays a property of the row and
+             survives the `max-md` reflow. -->
+        <div class="flex gap-[clamp(0.75rem,2.2vw,1.75rem)] flex-1 min-w-0 max-md:items-center max-md:overflow-hidden">
+          <!-- Poster panel (inline, 110×160; 64×92 on mobile).
+               `max-md:w-auto`: the 110px is the DESKTOP poster's own width, and
+               on mobile the poster is 64px wide with the buttons/message below
+               it hidden — so a fixed 110px reserved ~46px of dead column that
+               the title/meta stack needs. -->
+          <div class="flex flex-col items-center gap-1.5 w-[110px] shrink-0 max-md:w-auto">
             <div
               class="group relative w-[110px] h-[160px] rounded-md overflow-hidden bg-elevated border border-border
-                     cursor-pointer transition-colors hover:border-gold max-md:w-12 max-md:h-[70px] max-md:shrink-0"
+                     cursor-pointer transition-colors hover:border-gold max-md:w-16 max-md:h-[92px] max-md:shrink-0"
               @click="posterSrc ? (lightboxOpen = true) : triggerUpload()"
             >
               <img v-if="posterSrc" :src="posterSrc" class="w-full h-full object-cover block" alt="Movie poster" />
@@ -71,27 +82,34 @@
               <span v-if="form.director" class="text-[0.72rem] text-muted bg-elevated border border-border px-[0.45rem] py-[0.1rem] rounded-[10px] max-md:hidden">Dir. {{ form.director }}</span>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
-              <div v-if="form.rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-gold">
-                <i class="pi pi-star-fill text-[0.7rem]" />
+              <!-- On mobile the two score pills lose their "score"/"mine" word
+                   and most of their padding: the star/person glyph already says
+                   which is which, and at full size the pair plus the meta pills
+                   crowded the title out of the header. -->
+              <div v-if="form.rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-gold
+                          max-md:gap-0.5 max-md:px-1.5 max-md:py-0 max-md:text-[0.72rem]">
+                <i class="pi pi-star-fill text-[0.7rem] max-md:text-[0.6rem]" />
                 {{ (form.rating / 10).toFixed(1) }}
-                <span class="font-light text-[0.7rem] text-muted">score</span>
+                <span class="font-light text-[0.7rem] text-muted max-md:hidden">score</span>
               </div>
-              <div v-if="form.user_rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-[#7ec8e3]">
-                <i class="pi pi-user text-[0.7rem]" />
+              <div v-if="form.user_rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-[#7ec8e3]
+                          max-md:gap-0.5 max-md:px-1.5 max-md:py-0 max-md:text-[0.72rem]">
+                <i class="pi pi-user text-[0.7rem] max-md:text-[0.6rem]" />
                 {{ (form.user_rating / 10).toFixed(1) }}
-                <span class="font-light text-[0.7rem] text-muted">mine</span>
+                <span class="font-light text-[0.7rem] text-muted max-md:hidden">mine</span>
               </div>
               <!-- Watched is a READ-ONLY badge: Date Watched decides the flag
-                   (see `dateWatched`), so there is nothing to click. It is NOT
-                   `max-md:hidden` — the old form row was the mobile-reachable
-                   control and it is gone, so hiding this too would leave a phone
-                   with no watched indicator at all. It reads the stored flag
-                   rather than the date, so a legacy row ticked in the Delphi app
-                   without a date still reads "Watched" and still exports as
-                   watched. -->
+                   (see `dateWatched`), so there is nothing to click. It reads the
+                   stored flag rather than the date, so a legacy row ticked in
+                   the Delphi app without a date still reads "Watched" and still
+                   exports as watched.
+                   `max-md:hidden` because it is the widest pill in the header
+                   and the one a phone least needs: the list row already carries
+                   the same `pi pi-eye` marker for every watched film, and Date
+                   Watched (the actual control) is right below in the form. -->
               <div
                 v-show="showField('checked')"
-                class="flex items-center gap-1 text-[0.78rem] px-2 py-[0.2rem] rounded-[10px] border border-border select-none"
+                class="flex items-center gap-1 text-[0.78rem] px-2 py-[0.2rem] rounded-[10px] border border-border select-none max-md:hidden"
                 :class="form.checked ? 'text-success border-success/40' : 'text-muted'"
                 :title="form.checked
                   ? 'Watched — set by Date Watched'
@@ -109,12 +127,32 @@
           </div>
         </div>
 
-        <div class="flex gap-1.5 items-start shrink-0 pt-1 max-md:flex-col max-md:gap-1 max-md:items-center">
+        <!-- Mobile: a 2x2 grid of compact buttons, not the old 4-tall column.
+             A PrimeVue Button defaults to ~40px tall against the ~30px `.hbtn`
+             it replaced, so four of them stacked overran the header's 20vh cap
+             and got clipped; two rows of 32px clears it and stays narrower than
+             a column of full-size buttons is wide. The `[&>button]` rules size
+             all four at once (`w-full` because `.p-button-icon-only` pins an
+             explicit 2.5rem width that would otherwise ignore the grid track). -->
+        <div
+          class="flex gap-1.5 items-start shrink-0 pt-1
+                 max-md:grid max-md:grid-cols-2 max-md:gap-1 max-md:pt-0
+                 max-md:[&>button]:h-8 max-md:[&>button]:w-full max-md:[&>button]:px-1.5 max-md:[&>button]:text-xs"
+        >
           <!-- outlined, not text: these three were `.hbtn` (1px border in the
                label's colour) before the PrimeVue migration, and outlined is
                what the rest of the app uses for a secondary header action. -->
           <Button icon="pi pi-arrow-left" outlined class="hidden max-md:inline-flex" title="Back to list" @click="$emit('back')" />
-          <Button icon="pi pi-bolt" label="Fetch" outlined title="Fetch from OMDb" @click="omdbOpen = true" />
+          <!-- Icon-only on mobile: "Fetch" is the widest of the four labels and
+               the bolt glyph is the same one the catalog bar uses for OMDb. -->
+          <Button
+            icon="pi pi-bolt"
+            label="Fetch"
+            outlined
+            class="max-md:gap-0 max-md:[&_.p-button-label]:hidden"
+            title="Fetch from OMDb"
+            @click="omdbOpen = true"
+          />
           <Button
             :label="saving ? 'Saving…' : dirty ? 'Save' : 'Saved ✓'"
             :loading="saving"

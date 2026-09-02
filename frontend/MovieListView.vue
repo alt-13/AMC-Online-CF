@@ -111,7 +111,12 @@
           class="movie-dt text-sm"
           @row-click="onRowClick"
         >
-          <Column headerStyle="width:4px" bodyStyle="width:4px">
+          <!-- Colour tag. 12px = the 4px bar + the td's own 0 4px padding: these
+               widths are BORDER-box (preflight), and under `table-layout: fixed`
+               a cell can no longer grow past them, so anything that leaves out
+               the padding overflows into the next column. 4px content also puts
+               the bar at x=4, matching the self-hosted row's padding-left. -->
+          <Column headerStyle="width:12px" bodyStyle="width:12px">
             <template #body="{ data }">
               <span
                 class="block w-1 h-8 rounded-sm"
@@ -120,7 +125,8 @@
               />
             </template>
           </Column>
-          <Column headerStyle="width:28px" bodyStyle="width:28px">
+          <!-- Poster thumb: 28px image + 8px padding. -->
+          <Column headerStyle="width:36px" bodyStyle="width:36px">
             <template #body="{ data }">
               <span
                 class="block w-7 h-10 overflow-hidden rounded-sm bg-elevated"
@@ -146,7 +152,9 @@
           <Column headerStyle="width:3rem" bodyStyle="width:3rem">
             <template #body="{ data }"><span class="text-sm text-muted tabular-nums text-center block">{{ data.year > 0 ? data.year : "" }}</span></template>
           </Column>
-          <Column headerStyle="width:2.5rem" bodyStyle="width:2.5rem">
+          <!-- 3rem, not 2.5rem: a 2-digit "10.0" needs ~34px and the 8px padding
+               eats into it. -->
+          <Column headerStyle="width:3rem" bodyStyle="width:3rem">
             <template #body="{ data }"><span class="text-sm font-semibold text-gold tabular-nums text-right block">{{ data.rating > 0 ? (data.rating / 10).toFixed(1) : "" }}</span></template>
           </Column>
           <Column headerStyle="width:1.5rem" bodyStyle="width:1.5rem">
@@ -628,6 +636,30 @@ function onDeleted() {
    highlight entirely (hover survived only because :hover + :not() pushed it one
    class ahead). Same shape everywhere → source order decides, not arithmetic. */
 :deep(.movie-dt .p-datatable-thead) { display: none; }
+
+/* No horizontal scrollbar, ever — the list must clip long titles, not slide.
+   The hand-rolled CSS-grid rows this DataTable replaced could not overflow: a
+   grid item honours `min-width: 0`, so `1fr` shrank below the title's width and
+   `text-overflow: ellipsis` did the rest. A TABLE cell does not — auto table
+   layout sizes the column from its content's *min-content* width, which for a
+   `white-space: nowrap` title is the whole string (overflow/min-width on the
+   inner span don't reduce that contribution). The table then grows past its
+   container and PrimeVue's inline `overflow: auto` on the scroll container
+   turns the excess into a horizontal scrollbar — worst on a phone, where the
+   pane is the whole viewport.
+
+   `table-layout: fixed` restores the grid behaviour: with `showHeaders=false`
+   there is no <thead>, so the widths come from the first body row's bodyStyle
+   (12px · 36px · auto · 3rem · 3rem · 1.5rem) and the title column gets
+   whatever is left. Those are BORDER-box widths that each cover the 0 4px td
+   padding below — a fixed cell cannot grow to fit its content the way an auto
+   one does, so a width that omits the padding overflows into the next column.
+   The overflow-x kills are belt-and-braces (and need `!important` only because
+   tableContainer's `overflow: auto` is inline). */
+:deep(.movie-dt .p-datatable-table) { table-layout: fixed; }
+:deep(.movie-dt .p-datatable-table-container),
+:deep(.movie-dt .p-virtualscroller) { overflow-x: hidden !important; }
+
 :deep(.movie-dt .p-datatable-tbody > tr) { background: transparent; }
 :deep(.movie-dt .p-datatable-tbody > tr > td) {
   padding: 0 4px;
