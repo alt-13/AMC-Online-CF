@@ -68,7 +68,7 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── transcode.ts    ← detectEncoding + toReadable(import)/toRaw(export): legacy bytes ↔ readable D1-safe Unicode (rule 5)
 │   └── mapping.ts      ← catalogToRows (import) / rowsToCatalog (export); the poster→R2 split
 ├── schema.sql          ← D1 BASELINE: users, catalogs, custom_field_defs, movies, movie_extras, movies_fts, user_cloud, user_settings
-├── migrations/         ← incremental deltas applied via `wrangler d1 migrations apply` (0001 adds catalogs.text_encoding)
+├── migrations/         ← incremental deltas applied via `wrangler d1 migrations apply` (0001 catalogs.text_encoding, 0002 multi-provider user_cloud)
 ├── worker/
 │   ├── index.ts        ← /api/* router: auth gate + CRUD + create + import/export + poster + /api/cloud + omdb + settings + proxy-image
 │   ├── auth.ts         ← WebCrypto PBKDF2 password hashing + HS256 JWT + refresh cookie
@@ -82,19 +82,26 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   └── mega.ts         ← megajs login + fingerprinted up/download + folder-path helpers
 ├── frontend/
 │   ├── api.ts          ← auth (status/register/login/refresh/logout) + session + metadata client (incl. create/setPictureFromUrl) + omdb + settings + cloud config + re-exports
-│   ├── fields.ts       ← shared field metadata: sections/labels, Delphi-date + colour-tag + custom-value helpers (no store)
-│   ├── mega.ts         ← bridge: Mega ↔ import/export; per-user cloud config + remember-me
-│   ├── MegaSync.vue        ← provider picker + connect + list + import; auto-reconnect
+│   ├── fields.ts       ← shared field metadata: sections/labels, Delphi-date + colour-tag + custom-value helpers, AppSettings + SeriesRule/countSeries (no store)
+│   ├── cloud.ts        ← bridge: cloud provider ↔ import/export; per-user cloud config + remember-me
+│   ├── cloudref.ts     ← catalog ↔ remote-file reference bookkeeping
+│   ├── amccache.ts     ← Cache Storage for downloaded .amc blobs (pruned on boot)
+│   ├── nav.ts          ← history-stack helper so hardware Back closes a view, not the app
+│   ├── wakelock.ts     ← hold a screen wake lock across long imports/exports
+│   ├── theme.css       ← Tailwind `@theme` palette + the var(--c-*) back-compat aliases
+│   ├── main.ts         ← app bootstrap + the PrimeVue `CinemaPreset` (Aura preset, dark-only)
+│   ├── CloudSync.vue       ← provider picker + connect + list + import; auto-reconnect
 │   ├── CatalogImport.vue   ← drag/drop upload with poster+row progress
 │   ├── CatalogsView.vue    ← top-level screen: import, list catalogs, export/→Mega, drill into a library
 │   ├── MovieListView.vue   ← two-pane workspace for one catalog: virtualized PrimeVue DataTable (search, create, field-settings) + MovieDetail; lazy-loaded chunk
 │   ├── MovieDetail.vue     ← edit one movie: poster (upload/URL/OMDb), every field (visibility-aware), custom fields, delete
 │   ├── OmdbDialog.vue      ← search IMDb, pick a title, fetch OMDb → patch + poster URL
-│   └── SettingsDialog.vue  ← per-user field visibility (desktop/mobile) + search field → user_settings
+│   └── SettingsDialog.vue  ← per-user field visibility (desktop/mobile) + search field + series-count rule + OMDb key → user_settings
 ├── setup.sh            ← one-shot bootstrap: provision D1+R2, inject db id, apply schema, set secrets via stdin, deploy
 ├── wrangler.jsonc      ← Worker config: D1 (DB), R2 (R2), assets (ASSETS) bindings
 ├── vite.config.ts      ← frontend build + megajs node-polyfill wiring + /api dev proxy
 ├── tsconfig.json
+├── SERIES-RULES.md     ← why "series" is user-configured, and the planned rule kinds
 └── CF-PORT.md          ← architecture doc (start here)
 ```
 
@@ -206,6 +213,38 @@ uploads posters first (PUT `/api/import/poster`), then POSTs the catalog +
 custom-field defs, then POSTs movies in chunks (default 200) to
 `/api/import/movies`. Keep chunk sizes small enough that a single request stays
 well under Worker limits.
+
+**12. `movies.number` is user-editable, non-unique, and int32-bounded.** It is the
+on-disk catalog number and it is the one column a user can freely collide: real
+catalogs are full of duplicates and 0s, so `schema.sql` deliberately carries **no
+`UNIQUE(catalog_id, number)`** (a unique constraint would reject those imports).
+`nextMovieNumber()` (MAX+1) only picks a number on CREATE — it is a convenience,
+not a guarantee, and an edit may change it afterwards. Two things follow:
+
+- **Clamp it.** The exporter writes it with `w.i32` → `setInt32(v | 0)`, which
+  **wraps silently**, so a value wider than `MAX_INT32` (`amc/types.ts`) would
+  come back out of the `.amc` as a negative — a rule 1 violation reached through
+  the edit form. `normalizeMovieNumber()` in `worker/db.ts` clamps at the storage
+  boundary; the form clamps too, but the Worker is the one that must hold.
+- **Never infer "series" from it.** There is no series flag in the format, and
+  what makes an entry a series is a per-catalog convention (`number = 1` for all
+  of them, one number shared by a series' episodes, a certification string, a
+  custom field, …). The user states the rule — `SeriesRule`/`countSeries` in
+  `frontend/fields.ts`, persisted as `series_rule` in `user_settings`, **default
+  off**. See [`SERIES-RULES.md`](SERIES-RULES.md). Don't add a heuristic default.
+
+**13. `movies.checked` ("Watched") is derived from `date_watched`.** The detail
+form has no Watched control: setting a Date Watched marks the film watched,
+clearing it marks it unwatched (`dateWatched` in `MovieDetail.vue`), and the
+header badge is read-only display. It reads the **stored flag**, not the date, so
+a legacy row ticked in the Delphi app with no date still reads (and exports as)
+watched — nothing rewrites `checked` unless the date is edited.
+
+**14. Per-user settings need no migration.** `user_settings` holds one opaque
+JSON blob. The Worker's `DEFAULT_SETTINGS` in `worker/index.ts` is spread
+*under* the parsed blob on GET, so adding a key there + to `AppSettings`/
+`DEFAULT_SETTINGS` in `frontend/fields.ts` backfills every existing user. Keep
+the two in sync — they are the same shape written twice.
 
 ---
 
