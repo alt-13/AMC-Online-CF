@@ -227,9 +227,16 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ provider: row.provider, path: row.path, credential });
   }
 
-  // ---- app settings (field visibility + search field) --------------------
+  // ---- app settings (field visibility + search field + series rule) ------
   // Stored as one opaque JSON blob per user, exactly like pm's settings.json.
-  const DEFAULT_SETTINGS = { field_visibility: { desktop: {}, mobile: {} }, search_field: "" };
+  // The shape mirrors AppSettings/DEFAULT_SETTINGS in frontend/fields.ts; the
+  // spread below is what backfills a new key onto an existing user's blob, so
+  // adding one here is all a new setting needs (no migration).
+  const DEFAULT_SETTINGS = {
+    field_visibility: { desktop: {}, mobile: {} },
+    search_field: "",
+    series_rule: { kind: "off" },
+  };
   if (p === "/api/settings" && m === "GET") {
     const raw = await db.getUserSettings(env, t);
     if (!raw) return json(DEFAULT_SETTINGS);

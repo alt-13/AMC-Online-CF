@@ -80,6 +80,51 @@
       </div>
 
       <div class="mt-4 flex flex-col gap-2 px-2">
+        <span class="text-sm font-semibold text-gold">Series count</span>
+        <p class="m-0 text-xs text-muted">
+          The catalog bar can show a “N films / N series” tally. There is no
+          series flag in the .amc format, so it depends on how <em>you</em> use the
+          catalog number — pick the rule that matches yours. Off by default.
+        </p>
+        <Select
+          v-model="seriesKindModel"
+          :options="seriesRuleOptions"
+          optionLabel="label"
+          optionValue="value"
+          class="w-full"
+        />
+        <div v-if="draft.series_rule.kind === 'certification_in'" class="flex flex-col gap-1">
+          <label class="text-xs text-muted">
+            Series have one of these certifications (type a value, press Enter)
+          </label>
+          <InputChips
+            v-model="certificationValuesModel"
+            placeholder="TV Series"
+            separator=","
+            addOnBlur
+            :allowDuplicate="false"
+            class="w-full"
+            inputClass="min-w-32"
+          />
+          <span class="text-[0.7rem] text-muted">
+            Matched whole, ignoring case and surrounding spaces.
+          </span>
+        </div>
+        <div v-if="draft.series_rule.kind === 'number_is'" class="flex items-center gap-2">
+          <label class="text-xs text-muted whitespace-nowrap">Series are numbered</label>
+          <InputNumber
+            v-model="seriesNumberModel"
+            :min="0"
+            :max="MAX_MOVIE_NUMBER"
+            :useGrouping="false"
+            showButtons
+            size="small"
+            inputClass="w-20"
+          />
+        </div>
+      </div>
+
+      <div class="mt-4 flex flex-col gap-2 px-2">
         <span class="text-sm font-semibold text-gold">OMDb API key</span>
         <p class="m-0 text-xs text-muted">
           Powers "⚡ Fetch → new" (IMDb/OMDb metadata). Get a free key at
@@ -121,13 +166,18 @@ import Dialog from "primevue/dialog";
 import Button from "primevue/button";
 import Checkbox from "primevue/checkbox";
 import Select from "primevue/select";
+import InputNumber from "primevue/inputnumber";
+import InputChips from "primevue/inputchips";
 import Password from "primevue/password";
 import Accordion from "primevue/accordion";
 import AccordionPanel from "primevue/accordionpanel";
 import AccordionHeader from "primevue/accordionheader";
 import AccordionContent from "primevue/accordioncontent";
 import { settings as settingsApi, omdb, type CustomFieldDefRow, type OmdbKeyState } from "./api";
-import { sectionsFor, DEFAULT_SETTINGS, type AppSettings } from "./fields";
+import {
+  sectionsFor, DEFAULT_SETTINGS, MAX_MOVIE_NUMBER, DEFAULT_CERTIFICATION_VALUES,
+  type AppSettings, type SeriesRule,
+} from "./fields";
 
 const props = defineProps<{ defs: CustomFieldDefRow[] }>();
 const emit = defineEmits<{ (e: "close"): void; (e: "saved", s: AppSettings): void }>();
@@ -150,6 +200,46 @@ const searchFieldModel = computed<string>({
   get: () => draft.value.search_field || ALL_FIELDS,
   set: (v) => { draft.value.search_field = v === ALL_FIELDS ? "" : v; },
 });
+// Series rule. The kind is a flat Select; `number_is` reveals a number box. The
+// two proxies keep `draft.series_rule` a well-formed discriminated union at all
+// times — switching kind rebuilds the whole object rather than leaving a stale
+// `number` on an `off` rule.
+const seriesRuleOptions = [
+  { label: "Don't show counts", value: "off" },
+  { label: "Certification is one of …", value: "certification_in" },
+  { label: "Entries with one specific number are series", value: "number_is" },
+  { label: "A number shared by 2+ entries is one series", value: "number_shared" },
+];
+const seriesKindModel = computed<SeriesRule["kind"]>({
+  get: () => draft.value.series_rule?.kind ?? "off",
+  set: (kind) => {
+    draft.value.series_rule =
+      kind === "number_is" ? { kind, number: 1 }
+      : kind === "number_shared" ? { kind }
+      : kind === "certification_in" ? { kind, values: [...DEFAULT_CERTIFICATION_VALUES] }
+      : { kind: "off" };
+  },
+});
+const certificationValuesModel = computed<string[]>({
+  get: () =>
+    draft.value.series_rule?.kind === "certification_in" ? draft.value.series_rule.values : [],
+  set: (values) => {
+    // InputChips emits null when the last chip is removed.
+    draft.value.series_rule = {
+      kind: "certification_in",
+      values: (values ?? []).map((v) => v.trim()).filter(Boolean),
+    };
+  },
+});
+const seriesNumberModel = computed<number>({
+  get: () => (draft.value.series_rule?.kind === "number_is" ? draft.value.series_rule.number : 1),
+  set: (n) => {
+    // InputNumber emits null when the box is cleared.
+    const v = Number.isFinite(n) ? Math.min(Math.max(0, Math.trunc(n)), MAX_MOVIE_NUMBER) : 0;
+    draft.value.series_rule = { kind: "number_is", number: v };
+  },
+});
+
 const expanded = ref<string[]>(["main"]);
 const saving = ref(false);
 const error = ref("");

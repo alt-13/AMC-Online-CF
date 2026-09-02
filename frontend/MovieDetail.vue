@@ -276,7 +276,7 @@
               <InputText v-model="form.borrower" class="w-full" size="small" />
             </div>
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('series_number')">
-              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal" title="Series grouping number — entries sharing the same number are listed as a series">Number (#)</label>
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal" title="On-disk catalog number. Duplicates are allowed — many catalogs use it to group a series. How it maps to the films/series count is yours to set in Settings → Series count.">Number (#)</label>
               <InputText type="number" min="0" :max="MAX_MOVIE_NUMBER" class="w-full" size="small"
                 :modelValue="String(form.number)"
                 @update:modelValue="(v: string | undefined) => setNumber(v ?? '')" />

@@ -27,11 +27,13 @@
         <span class="min-w-0 font-display font-bold text-gold text-[1.05rem] tracking-wide truncate">
           {{ catalog.name || "(untitled)" }}
         </span>
-        <!-- Counts, as in the self-hosted topbar: a "series" is an entry whose
-             on-disk number is 1 (the Delphi app's grouping convention). -->
-        <span v-if="!loading" class="flex-1 flex items-center gap-3 shrink min-w-0 text-[0.8rem] text-muted whitespace-nowrap">
-          <span>{{ filmCount }} films</span>
-          <span>{{ seriesCount }} series</span>
+        <!-- Counts, as in the self-hosted topbar. Hidden unless the user has
+             stated what a "series" means in THIS catalog (Settings → Series
+             count) — see `countSeries`: there is no format-level definition to
+             fall back on, so no rule means no counts rather than a guess. -->
+        <span v-if="!loading && counts" class="flex-1 flex items-center gap-3 shrink min-w-0 text-[0.8rem] text-muted whitespace-nowrap">
+          <span>{{ counts.films }} films</span>
+          <span>{{ counts.series }} series</span>
         </span>
         <span v-else class="flex-1" />
         <div class="flex gap-1.5 shrink-0">
@@ -224,7 +226,7 @@ import OmdbDialog from "./OmdbDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import {
   DEFAULT_SETTINGS, type AppSettings, COLOR_TAG_COLORS, COLOR_TAG_NAMES,
-  searchScopes, scopeLabel, ALL_SEARCH_FIELDS,
+  searchScopes, scopeLabel, ALL_SEARCH_FIELDS, countSeries,
 } from "./fields";
 import { pushView, goBack, dropView } from "./nav";
 
@@ -326,10 +328,9 @@ watch(q, () => {
   if (scroller) scroller.scrollTop = 0;
 }, { flush: "post" });
 
-// A movie whose on-disk number is 1 is a series entry (the same rule the
-// self-hosted store uses for `is_series`); everything else counts as a film.
-const seriesCount = computed(() => movies.value.filter((m) => m.number === 1).length);
-const filmCount = computed(() => movies.value.length - seriesCount.value);
+// Counts cover the whole catalog, not the search filter (the footer below the
+// list keeps showing filtered / total). `null` until the user picks a rule.
+const counts = computed(() => countSeries(movies.value, settings.value.series_rule));
 
 // Sort by number descending (newest first), matching the self-hosted list, then
 // filter client-side over that order.

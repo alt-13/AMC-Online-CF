@@ -142,11 +142,84 @@ export function parseCustom(row: Pick<MovieRow, "custom_values">): Record<string
 export interface AppSettings {
   field_visibility: { desktop: Record<string, boolean>; mobile: Record<string, boolean> };
   search_field: string;
+  series_rule: SeriesRule;
 }
 export const DEFAULT_SETTINGS: AppSettings = {
   field_visibility: { desktop: {}, mobile: {} },
   search_field: "",
+  series_rule: { kind: "off" },
 };
+
+// --- series counting --------------------------------------------------------
+//
+// What makes an entry a "series" is a per-CATALOG CONVENTION, not anything the
+// .amc format states. `movies.number` is just the on-disk catalog number; how a
+// user leans on it is up to them — one catalog parks every series under a single
+// number so they sort together, another gives each series its own number shared
+// by its episodes, another ignores number entirely and marks series with a
+// custom field. Guessing wrong produces a confidently wrong count, so the
+// default is `off`: no counts in the bar until the user states the rule.
+//
+// Adding a kind means adding a case to `countSeries` and an option to
+// SettingsDialog. See SERIES-RULES.md for the planned custom-field rules.
+export type SeriesRule =
+  /** Show no counts (default). */
+  | { kind: "off" }
+  /** Every entry carrying exactly this number is one series. */
+  | { kind: "number_is"; number: number }
+  /** A number used by 2+ entries is one series; those entries are its episodes. */
+  | { kind: "number_shared" }
+  /** Certification matches one of these strings (e.g. "TV Series",
+   *  "TV Mini-Series"). The list is the user's to edit — certification is free
+   *  text in the format, so there is no fixed vocabulary to offer. */
+  | { kind: "certification_in"; values: string[] };
+
+/** Certification is free text typed by whoever built the catalog, so match it
+ *  forgivingly: trim and casefold, but still compare whole values — a substring
+ *  match would make "TV Series" swallow "Not a TV Series". */
+const normCert = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
+
+/** The seed shown when the user first picks the certification rule. */
+export const DEFAULT_CERTIFICATION_VALUES = ["TV Series", "TV Mini-Series"];
+
+export interface SeriesCounts {
+  films: number;
+  series: number;
+}
+
+/** Split a catalog into films and series under `rule`, or null when the user has
+ *  not chosen a rule (the bar then shows no counts at all). */
+export function countSeries(
+  movies: Pick<MovieRow, "number" | "certification">[],
+  rule: SeriesRule | undefined,
+): SeriesCounts | null {
+  switch (rule?.kind) {
+    case "certification_in": {
+      const wanted = new Set(rule.values.map(normCert).filter(Boolean));
+      // An empty list matches nothing rather than everything — a half-configured
+      // rule should read "0 series", not "every film is a series".
+      if (!wanted.size) return { films: movies.length, series: 0 };
+      const series = movies.filter((m) => wanted.has(normCert(m.certification))).length;
+      return { films: movies.length - series, series };
+    }
+    case "number_is": {
+      const series = movies.filter((m) => m.number === rule.number).length;
+      return { films: movies.length - series, series };
+    }
+    case "number_shared": {
+      // Group by number: a group of 1 is a standalone film, a group of 2+ is one
+      // series (NOT one per episode — that would report episode count).
+      const byNumber = new Map<number, number>();
+      for (const m of movies) byNumber.set(m.number, (byNumber.get(m.number) ?? 0) + 1);
+      let films = 0;
+      let series = 0;
+      for (const n of byNumber.values()) n > 1 ? series++ : films++;
+      return { films, series };
+    }
+    default:
+      return null;
+  }
+}
 
 export function isVisible(
   s: AppSettings,

@@ -71,6 +71,30 @@ const CinemaPreset = definePreset(Aura, {
     },
   },
   components: {
+    // Third instance of the ramp problem, this time inverted. A chip (the
+    // InputChips values under Settings → Series count) is meant to read as a
+    // value RAISED on the field, but Aura's dark chip background is
+    // {surface.800} — on this navy ramp #0c0c15, i.e. darker than the #1f1f38
+    // form field it sits inside, so each chip looks like a hole punched in the
+    // input. Re-map onto the border/elevated steps, the same way button's
+    // secondary is re-mapped below.
+    chip: {
+      colorScheme: {
+        dark: {
+          root: { background: "#2a2a48", color: "#e8e0d5" },
+          icon: { color: "#a09bb4" },
+          removeIcon: { color: "#a09bb4" },
+        },
+      },
+    },
+    inputchips: {
+      colorScheme: {
+        // `focusColor`, not `color`: the stylesheet reads
+        // dt('inputchips.chip.focus.color') for the focused chip, so a plain
+        // `color` here emits --p-inputchips-chip-color, which nothing consumes.
+        dark: { chip: { focusBackground: "#3a3a60", focusColor: "#f5efe6" } },
+      },
+    },
     // Same ramp problem, one level down: Aura's dark button tokens use
     // {surface.300/400} as the *secondary* foreground and {surface.700/800} as
     // its background/hover. On this ramp that is dark-on-dark, which is what
