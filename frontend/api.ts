@@ -262,6 +262,38 @@ export const cf = {
     if (!res.ok) throw new Error(`set source_ref -> ${res.status}`);
   },
 
+  /** Record the outcome of a push. `syncedRev` must be the content_rev the
+   *  push COVERED (captured before the upload), not the current one. */
+  setSyncState: async (
+    catalogId: string,
+    s: { synced_rev: number; content_hash: string; remote_fingerprint: string; remote_size: number },
+  ): Promise<void> => {
+    const res = await authedFetch(
+      `/api/catalog/${encodeURIComponent(catalogId)}/sync-state`,
+      { method: "POST", body: JSON.stringify(s) },
+      { "content-type": "application/json" },
+    );
+    if (!res.ok) throw new Error(`sync-state -> ${res.status}`);
+  },
+
+  /** Batch-record remote check verdicts from one tree read. */
+  setRemoteStates: async (
+    states: Array<{
+      id: string;
+      state: "match" | "differs" | "missing";
+      remote_fingerprint?: string | null;
+      remote_size?: number | null;
+    }>,
+  ): Promise<void> => {
+    if (!states.length) return;
+    const res = await authedFetch(
+      "/api/catalogs/remote-state",
+      { method: "POST", body: JSON.stringify({ states }) },
+      { "content-type": "application/json" },
+    );
+    if (!res.ok) throw new Error(`remote-state -> ${res.status}`);
+  },
+
   /** Create a movie in a catalog. The Worker assigns the next on-disk number;
    *  pass any editable columns to prefill (e.g. an OMDb patch). */
   createMovie: async (catalogId: string, patch: Partial<MovieRow> = {}): Promise<MovieRow> => {

@@ -487,6 +487,70 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ id: cat.id, source_ref });
   }
 
+  // POST /api/catalog/:id/sync-state  — record the outcome of a push.
+  //   The BROWSER computes the fingerprint (it is the only side that runs
+  //   megajs and holds the bytes), so it tells us; we just store it. Setting
+  //   remote_state = 'match' here is not a guess: we just wrote that file and
+  //   know its identity, so no re-check is needed.
+  if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "sync-state" && m === "POST") {
+    const cat = await db.getCatalog(env, t, seg[2]);
+    if (!cat) return err(404, "catalog not found");
+    const b = (await req.json().catch(() => ({}))) as Partial<{
+      synced_rev: number;
+      content_hash: string;
+      remote_fingerprint: string;
+      remote_size: number;
+    }>;
+    if (
+      typeof b.synced_rev !== "number" ||
+      typeof b.content_hash !== "string" ||
+      typeof b.remote_fingerprint !== "string" ||
+      typeof b.remote_size !== "number"
+    ) {
+      return err(400, "synced_rev, content_hash, remote_fingerprint and remote_size required");
+    }
+    await db.setSyncState(env, cat.id, {
+      synced_rev: b.synced_rev,
+      content_hash: b.content_hash,
+      remote_fingerprint: b.remote_fingerprint,
+      remote_size: b.remote_size,
+      last_sync_at: Date.now(),
+    });
+    return json({ ok: true });
+  }
+
+  // POST /api/catalogs/remote-state  — batch-record remote check verdicts.
+  //   One Mega login covers every catalog, so the whole pass lands in one
+  //   request and one D1 batch. The UPDATE is filtered on tenant_id, so an id
+  //   the caller does not own simply matches no row (rule 8).
+  if (p === "/api/catalogs/remote-state" && m === "POST") {
+    const b = (await req.json().catch(() => ({}))) as {
+      states?: Array<{
+        id?: unknown; state?: unknown;
+        remote_fingerprint?: unknown; remote_size?: unknown;
+      }>;
+    };
+    const input = Array.isArray(b.states) ? b.states : null;
+    if (!input) return err(400, "states array required");
+    const allowed = new Set(["match", "differs", "missing"]);
+    const checked_at = Date.now();
+    const rows = [];
+    for (const s of input) {
+      if (typeof s.id !== "string" || typeof s.state !== "string" || !allowed.has(s.state)) {
+        return err(400, "each state needs an id and one of match|differs|missing");
+      }
+      rows.push({
+        id: s.id,
+        state: s.state,
+        checked_at,
+        remote_fingerprint: typeof s.remote_fingerprint === "string" ? s.remote_fingerprint : null,
+        remote_size: typeof s.remote_size === "number" ? s.remote_size : null,
+      });
+    }
+    await db.setRemoteStates(env, t, rows);
+    return json({ updated: rows.length });
+  }
+
   // GET /api/catalog/:id/export  — the row bundle for the browser rebuild.
   //
   // Three shapes, and only these three — a bare/unrecognised `part` is
