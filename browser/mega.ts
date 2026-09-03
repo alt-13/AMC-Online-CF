@@ -32,6 +32,23 @@ export interface CloudProvider {
   get(name: string): Promise<CloudFile>;
 }
 
+/**
+ * Transfer tuning for both directions.
+ *
+ * megajs defaults to 4 connections and a 128 KB initial chunk that grows by
+ * 128 KB (main.browser-es.mjs — `maxConnections` in both the download and
+ * upload paths). Those defaults are conservative for a multi-hundred-megabyte
+ * .amc: the import download and the export upload are the two costs that
+ * dominate a sync once posters are cached.
+ *
+ * `maxChunkSize` is deliberately NOT set — megajs's 1 MB default is what the
+ * upload MAC chunking expects, and there is no clear gain in changing it.
+ *
+ * Named and exported so it is trivial to retune: if a phone's uplink saturates
+ * below 8 connections there is no benefit, and the right value is empirical.
+ */
+export const TRANSFER_OPTS = { maxConnections: 8, initialChunkSize: 1024 * 1024 };
+
 // --- Mega provider ---------------------------------------------------------
 
 export interface MegaCredentials {
@@ -71,7 +88,9 @@ export async function uploadToMega(
   // megajs's uploadOpts type omits `attributes`, but at runtime it merges any
   // caller-supplied attributes before packing (it only forces `.n = name`), so
   // our `c` fingerprint survives. Cast past the too-narrow type.
-  const opts = { name, size: bytes.byteLength, attributes: { c } };
+  // Spread TRANSFER_OPTS FIRST so the explicit fields below always win — in
+  // particular `attributes.c`, the fingerprint the desktop client requires.
+  const opts = { ...TRANSFER_OPTS, name, size: bytes.byteLength, attributes: { c } };
   // megajs's buffer param is typed BufferString (Buffer | string); a Uint8Array
   // works at runtime. No `Buffer` global is referenced (this module targets the
   // browser).
@@ -225,7 +244,7 @@ export async function downloadFromMega(
   if (typeof fileOrLink === "string") await file.loadAttributes();
 
   const total = file.size ?? 0;
-  const stream = file.download({}) as unknown as DownloadStream;
+  const stream = file.download(TRANSFER_OPTS) as unknown as DownloadStream;
 
   // Preallocate to the known size and clamp writes, so peak memory is 1× the file
   // (matters on a phone) and a size mismatch can never overflow the buffer.
