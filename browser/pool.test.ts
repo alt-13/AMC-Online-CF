@@ -38,7 +38,7 @@ describe("runPool", () => {
     expect(seen[seen.length - 1]).toBe(6);
   });
 
-  it("rejects on the first failure and stops starting new jobs", async () => {
+  it("stops starting new jobs after a failure", async () => {
     let started = 0;
     const jobs = Array.from({ length: 50 }, (_, i) => async () => {
       started += 1;
@@ -46,7 +46,10 @@ describe("runPool", () => {
       if (i === 2) throw new Error("boom");
     });
     await expect(runPool(jobs, 2)).rejects.toThrow("boom");
-    // With concurrency 2 and a failure at index 2, nowhere near all 50 may start.
-    expect(started).toBeLessThan(50);
+    const atReject = started;
+    // Give any surviving worker ample time to keep pulling. A pool that truly
+    // stops starts nothing more; the previous implementation marched toward 50.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(started).toBe(atReject);
   });
 });

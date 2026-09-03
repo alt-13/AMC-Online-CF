@@ -13,8 +13,9 @@ export type PoolProgress = (done: number, total: number) => void;
 
 /**
  * Run `jobs` with at most `concurrency` in flight. Rejects with the first
- * failure; workers that are mid-flight settle, but no further job is started.
- * `onProgress` fires once per completed job with a monotonic done count.
+ * failure; once a job throws, no worker — the one that failed or any sibling
+ * — starts another job. `onProgress` fires once per completed job with a
+ * monotonic done count.
  */
 export async function runPool(
   jobs: Job[],
@@ -26,19 +27,28 @@ export async function runPool(
 
   let next = 0;
   let done = 0;
+  let failed = false;
 
   async function worker(): Promise<void> {
     // Reading and incrementing `next` is atomic here: JS is single-threaded, so
     // no two workers can observe the same index.
-    while (next < jobs.length) {
+    //
+    // `failed` is the shared abort signal. Without it a sibling worker keeps
+    // pulling jobs after another has already rejected — which for an import
+    // means poster PUTs keep landing after the rollback has swept R2, leaving
+    // exactly the orphans the rollback exists to prevent.
+    while (next < jobs.length && !failed) {
       const job = jobs[next++];
-      await job();
+      try {
+        await job();
+      } catch (e) {
+        failed = true;
+        throw e;
+      }
       onProgress?.(++done, total);
     }
   }
 
-  // Promise.all rejects on the first failure. The remaining workers stop pulling
-  // once their current job settles, because the rejection propagates out of the
-  // await above and breaks their loop.
+  // Promise.all rejects on the first failure.
   await Promise.all(Array.from({ length: Math.min(concurrency, total) }, worker));
 }
