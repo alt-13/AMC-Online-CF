@@ -12,6 +12,15 @@
 // costs nothing, and it turns "choose which side to discard, and hope" into an
 // informed choice. That is the entire purpose of this module.
 //
+// The `differing` comparison joins eight fields per side and compares the
+// joined strings, which is only sound because both sides share the same
+// "unset" convention: schema.sql backs all eight columns with
+// NOT NULL DEFAULT -1 / DEFAULT '', and amc/types.ts uses the same -1-means-
+// unset convention. That means null vs undefined vs "" never diverges between
+// the D1 row and the parsed .amc — but it's true today only by coincidence of
+// those two other files, and a future migration making a column nullable
+// could silently produce spurious "differing" counts here.
+//
 // Pure: no DOM, no megajs, no fetch.
 
 import type { MovieRow } from "./api";
