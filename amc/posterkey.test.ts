@@ -50,14 +50,28 @@ describe("isBlobKey", () => {
     expect(isBlobKey(`${T}/${C}/33333333-3333-3333-3333-333333333333/extra-0.jpg`)).toBe(false);
   });
 
-  it("rejects a short or uppercase hash", () => {
+  it("rejects a short, long, or uppercase hash", () => {
     expect(isBlobKey(`${T}/${C}/blobs/${"a".repeat(63)}.jpg`)).toBe(false);
+    expect(isBlobKey(`${T}/${C}/blobs/${"a".repeat(65)}.jpg`)).toBe(false);
     expect(isBlobKey(`${T}/${C}/blobs/${"A".repeat(64)}.jpg`)).toBe(false);
+  });
+
+  it("rejects a hash with a non-hex character", () => {
+    expect(isBlobKey(`${T}/${C}/blobs/${"g".repeat(64)}.jpg`)).toBe(false);
+    expect(isBlobKey(`${T}/${C}/blobs/${"z" + "a".repeat(63)}.jpg`)).toBe(false);
   });
 
   it("rejects extra path segments and traversal", () => {
     expect(isBlobKey(`${T}/${C}/x/blobs/${H}.jpg`)).toBe(false);
     expect(isBlobKey(`${T}/../${C}/blobs/${H}.jpg`)).toBe(false);
+  });
+
+  it("rejects a traversal segment standing in for an id segment (4 segments, matches the regex on shape)", () => {
+    // `[^/]+` for the id segments matches a literal ".." fine — it's the
+    // explicit `key.includes("..")` guard in isBlobKey that must catch this,
+    // not BLOB_KEY_RE. This has the same segment count as a real blob key, so
+    // it's the case the old (wrong) comment claimed the regex alone rejected.
+    expect(isBlobKey(`../${C}/blobs/${H}.jpg`)).toBe(false);
   });
 
   it("rejects a non-jpg extension", () => {
