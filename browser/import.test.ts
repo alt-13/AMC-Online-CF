@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { importAmcFile, type AuthedFetch } from "./import";
 import { serializeCatalog } from "../amc/parser";
 import type { AMCCatalog, AMCMovie } from "../amc/types";
+import { isBlobKey } from "../amc/posterkey";
 
 // Import is a sequence of independent requests with no server-side transaction,
 // so its failure handling is the interesting part: a partial import must roll
@@ -20,7 +21,10 @@ function movie(title: string, poster?: Uint8Array): AMCMovie {
     actors: "", url: "", description: "", comments: "", filePath: "",
     videoFormat: "", audioFormat: "", resolution: "", framerate: "",
     languages: "", subtitles: "", size: "",
-    picture: { picPath: poster ? "p.jpg" : "", picData: poster ?? new Uint8Array(0) },
+    // Real .amc files always write ".jpg" for an embedded picture's path (rule 4
+    // — GetPictureStatus() only cares that it's non-empty), so the fixture uses
+    // the actual on-disk value rather than an arbitrary placeholder.
+    picture: { picPath: poster ? ".jpg" : "", picData: poster ?? new Uint8Array(0) },
     customFieldValues: [], extras: [],
   };
 }
@@ -126,5 +130,57 @@ describe("importAmcFile", () => {
     expect(calls.some((c) => c.startsWith("/api/import/abort"))).toBe(true);
     // Never reached catalog creation.
     expect(calls).not.toContain("/api/import/catalog");
+  });
+});
+
+describe("content-addressed poster keys", () => {
+  it("uploads every poster under a blob key", async () => {
+    const keys: string[] = [];
+    const fetcher: AuthedFetch = async (path, _init, extra) => {
+      if (path === "/api/import/poster") keys.push(extra!["x-poster-key"]);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    await importAmcFile(amcBlob([movie("Stalker", new Uint8Array([1, 2, 3]))]), {
+      tenantId: "t1", fetcher,
+    });
+    expect(keys).toHaveLength(1);
+    expect(isBlobKey(keys[0])).toBe(true);
+  });
+
+  it("uploads identical poster bytes only once", async () => {
+    const keys: string[] = [];
+    const fetcher: AuthedFetch = async (path, _init, extra) => {
+      if (path === "/api/import/poster") keys.push(extra!["x-poster-key"]);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const same = new Uint8Array([7, 7, 7]);
+    await importAmcFile(
+      amcBlob([movie("Stalker", same), movie("Solaris", same), movie("Mirror", new Uint8Array([9]))]),
+      { tenantId: "t1", fetcher },
+    );
+    expect(keys).toHaveLength(2); // two distinct byte sequences, not three movies
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it("points the committed rows at the uploaded keys", async () => {
+    const uploaded: string[] = [];
+    const committed: string[] = [];
+    const fetcher: AuthedFetch = async (path, init, extra) => {
+      if (path === "/api/import/poster") uploaded.push(extra!["x-poster-key"]);
+      if (path.startsWith("/api/import/movies")) {
+        const body = JSON.parse(String(init!.body)) as { movies: Array<{ poster_key: string | null; pic_path: string }> };
+        for (const mv of body.movies) {
+          if (mv.poster_key) {
+            committed.push(mv.poster_key);
+            expect(mv.pic_path).toBe(".jpg"); // rule 4
+          }
+        }
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    await importAmcFile(amcBlob([movie("Stalker", new Uint8Array([1]))]), {
+      tenantId: "t1", fetcher,
+    });
+    expect(committed).toEqual(uploaded);
   });
 });

@@ -11,6 +11,7 @@ import type { ImportResult } from "../amc/mapping";
 import { detectEncoding, toReadable } from "../amc/transcode";
 import type { LegacyEncoding } from "../amc/codepages";
 import { runPool } from "./pool";
+import { sha256Hex, blobKey } from "../amc/posterkey";
 
 /** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
 export type AuthedFetch = (
@@ -130,15 +131,28 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
     // afterwards with bounded concurrency. Uploading one-at-a-time was the main
     // slowdown — a big catalog is thousands of serial round-trips over a phone.
     const posterJobs: Array<{ data: Uint8Array; key: string }> = [];
+    // Distinct keys already queued. Content addressing makes this exact: two
+    // movies with the same artwork hash to the same key, so we upload it once.
+    const posterKeys = new Set<string>();
     const rows: ImportResult = await catalogToRows(
       catalog,
       opts.tenantId,
       {
         newId: () => crypto.randomUUID(),
         now: () => Date.now(),
-        putPoster: (data, key) => {
-          posterJobs.push({ data, key });
-          return Promise.resolve(key);
+        // Content-address the poster: the key IS the hash of the bytes, so the
+        // R2 object is immutable (cacheable for a year) and identical artwork
+        // shared by several movies is stored and uploaded ONCE. `putPoster`'s
+        // contract is that the sink returns the key it actually used, so the
+        // suggested per-movie key is deliberately ignored — mapping.ts needs no
+        // change for this.
+        putPoster: async (data, _suggestedKey) => {
+          const key = blobKey(opts.tenantId, catalogId, await sha256Hex(data));
+          if (!posterKeys.has(key)) {
+            posterKeys.add(key);
+            posterJobs.push({ data, key });
+          }
+          return key;
         },
       },
       catalogId,
