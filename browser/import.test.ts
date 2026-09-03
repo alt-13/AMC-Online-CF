@@ -183,4 +183,79 @@ describe("content-addressed poster keys", () => {
     });
     expect(committed).toEqual(uploaded);
   });
+
+  // The Set in import.ts gates whether an UPLOAD job is queued; it must never
+  // gate the KEY the sink returns. A regression that short-circuits the return
+  // for a deduped movie (leaving its poster_key null or stale) would still pass
+  // both tests above — one only counts uploads, the other only imports a single
+  // poster-bearing movie. This ties row assignment to the upload set directly.
+  it("assigns the same key to both deduped movies, a different key to the third, and both are among the uploaded keys", async () => {
+    const uploaded: string[] = [];
+    const committed: Array<{ title: string; poster_key: string | null }> = [];
+    const fetcher: AuthedFetch = async (path, init, extra) => {
+      if (path === "/api/import/poster") uploaded.push(extra!["x-poster-key"]);
+      if (path.startsWith("/api/import/movies")) {
+        const body = JSON.parse(String(init!.body)) as {
+          movies: Array<{ original_title: string; poster_key: string | null }>;
+        };
+        for (const mv of body.movies) committed.push({ title: mv.original_title, poster_key: mv.poster_key });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const shared = new Uint8Array([5, 5, 5]);
+    const different = new Uint8Array([6, 6, 6]);
+    await importAmcFile(
+      amcBlob([movie("Stalker", shared), movie("Solaris", shared), movie("Mirror", different)]),
+      { tenantId: "t1", fetcher },
+    );
+
+    expect(uploaded).toHaveLength(2); // the dedup: 3 movies, 2 distinct byte sequences
+
+    const byTitle = new Map(committed.map((c) => [c.title, c.poster_key]));
+    const stalkerKey = byTitle.get("Stalker");
+    const solarisKey = byTitle.get("Solaris");
+    const mirrorKey = byTitle.get("Mirror");
+
+    expect(stalkerKey).toBeTruthy();
+    expect(solarisKey).toBeTruthy();
+    expect(mirrorKey).toBeTruthy();
+    expect(solarisKey).toBe(stalkerKey); // the deduped pair shares one key
+    expect(mirrorKey).not.toBe(stalkerKey);
+
+    // The point: every committed key is one of the keys actually uploaded — a
+    // deduped movie's key isn't just present, it's the SAME key R2 received.
+    expect(uploaded).toContain(stalkerKey);
+    expect(uploaded).toContain(mirrorKey);
+  });
+
+  it("gives an extra's poster a blob key too", async () => {
+    const uploaded: string[] = [];
+    const extraRows: Array<{ poster_key: string | null }> = [];
+    const fetcher: AuthedFetch = async (path, init, extra) => {
+      if (path === "/api/import/poster") uploaded.push(extra!["x-poster-key"]);
+      if (path.startsWith("/api/import/movies")) {
+        const body = JSON.parse(String(init!.body)) as {
+          extras: Array<{ poster_key: string | null }>;
+        };
+        extraRows.push(...body.extras);
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const withExtra = movie("Stalker");
+    withExtra.extras = [
+      {
+        checked: false, tag: "", title: "Behind the Scenes", category: "",
+        url: "", description: "", comments: "", createdBy: "",
+        picture: { picPath: ".jpg", picData: new Uint8Array([4, 4, 4]) },
+      },
+    ];
+
+    await importAmcFile(amcBlob([withExtra]), { tenantId: "t1", fetcher });
+
+    expect(extraRows).toHaveLength(1);
+    expect(extraRows[0].poster_key).toBeTruthy();
+    expect(isBlobKey(extraRows[0].poster_key!)).toBe(true);
+    expect(uploaded).toContain(extraRows[0].poster_key);
+  });
 });
