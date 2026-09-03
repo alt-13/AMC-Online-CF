@@ -9,6 +9,7 @@ import { rowsToCatalog } from "../amc/mapping";
 import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../amc/mapping";
 import { toRaw } from "../amc/transcode";
 import type { TextEncoding } from "../amc/codepages";
+import { runPool } from "./pool";
 
 /** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
 export type AuthedFetch = (
@@ -29,6 +30,11 @@ export interface ExportOptions {
    */
   fetcher?: AuthedFetch;
 }
+
+/** How many poster GETs to keep in flight while prefetching. Higher than
+ *  import's upload concurrency: downloads are the cheap direction, and export's
+ *  serial fetch loop was the single largest cost in a push. */
+const PREFETCH_CONCURRENCY = 8;
 
 type ExtraRow = ImportResult["extras"][number];
 
@@ -63,21 +69,42 @@ export async function exportAmcFile(catalogId: string, opts: ExportOptions): Pro
     extrasByMovie.set(e.movie_id, list);
   }
 
-  // Cache posters so a key shared across rows is only fetched once.
-  const posterCache = new Map<string, Uint8Array>();
-  let fetched = 0;
+  // Collect every distinct key first. A key shared across rows (two movies with
+  // the same artwork) is fetched once.
   const posterKeys = new Set<string>();
   for (const mv of bundle.movies) if (mv.poster_key) posterKeys.add(mv.poster_key);
   for (const e of bundle.extras) if (e.poster_key) posterKeys.add(e.poster_key);
 
+  const posterCache = new Map<string, Uint8Array>();
+
+  const fetchPoster = async (key: string): Promise<Uint8Array> => {
+    const r = await send(`/api/poster?key=${encodeURIComponent(key)}`);
+    if (!r.ok) throw new Error(`poster fetch failed (${r.status}) for ${key}`);
+    return new Uint8Array(await r.arrayBuffer());
+  };
+
+  // PREFETCH. rowsToCatalog awaits getPoster inside its per-movie loop, so
+  // leaving the fetches to it makes the whole export a serial chain of
+  // round-trips. Filling the cache up front with a bounded pool turns that into
+  // ~keys/PREFETCH_CONCURRENCY round-trips instead. Peak memory is unchanged:
+  // rowsToCatalog already holds every poster in the movies array before
+  // serialising, so the cache is not an extra copy of anything.
+  const keys = [...posterKeys];
+  if (keys.length) opts.onProgress?.(0, keys.length);
+  await runPool(
+    keys.map((key) => async () => { posterCache.set(key, await fetchPoster(key)); }),
+    PREFETCH_CONCURRENCY,
+    (done, total) => opts.onProgress?.(done, total),
+  );
+
+  // After the prefetch every key is cached, so this is a map read. The fallback
+  // fetch keeps the function correct if a key ever reaches rowsToCatalog without
+  // having been in the bundle's key set.
   const getPoster = async (key: string): Promise<Uint8Array> => {
     const cached = posterCache.get(key);
     if (cached) return cached;
-    const r = await send(`/api/poster?key=${encodeURIComponent(key)}`);
-    if (!r.ok) throw new Error(`poster fetch failed (${r.status}) for ${key}`);
-    const bytes = new Uint8Array(await r.arrayBuffer());
+    const bytes = await fetchPoster(key);
     posterCache.set(key, bytes);
-    opts.onProgress?.(++fetched, posterKeys.size);
     return bytes;
   };
 
