@@ -18,6 +18,7 @@ import * as auth from "./auth";
 import { encryptSecret, decryptSecret } from "./crypto";
 import { searchImdb, fetchOmdb, extractTt } from "./omdb";
 import { newMovieRow } from "./movie-new";
+import { isBlobKey } from "../amc/posterkey";
 
 type ExtraRow = ImportResult["extras"][number];
 
@@ -81,13 +82,22 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     const key = url.searchParams.get("key");
     if (!key) return err(400, "missing key");
     if (!key.startsWith(`${t}/`)) return err(403, "forbidden");
-    // Poster keys are reused when a poster is replaced (same movie id), so the
-    // object is NOT immutable — revalidate via ETag rather than caching for a
-    // year. If-None-Match lets R2 answer 304 without re-streaming the bytes.
+    // Legacy poster keys are reused when a poster is replaced (same movie id),
+    // so those objects are NOT immutable — revalidate via ETag rather than
+    // caching for a year. If-None-Match lets R2 answer 304 without re-streaming
+    // the bytes. A blob key is immutable (see below), so a browser holding one
+    // has no reason to ever send If-None-Match for it in the first place.
     const inm = req.headers.get("if-none-match");
     const obj = await env.R2.get(key, inm ? { onlyIf: { etagDoesNotMatch: inm } } : undefined);
     if (!obj) return err(404, "poster not found");
-    const cache = "private, max-age=0, must-revalidate";
+    // A content-addressed key names its own bytes, so the object can never
+    // change under it — cache it for a year. Legacy per-movie keys ARE
+    // overwritten in place (that is why they were uncacheable), so they keep
+    // revalidating. Being wrong in the immutable direction would serve a stale
+    // poster for a year, so isBlobKey is deliberately strict.
+    const cache = isBlobKey(key)
+      ? "private, max-age=31536000, immutable"
+      : "private, max-age=0, must-revalidate";
     if (!("body" in obj) || obj.body === undefined) {
       // etag matched — R2 returned metadata only.
       return new Response(null, { status: 304, headers: { etag: obj.httpEtag, "cache-control": cache } });

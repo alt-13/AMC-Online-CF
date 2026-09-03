@@ -5,6 +5,7 @@
 // can drive the whole port from one module.
 
 import type { CatalogRow, CustomFieldDefRow, MovieRow } from "../amc/mapping";
+import { isBlobKey } from "../amc/posterkey";
 
 export type { CatalogRow, CustomFieldDefRow, MovieRow };
 export { importAmcFile } from "../browser/import";
@@ -299,11 +300,16 @@ export const cf = {
   posterUrl: (key: string) => `/api/poster?key=${encodeURIComponent(key)}`,
 
   posterObjectUrl: async (key: string): Promise<string> => {
-    // no-store: we turn the bytes into an object URL, so HTTP caching gains us
-    // nothing — and it avoids the conditional-request path where the browser
-    // has the ETag but not the body and the server answers 304 with no bytes
-    // (which surfaced as posters intermittently failing to load on mobile).
-    const res = await authedFetch(`/api/poster?key=${encodeURIComponent(key)}`, { cache: "no-store" });
+    // `no-store` exists for LEGACY keys only. Those are overwritten in place, so
+    // the browser can hold an ETag without the body and the server answers 304
+    // with no bytes — which surfaced as posters intermittently failing to load
+    // on mobile. A blob key is immutable, so it is never revalidated and that
+    // path cannot arise: let it cache, and the list/detail views get the same
+    // win export does.
+    const res = await authedFetch(
+      `/api/poster?key=${encodeURIComponent(key)}`,
+      isBlobKey(key) ? {} : { cache: "no-store" },
+    );
     if (!res.ok) throw new Error(`poster -> ${res.status}`);
     return URL.createObjectURL(await res.blob());
   },

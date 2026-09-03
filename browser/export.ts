@@ -97,9 +97,13 @@ export async function exportAmcFile(catalogId: string, opts: ExportOptions): Pro
     (done, total) => opts.onProgress?.(done, total),
   );
 
-  // After the prefetch every key is cached, so this is a map read. The fallback
-  // fetch keeps the function correct if a key ever reaches rowsToCatalog without
-  // having been in the bundle's key set.
+  // After the prefetch every key is cached, so this is a map read.
+  // rowsToCatalog only ever calls getPoster with a row.poster_key/e.poster_key
+  // drawn from these same bundle.movies/bundle.extras arrays, which is exactly
+  // what `posterKeys` above was built from — so the cache always hits and the
+  // fetch below is unreachable by construction, not an expected path. It is
+  // kept anyway as a cheap, defensively-correct guard in case that invariant
+  // ever stops holding.
   const getPoster = async (key: string): Promise<Uint8Array> => {
     const cached = posterCache.get(key);
     if (cached) return cached;

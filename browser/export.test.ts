@@ -10,6 +10,7 @@ import { parseCatalog } from "../amc/parser";
 const T = "tenant-1";
 const KEY_A = `${T}/cat-1/blobs/${"a".repeat(64)}.jpg`;
 const KEY_B = `${T}/cat-1/blobs/${"b".repeat(64)}.jpg`;
+const KEY_C = `${T}/cat-1/blobs/${"c".repeat(64)}.jpg`;
 
 function movieRow(id: string, number: number, title: string, poster_key: string | null) {
   return {
@@ -23,6 +24,15 @@ function movieRow(id: string, number: number, title: string, poster_key: string 
     framerate: "", languages: "", subtitles: "", size: "",
     pic_path: poster_key ? ".jpg" : "", poster_key,
     custom_values: "{}", sort_title: title.toLowerCase(),
+  };
+}
+
+/** An extras row (movie_id must match one of `BUNDLE.movies`' ids). */
+function extraRow(id: string, movie_id: string, ordinal: number, poster_key: string | null) {
+  return {
+    id, movie_id, ordinal, checked: 0, tag: "", title: "Behind the scenes",
+    category: "", url: "", description: "", comments: "", created_by: "",
+    pic_path: poster_key ? ".jpg" : "", poster_key,
   };
 }
 
@@ -72,6 +82,37 @@ describe("exportAmcFile poster prefetch", () => {
     const { fetcher, posterCalls } = stub();
     await exportAmcFile("cat-1", { tenantId: T, fetcher });
     expect(posterCalls.sort()).toEqual([KEY_A, KEY_B]);
+  });
+
+  it("prefetches an extra's poster key too, not just movies'", async () => {
+    // Mirror's extra deliberately uses a THIRD key so this can't pass by
+    // accident via the movie-level KEY_A/KEY_B coverage above.
+    const bundle = { ...BUNDLE, extras: [extraRow("x1", "m3", 0, KEY_C)] };
+    const posterCalls: string[] = [];
+    const fetcher: AuthedFetch = async (path) => {
+      if (path.includes("/export")) {
+        return new Response(JSON.stringify(bundle), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path.startsWith("/api/poster")) {
+        const key = decodeURIComponent(new URL(path, "http://x").searchParams.get("key")!);
+        posterCalls.push(key);
+        const byte = key === KEY_A ? 0xaa : key === KEY_B ? 0xbb : 0xcc;
+        return new Response(new Uint8Array([byte]));
+      }
+      throw new Error(`unexpected path ${path}`);
+    };
+
+    const blob = await exportAmcFile("cat-1", { tenantId: T, fetcher });
+    expect(posterCalls).toContain(KEY_C);
+
+    // Pin the whole path, not just the fetch: the extra's bytes must land on
+    // the right movie's extra in the rebuilt file.
+    const parsed = parseCatalog(new Uint8Array(await blob.arrayBuffer()));
+    const mirror = parsed.movies.find((mv) => mv.originalTitle === "Mirror")!;
+    expect(mirror.extras).toHaveLength(1);
+    expect(Array.from(mirror.extras[0].picture.picData)).toEqual([0xcc]);
   });
 
   it("rebuilds identically when responses complete out of order", async () => {
