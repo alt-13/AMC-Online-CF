@@ -52,4 +52,47 @@ describe("runPool", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(started).toBe(atReject);
   });
+
+  it("waits for every in-flight job to settle before rejecting", async () => {
+    // One job fails quickly; its siblings are already in flight and take much
+    // longer. A pool that rejects as soon as the first failure is observed
+    // (plain Promise.all) returns control to the caller while those siblings
+    // are still running — which for uploadPosters means poster PUTs can land
+    // in R2 after importAmcFile's /api/import/abort has already swept the
+    // catalog prefix. This test asserts nothing is still running by the time
+    // the rejection reaches the caller.
+    const state = { live: 0 };
+    let liveAtCatch = -1;
+    const jobs = Array.from({ length: 5 }, (_, i) => async () => {
+      state.live += 1;
+      try {
+        if (i === 0) {
+          await new Promise((r) => setTimeout(r, 5));
+          throw new Error("boom");
+        }
+        await new Promise((r) => setTimeout(r, 40));
+      } finally {
+        state.live -= 1;
+      }
+    });
+
+    let threw = false;
+    try {
+      await runPool(jobs, 5);
+    } catch {
+      threw = true;
+      liveAtCatch = state.live;
+    }
+    expect(threw).toBe(true);
+    expect(liveAtCatch).toBe(0);
+  });
+
+  it("throws for concurrency <= 0 instead of silently running nothing", async () => {
+    let ran = false;
+    const jobs = [async () => { ran = true; }];
+    await expect(runPool(jobs, 0)).rejects.toThrow(/concurrency/i);
+    expect(ran).toBe(false);
+    await expect(runPool(jobs, -1)).rejects.toThrow(/concurrency/i);
+    expect(ran).toBe(false);
+  });
 });
