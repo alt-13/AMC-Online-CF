@@ -85,6 +85,7 @@ export function newMovieRow(
     poster_key: null,
     custom_values: "{}",
     sort_title: "",
+    updated_at: nowMs,
   };
 
   for (const col of CREATABLE) {

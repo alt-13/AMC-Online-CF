@@ -214,8 +214,97 @@ export async function catalogsBySource(
   return results ?? [];
 }
 
-export async function touchCatalog(env: Env, id: string, now: number): Promise<void> {
-  await env.DB.prepare(`UPDATE catalogs SET updated_at = ? WHERE id = ?`).bind(now, id).run();
+/**
+ * Bump a catalog's local revision. MUST be called from every mutation that
+ * changes what an export would produce — otherwise the sync badge lies, which
+ * is the one failure mode worse than a slow sync (a wrongly-clean badge loses
+ * data). Call sites: movie create / update / delete, and each import chunk.
+ *
+ * Replaces the old touchCatalog, which only ever ran on import and create.
+ */
+export async function bumpCatalogRev(env: Env, id: string, now: number): Promise<number> {
+  await env.DB.prepare(
+    `UPDATE catalogs SET content_rev = content_rev + 1, updated_at = ? WHERE id = ?`,
+  )
+    .bind(now, id)
+    .run();
+  const row = await env.DB.prepare(`SELECT content_rev FROM catalogs WHERE id = ?`)
+    .bind(id)
+    .first<{ content_rev: number }>();
+  return row?.content_rev ?? 0;
+}
+
+/** Record the outcome of a successful push. `syncedRev` is the content_rev the
+ *  push actually COVERED (captured before the upload started), never the
+ *  current one — an edit made during a multi-minute upload must stay pending. */
+export async function setSyncState(
+  env: Env,
+  id: string,
+  s: {
+    synced_rev: number;
+    content_hash: string;
+    remote_fingerprint: string;
+    remote_size: number;
+    last_sync_at: number;
+  },
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE catalogs SET synced_rev = ?, content_hash = ?, remote_fingerprint = ?,
+            remote_size = ?, last_sync_at = ?, remote_state = 'match', remote_checked_at = ?
+      WHERE id = ?`,
+  )
+    .bind(
+      s.synced_rev, s.content_hash, s.remote_fingerprint,
+      s.remote_size, s.last_sync_at, s.last_sync_at, id,
+    )
+    .run();
+}
+
+/** Batch-record remote check verdicts. One D1 batch for the whole pass, since
+ *  a single Mega login covers every catalog. */
+export async function setRemoteStates(
+  env: Env,
+  tenantId: string,
+  rows: Array<{
+    id: string;
+    state: string;
+    checked_at: number;
+    remote_fingerprint?: string | null;
+    remote_size?: number | null;
+  }>,
+): Promise<void> {
+  if (!rows.length) return;
+  const stmt = env.DB.prepare(
+    `UPDATE catalogs
+        SET remote_state = ?, remote_checked_at = ?,
+            remote_fingerprint = COALESCE(?, remote_fingerprint),
+            remote_size = COALESCE(?, remote_size)
+      WHERE id = ? AND tenant_id = ?`,
+  );
+  await env.DB.batch(
+    rows.map((r) =>
+      stmt.bind(
+        r.state, r.checked_at,
+        r.remote_fingerprint ?? null, r.remote_size ?? null,
+        r.id, tenantId,
+      ),
+    ),
+  );
+}
+
+/** How many movie rows were written since `since`. Rows predating the
+ *  updated_at column read NULL and correctly do not count. */
+export async function countMoviesTouchedSince(
+  env: Env,
+  catalogId: string,
+  since: number,
+): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM movies WHERE catalog_id = ? AND updated_at > ?`,
+  )
+    .bind(catalogId, since)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
 
 export async function setCatalogSourceRef(
@@ -285,7 +374,7 @@ const MOVIE_COLS = [
   "category", "certification", "actors", "url", "description", "comments",
   "file_path", "video_format", "audio_format", "resolution", "framerate",
   "languages", "subtitles", "size", "pic_path", "poster_key", "custom_values",
-  "sort_title",
+  "sort_title", "updated_at",
 ] as const;
 
 export async function insertMovies(env: Env, movies: MovieRow[]): Promise<void> {
@@ -463,6 +552,9 @@ export async function updateMovie(
 ): Promise<void> {
   const editable = MOVIE_COLS.filter((c) => c !== "id" && c !== "catalog_id");
   const clean = { ...patch } as Record<string, unknown>;
+  // Stamp the row mtime on every update so the conflict dialog can count how
+  // many movies were touched since the last sync.
+  clean.updated_at = Date.now();
   if ("number" in clean) {
     const n = normalizeMovieNumber(clean.number);
     if (n === null) delete clean.number;

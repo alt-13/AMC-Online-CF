@@ -28,6 +28,24 @@ export interface CatalogRow {
   source_ref: string | null;
   created_at: number;
   updated_at: number;
+  /** Monotonic local revision: +1 on every mutation touching this catalog.
+   *  Compared against `synced_rev` to answer "is the cloud .amc behind?". */
+  content_rev: number;
+  /** The `content_rev` the last successful push covered. */
+  synced_rev: number;
+  /** SHA-256 of the .amc bytes last pushed, so an unchanged rebuild can skip
+   *  the upload entirely. */
+  content_hash: string | null;
+  /** Mega `c` attribute of the node last pushed or pulled. */
+  remote_fingerprint: string | null;
+  /** Byte size of that node, compared alongside the fingerprint. */
+  remote_size: number | null;
+  /** Cached verdict of the last remote check: 'match' | 'differs' | 'missing'. */
+  remote_state: string | null;
+  /** When that verdict was taken (epoch ms). NULL = never checked. */
+  remote_checked_at: number | null;
+  /** Last successful push (epoch ms). */
+  last_sync_at: number | null;
 }
 
 export interface CustomFieldDefRow {
@@ -97,6 +115,10 @@ export interface MovieRow {
   poster_key: string | null;
   custom_values: string; // JSON {tag: value}
   sort_title: string;
+  /** Row mtime (epoch ms), for "M films touched since the last sync". NULL on
+   *  rows written before migration 0003. Not part of the .amc — rowsToCatalog
+   *  never reads it, so the round-trip is unaffected. */
+  updated_at: number | null;
 }
 
 const b = (v: boolean) => (v ? 1 : 0);
@@ -165,6 +187,17 @@ export async function catalogToRows(
     source_ref: sourceRef,
     created_at: ts,
     updated_at: ts,
+    // Sync-tracking columns start at their D1 defaults; insertCatalog doesn't
+    // bind them (see worker/db.ts), so these values only matter for the type —
+    // real rows always come back from D1 with content_rev = synced_rev = 0.
+    content_rev: 0,
+    synced_rev: 0,
+    content_hash: null,
+    remote_fingerprint: null,
+    remote_size: null,
+    remote_state: null,
+    remote_checked_at: null,
+    last_sync_at: null,
   };
 
   const customFieldDefs: CustomFieldDefRow[] = cat.customFieldDefs.map((d, i) => ({
@@ -251,6 +284,7 @@ export async function catalogToRows(
       poster_key: posterKey,
       custom_values: JSON.stringify(customValues),
       sort_title: (m.translatedTitle || m.originalTitle).toLowerCase(),
+      updated_at: ts,
     });
 
     for (let ei = 0; ei < m.extras.length; ei++) {

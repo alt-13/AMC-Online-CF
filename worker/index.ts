@@ -147,7 +147,7 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       console.error("import/movies insert failed", detail);
       return err(422, `movie insert failed: ${detail}`);
     }
-    await db.touchCatalog(env, catalogId, Date.now());
+    await db.bumpCatalogRev(env, catalogId, Date.now());
     return json({ inserted: movies.length });
   }
 
@@ -352,8 +352,8 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     const num = await db.nextMovieNumber(env, cat.id);
     const row = newMovieRow(crypto.randomUUID(), cat.id, num, patch, Date.now());
     await db.insertMovies(env, [row]);
-    await db.touchCatalog(env, cat.id, Date.now());
-    return json(row, 201);
+    const content_rev = await db.bumpCatalogRev(env, cat.id, Date.now());
+    return json({ ...row, content_rev }, 201);
   }
 
   // GET /api/catalog/:id/info
@@ -498,9 +498,12 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
         if (orphans.length) await env.R2.delete(orphans);
       }
 
+      const content_rev = await db.bumpCatalogRev(env, movie.catalog_id, Date.now());
       const updated = await db.getMovie(env, id);
       const extras = await db.getExtras(env, id);
-      return json({ ...updated, extras });
+      // content_rev rides along so the workspace's sync button tracks the
+      // counter without a second request.
+      return json({ ...updated, extras, content_rev });
     }
     if (m === "DELETE") {
       const movie = await ownedMovie(env, t, id);
@@ -510,7 +513,8 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       const keys = extras.map((e) => e.poster_key).filter((k): k is string => !!k);
       if (keys.length) await env.R2.delete(keys);
       await db.deleteMovie(env, id);
-      return new Response(null, { status: 204 });
+      const content_rev = await db.bumpCatalogRev(env, movie.catalog_id, Date.now());
+      return json({ content_rev });
     }
   }
 

@@ -236,9 +236,14 @@ export const cf = {
     return res.json() as Promise<MovieRow & { extras: Extra[] }>;
   },
 
-  deleteMovie: async (id: string): Promise<void> => {
+  /** Delete a movie. Returns the catalog's new content_rev so the caller's sync
+   *  button stays accurate without re-fetching the catalog row. */
+  deleteMovie: async (id: string): Promise<number | undefined> => {
     const res = await authedFetch(`/api/movies/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (!res.ok && res.status !== 204) throw new Error(`delete movie -> ${res.status}`);
+    if (res.status === 204) return undefined; // pre-migration Workers
+    const body = (await res.json().catch(() => ({}))) as { content_rev?: number };
+    return body.content_rev;
   },
 
   /** Delete a catalog and all its posters. */

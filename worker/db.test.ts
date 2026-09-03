@@ -43,25 +43,32 @@ describe("updateMovie", () => {
       catalog_id: "someone-elses",
       year: 2001,
     } as never);
-    expect(calls[0].sql).toBe("UPDATE movies SET year = ? WHERE id = ?");
-    expect(calls[0].binds).toEqual([2001, "m1"]);
+    // updated_at is stamped server-side on every update (sync tracking) —
+    // it rides along after every explicitly-patched column.
+    expect(calls[0].sql).toBe("UPDATE movies SET year = ?, updated_at = ? WHERE id = ?");
+    expect(calls[0].binds).toEqual([2001, expect.any(Number), "m1"]);
   });
 
   it("coerces a client-sent number and drops an unusable one", async () => {
     const { env, calls } = fakeEnv();
     await updateMovie(env, "m1", { number: "3" as never });
-    expect(calls[0].binds).toEqual([3, "m1"]);
+    expect(calls[0].binds).toEqual([3, expect.any(Number), "m1"]);
 
     // `number` is NOT NULL in the schema: a junk value must be ignored, not
     // bound (which would 500 the whole save).
     await updateMovie(env, "m1", { number: null as never, year: 1999 });
-    expect(calls[1].sql).toBe("UPDATE movies SET year = ? WHERE id = ?");
+    expect(calls[1].sql).toBe("UPDATE movies SET year = ?, updated_at = ? WHERE id = ?");
   });
 
-  it("issues no statement when the patch has nothing editable", async () => {
+  it("still stamps updated_at when the patch has nothing else editable", async () => {
+    // A PUT reaching updateMovie IS the touch — the row mtime must move even
+    // when every other field in the patch is server-owned identity (id/
+    // catalog_id) and gets stripped, or the conflict dialog would undercount.
     const { env, calls } = fakeEnv();
     await updateMovie(env, "m1", { id: "x" } as never);
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toBe("UPDATE movies SET updated_at = ? WHERE id = ?");
+    expect(calls[0].binds).toEqual([expect.any(Number), "m1"]);
   });
 });
 
