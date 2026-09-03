@@ -535,6 +535,7 @@ import Checkbox from "primevue/checkbox";
 import DatePicker from "primevue/datepicker";
 import Button from "primevue/button";
 import { cf, session, type MovieRow, type CustomFieldDefRow, type Extra } from "./api";
+import { sha256Hex, blobKey, isBlobKey } from "../amc/posterkey";
 import OmdbDialog from "./OmdbDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import {
@@ -876,17 +877,29 @@ async function onFile(ev: Event) {
   if (!file) return;
   posterMsg.value = "Uploading…";
   try {
-    const key = form.poster_key ?? `${session().tenantId}/${form.catalog_id}/${form.id}.jpg`;
-    // Re-encode to JPEG in the browser, then store + point the movie at it.
+    // Re-encode to JPEG in the browser, then content-address it. The key is the
+    // hash of the bytes, never the movie id: overwriting a key in place would
+    // replace the bytes behind an immutably-cached URL.
     const bitmap = await createImageBitmap(file);
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
     bitmap.close();
-    const jpeg = await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 })).arrayBuffer();
-    await putPoster(key, new Uint8Array(jpeg));
+    const jpeg = new Uint8Array(
+      await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 })).arrayBuffer(),
+    );
+    const previous = form.poster_key;
+    const key = blobKey(session().tenantId, form.catalog_id, await sha256Hex(jpeg));
+
+    await putPoster(key, jpeg);
     await cf.updateMovie(form.id, { poster_key: key, pic_path: ".jpg" });
     await setPosterKeyQuietly(key);
     await loadPoster(key);
+    // Reclaim the old object only if it was a legacy per-movie key (this movie
+    // alone could reference it). Blob keys may be shared by identical artwork,
+    // so they are left to the GC.
+    if (previous && previous !== key && !isBlobKey(previous)) {
+      await cf.deleteLegacyPoster(previous);
+    }
     posterMsg.value = "";
     emit("changed");
   } catch (e) {

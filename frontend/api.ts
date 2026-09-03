@@ -5,7 +5,7 @@
 // can drive the whole port from one module.
 
 import type { CatalogRow, CustomFieldDefRow, MovieRow } from "../amc/mapping";
-import { isBlobKey } from "../amc/posterkey";
+import { sha256Hex, blobKey, isBlobKey } from "../amc/posterkey";
 
 export type { CatalogRow, CustomFieldDefRow, MovieRow };
 export { importAmcFile } from "../browser/import";
@@ -284,13 +284,23 @@ export const cf = {
     if (!proxied.ok) throw new Error(`fetch image -> ${proxied.status}`);
     const jpeg = await toJpeg(await proxied.blob());
 
-    const key = movie.poster_key ?? `${_tenantId}/${movie.catalog_id}/${movie.id}.jpg`;
+    // Content-address the new artwork instead of overwriting the movie's key in
+    // place. Overwriting would replace the bytes behind a key the browser has
+    // cached as immutable, serving the old poster for a year.
+    const key = blobKey(_tenantId, movie.catalog_id, await sha256Hex(jpeg));
     const put = await authedFetch("/api/import/poster", {
       method: "PUT",
       body: jpeg as BodyInit,
     }, { "x-poster-key": key, "content-type": "application/octet-stream" });
     if (!put.ok) throw new Error(`store poster -> ${put.status}`);
-    return cf.updateMovie(movie.id, { poster_key: key, pic_path: ".jpg" });
+
+    const updated = await cf.updateMovie(movie.id, { poster_key: key, pic_path: ".jpg" });
+    // The row no longer points at the old object. A legacy key belonged to this
+    // movie alone, so reclaim it now; a blob key may be shared, so leave it to
+    // the GC.
+    const old = movie.poster_key;
+    if (old && old !== key && !isBlobKey(old)) await cf.deleteLegacyPoster(old);
+    return updated;
   },
 
   // NOTE: /api/poster is Bearer-gated, so a bare <img src="/api/poster?..."> will
@@ -312,6 +322,13 @@ export const cf = {
     );
     if (!res.ok) throw new Error(`poster -> ${res.status}`);
     return URL.createObjectURL(await res.blob());
+  },
+
+  /** Delete one LEGACY poster object. No-op for blob keys (the Worker refuses
+   *  them — a hash can be shared, so only the GC may remove one). */
+  deleteLegacyPoster: async (key: string): Promise<void> => {
+    if (isBlobKey(key)) return;
+    await authedFetch(`/api/poster?key=${encodeURIComponent(key)}`, { method: "DELETE" });
   },
 };
 

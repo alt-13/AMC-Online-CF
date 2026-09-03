@@ -141,6 +141,21 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     });
   }
 
+  // DELETE /api/poster?key=...  — drop one poster object.
+  //   Used when an in-app poster edit repoints a movie away from a LEGACY
+  //   per-movie key (which only that movie could reference, so deleting it is
+  //   safe). Blob keys are never deleted here: two movies with identical
+  //   artwork legitimately share one hash, so superseded blobs are reclaimed by
+  //   /api/catalog/:id/gc-posters instead.
+  if (p === "/api/poster" && m === "DELETE") {
+    const key = url.searchParams.get("key");
+    if (!key) return err(400, "missing key");
+    if (!key.startsWith(`${t}/`)) return err(403, "forbidden");
+    if (isBlobKey(key)) return err(400, "refusing to delete a shared blob key");
+    await env.R2.delete(key);
+    return new Response(null, { status: 204 });
+  }
+
   // POST /api/import/catalog — create the catalog + custom field defs
   if (p === "/api/import/catalog" && m === "POST") {
     const body = (await req.json()) as {
