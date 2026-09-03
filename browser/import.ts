@@ -55,6 +55,12 @@ export interface ImportOptions {
    * rare misdetection. Ignored for clean UTF-8 catalogs.
    */
   legacyEncoding?: LegacyEncoding;
+  /**
+   * Force the new catalog's id instead of generating one. Normally omitted — the
+   * import mints a UUID. Set by the re-import path (which writes into an
+   * existing catalog) and by tests that need a predictable poster key.
+   */
+  catalogId?: string;
 }
 
 function headers(o: ImportOptions, extra: Record<string, string> = {}): HeadersInit {
@@ -100,6 +106,34 @@ async function uploadPosters(
 }
 
 /**
+ * Blob keys R2 already holds for this catalog, so an import can skip re-
+ * uploading bytes that are already there. Content addressing is what makes this
+ * exact — the key IS the hash, so "already present" needs no movie identity.
+ *
+ * Best-effort by design: a failure here must never fail an import, it just
+ * means we upload everything (correct, only slower). Returns an empty set on
+ * any error.
+ */
+async function existingBlobKeys(send: AuthedFetch, catalogId: string): Promise<Set<string>> {
+  const found = new Set<string>();
+  let cursor: string | null = null;
+  try {
+    do {
+      const qs = new URLSearchParams({ catalogId });
+      if (cursor) qs.set("cursor", cursor);
+      const res = await send(`/api/import/existing-blobs?${qs}`);
+      if (!res.ok) return new Set();
+      const page = (await res.json()) as { keys: string[]; next: string | null };
+      for (const k of page.keys) found.add(k);
+      cursor = page.next;
+    } while (cursor);
+  } catch {
+    return new Set();
+  }
+  return found;
+}
+
+/**
  * Parse an .amc file and import it. Returns the new catalog id.
  * `file` is a File/Blob from an <input type="file"> or drag-and-drop.
  */
@@ -122,7 +156,7 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
   // Fix the catalog id up front so a failure anywhere below — even during the
   // poster phase — can be rolled back by its prefix. Import is otherwise a
   // sequence of independent requests with no server-side transaction.
-  const catalogId = crypto.randomUUID();
+  const catalogId = opts.catalogId ?? crypto.randomUUID();
   const send = requester(opts);
 
   try {
@@ -166,8 +200,13 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
       rows.catalog.name = opts.fallbackName.trim();
     }
 
+    // Drop posters R2 already holds. On a re-import where a few movies changed
+    // this removes almost all of the poster traffic.
+    const present = await existingBlobKeys(send, catalogId);
+    const toUpload = present.size ? posterJobs.filter((j) => !present.has(j.key)) : posterJobs;
+
     // Upload posters with a small pool of concurrent PUTs (overlaps latency).
-    await uploadPosters(send, posterJobs, opts.onProgress);
+    await uploadPosters(send, toUpload, opts.onProgress);
 
     // 1. Create the catalog + custom field definitions.
     const created = await send(

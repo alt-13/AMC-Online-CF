@@ -120,6 +120,27 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ key });
   }
 
+  // GET /api/import/existing-blobs?catalogId=&cursor=
+  //   Blob keys already stored for this catalog, so the browser can skip
+  //   re-uploading bytes R2 already has. One R2 list page per request (1000
+  //   keys) — far cheaper than a HEAD per poster.
+  if (p === "/api/import/existing-blobs" && m === "GET") {
+    const catalogId = url.searchParams.get("catalogId");
+    if (!catalogId) return err(400, "missing catalogId");
+    // Tenant scoping (rule 8): never list a prefix for a catalog this caller
+    // does not own.
+    const cat = await db.getCatalog(env, t, catalogId);
+    if (!cat) return err(404, "catalog not found");
+    const listed = await env.R2.list({
+      prefix: `${t}/${cat.id}/blobs/`,
+      cursor: url.searchParams.get("cursor") ?? undefined,
+    });
+    return json({
+      keys: listed.objects.map((o) => o.key),
+      next: listed.truncated ? listed.cursor : null,
+    });
+  }
+
   // POST /api/import/catalog — create the catalog + custom field defs
   if (p === "/api/import/catalog" && m === "POST") {
     const body = (await req.json()) as {

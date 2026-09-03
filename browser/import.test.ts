@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { importAmcFile, type AuthedFetch } from "./import";
 import { serializeCatalog } from "../amc/parser";
 import type { AMCCatalog, AMCMovie } from "../amc/types";
-import { isBlobKey } from "../amc/posterkey";
+import { isBlobKey, blobKey, sha256Hex } from "../amc/posterkey";
 
 // Import is a sequence of independent requests with no server-side transaction,
 // so its failure handling is the interesting part: a partial import must roll
@@ -257,5 +257,65 @@ describe("content-addressed poster keys", () => {
     expect(extraRows[0].poster_key).toBeTruthy();
     expect(isBlobKey(extraRows[0].poster_key!)).toBe(true);
     expect(uploaded).toContain(extraRows[0].poster_key);
+  });
+});
+
+describe("blob dedup on import", () => {
+  const existing = `t1/CAT/blobs/${"0".repeat(64)}.jpg`;
+
+  /** Stub that reports one already-present blob, chosen to match `bytes`. */
+  function dedupStub(presentKeys: string[]) {
+    const uploaded: string[] = [];
+    const committed: string[] = [];
+    const fetcher: AuthedFetch = async (path, init, extra) => {
+      if (path.startsWith("/api/import/existing-blobs")) {
+        return new Response(JSON.stringify({ keys: presentKeys, next: null }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/api/import/poster") uploaded.push(extra!["x-poster-key"]);
+      if (path.startsWith("/api/import/movies")) {
+        const body = JSON.parse(String(init!.body)) as { movies: Array<{ poster_key: string | null }> };
+        for (const mv of body.movies) if (mv.poster_key) committed.push(mv.poster_key);
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    return { fetcher, uploaded, committed };
+  }
+
+  it("skips uploading a poster whose hash R2 already holds", async () => {
+    const bytes = new Uint8Array([1]);
+    const key = blobKey("t1", "CAT", await sha256Hex(bytes));
+    const { fetcher, uploaded, committed } = dedupStub([key]);
+    await importAmcFile(amcBlob([movie("Stalker", bytes)]), {
+      tenantId: "t1", fetcher, catalogId: "CAT",
+    });
+    expect(uploaded).toEqual([]);        // nothing re-uploaded
+    expect(committed).toEqual([key]);    // but the row still points at it
+  });
+
+  it("uploads posters R2 does not hold", async () => {
+    const bytes = new Uint8Array([2]);
+    const key = blobKey("t1", "CAT", await sha256Hex(bytes));
+    const { fetcher, uploaded } = dedupStub([existing]);
+    await importAmcFile(amcBlob([movie("Stalker", bytes)]), {
+      tenantId: "t1", fetcher, catalogId: "CAT",
+    });
+    expect(uploaded).toEqual([key]);
+  });
+
+  it("uploads everything when the dedup probe fails", async () => {
+    const bytes = new Uint8Array([3]);
+    const key = blobKey("t1", "CAT", await sha256Hex(bytes));
+    const uploaded: string[] = [];
+    const fetcher: AuthedFetch = async (path, _init, extra) => {
+      if (path.startsWith("/api/import/existing-blobs")) return new Response("boom", { status: 500 });
+      if (path === "/api/import/poster") uploaded.push(extra!["x-poster-key"]);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    await importAmcFile(amcBlob([movie("Stalker", bytes)]), {
+      tenantId: "t1", fetcher, catalogId: "CAT",
+    });
+    expect(uploaded).toEqual([key]);
   });
 });
