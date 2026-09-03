@@ -10,6 +10,7 @@ import { catalogToRows } from "../amc/mapping";
 import type { ImportResult } from "../amc/mapping";
 import { detectEncoding, toReadable } from "../amc/transcode";
 import type { LegacyEncoding } from "../amc/codepages";
+import { runPool } from "./pool";
 
 /** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
 export type AuthedFetch = (
@@ -69,7 +70,9 @@ function requester(o: ImportOptions): AuthedFetch {
 }
 
 /** How many poster PUTs to keep in flight at once. Enough to hide round-trip
- *  latency without overwhelming a phone connection or the Worker. */
+ *  latency without overwhelming a phone connection or the Worker. Deliberately
+ *  lower than export's prefetch concurrency: uploads from a phone are the
+ *  asymmetric direction. */
 const POSTER_CONCURRENCY = 6;
 
 /** PUT every poster to R2 with a bounded pool of concurrent workers. Rejects (so
@@ -79,24 +82,20 @@ async function uploadPosters(
   jobs: Array<{ data: Uint8Array; key: string }>,
   onProgress?: (done: number, total: number, phase: "reading" | "posters" | "rows") => void,
 ): Promise<void> {
-  const total = jobs.length;
-  if (!total) return;
-  onProgress?.(0, total, "posters");
-  let next = 0;
-  let done = 0;
-  async function worker(): Promise<void> {
-    while (next < jobs.length) {
-      const job = jobs[next++];
+  if (!jobs.length) return;
+  onProgress?.(0, jobs.length, "posters");
+  await runPool(
+    jobs.map((job) => async () => {
       const res = await send(
         "/api/import/poster",
         { method: "PUT", body: job.data as BodyInit },
         { "x-poster-key": job.key, "content-type": "application/octet-stream" },
       );
       if (!res.ok) throw new Error(`poster upload failed (${res.status}) for ${job.key}`);
-      onProgress?.(++done, total, "posters");
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(POSTER_CONCURRENCY, total) }, worker));
+    }),
+    POSTER_CONCURRENCY,
+    (done, total) => onProgress?.(done, total, "posters"),
+  );
 }
 
 /**
