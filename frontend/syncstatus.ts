@@ -61,11 +61,17 @@ export function deriveStatus(cat: CatalogRow, inFlight?: TransferState): SyncSta
     return { kind: "unknown", localDirty: pending > 0, pending };
   }
   if (cat.remote_state === "missing") return { kind: "remote-gone" };
-
-  const remoteMoved = cat.remote_state === "differs";
-  if (pending > 0) {
-    return remoteMoved ? { kind: "conflict", pending } : { kind: "not-synced", pending };
+  if (cat.remote_state === "differs") {
+    return pending > 0 ? { kind: "conflict", pending } : { kind: "changed-externally" };
   }
-  if (remoteMoved) return { kind: "changed-externally" };
-  return { kind: "synced", at: cat.last_sync_at ?? 0 };
+  if (cat.remote_state === "match") {
+    return pending > 0
+      ? { kind: "not-synced", pending }
+      : { kind: "synced", at: cat.last_sync_at ?? 0 };
+  }
+  // Unrecognized remote_state. remote_state is a plain TEXT column, so nothing
+  // stops a future writer storing something new here — and the one thing this
+  // module must never do is guess "synced". Fall back to unknown, which prompts
+  // a re-check rather than asserting the cloud file is current.
+  return { kind: "unknown", localDirty: pending > 0, pending };
 }

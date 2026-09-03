@@ -63,6 +63,15 @@ describe("deriveStatus", () => {
     expect(deriveStatus(cat({ content_rev: 6, synced_rev: 4, remote_state: "differs" })))
       .toEqual({ kind: "conflict", pending: 2 });
   });
+
+  it("is unknown, never synced, for an unrecognized remote_state", () => {
+    // remote_state is a plain TEXT column (string | null), not a literal union,
+    // so nothing at compile time stops a typo or a future writer from storing
+    // something outside 'match' | 'differs' | 'missing'. The one thing this
+    // function must never do is guess "synced" in that case.
+    expect(deriveStatus(cat({ content_rev: 4, synced_rev: 4, remote_state: "bogus" })).kind)
+      .toBe("unknown");
+  });
 });
 
 describe("SHOWS_SYNC_BUTTON", () => {
