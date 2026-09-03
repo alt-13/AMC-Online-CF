@@ -38,7 +38,7 @@ function remoteTitle(m: AMCMovie): string {
 
 /** The heuristic match key. Never used to write. */
 function key(number: number, title: string): string {
-  return `${number}${title.toLowerCase().trim()}`;
+  return `${number}\u001f${title.toLowerCase().trim()}`;
 }
 
 /** The fields worth comparing for "differing". Deliberately the ones a person
@@ -47,13 +47,13 @@ function localShape(m: MovieRow): string {
   return [
     m.original_title, m.translated_title, m.year, m.director, m.rating,
     m.category, m.length, m.description,
-  ].join("");
+  ].join("\u001f");
 }
 function remoteShape(m: AMCMovie): string {
   return [
     m.originalTitle, m.translatedTitle, m.year, m.director, m.rating,
     m.category, m.length, m.description,
-  ].join("");
+  ].join("\u001f");
 }
 
 /**
