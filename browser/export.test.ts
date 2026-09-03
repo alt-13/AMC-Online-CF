@@ -113,4 +113,34 @@ describe("exportAmcFile poster prefetch", () => {
     const { fetcher } = stub({ failKey: KEY_B });
     await expect(exportAmcFile("cat-1", { tenantId: T, fetcher })).rejects.toThrow(/poster fetch failed/);
   });
+
+  it("fetches posters concurrently, not one after another", async () => {
+    let live = 0;
+    let peak = 0;
+    // Enough distinct keys to exceed PREFETCH_CONCURRENCY, so the pool is
+    // genuinely exercised rather than trivially satisfied.
+    const keys = Array.from({ length: 12 }, (_, i) => `${T}/cat-1/blobs/${String(i).padStart(64, "0")}.jpg`);
+    const movies = keys.map((k, i) => movieRow(`m${i}`, i + 1, `Film ${i}`, k));
+    const bundle = { ...BUNDLE, movies };
+
+    const fetcher: AuthedFetch = async (path) => {
+      if (path.includes("/export")) {
+        return new Response(JSON.stringify(bundle), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path.startsWith("/api/poster")) {
+        live += 1;
+        peak = Math.max(peak, live);
+        await new Promise((r) => setTimeout(r, 10));
+        live -= 1;
+        return new Response(new Uint8Array([1]));
+      }
+      throw new Error(`unexpected path ${path}`);
+    };
+
+    await exportAmcFile("cat-1", { tenantId: T, fetcher });
+    // Serial fetching would never exceed 1 in flight.
+    expect(peak).toBeGreaterThan(1);
+  });
 });
