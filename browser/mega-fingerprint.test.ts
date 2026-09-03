@@ -15,6 +15,7 @@ import {
   megaB64,
   fingerprintCrc,
   computeFingerprint,
+  contentCrcOf,
 } from "./mega-fingerprint.ts";
 
 const ascii = (s: string) => new TextEncoder().encode(s);
@@ -184,5 +185,34 @@ describe("computeFingerprint", () => {
     buf.set(crc, 0);
     buf.set(s64, crc.length);
     expect(computeFingerprint(data, mtime)).toBe(megaB64(buf));
+  });
+});
+
+describe("contentCrcOf", () => {
+  const bytes = new Uint8Array(Array.from({ length: 20000 }, (_, i) => i % 251));
+
+  it("ignores the mtime embedded in the fingerprint", () => {
+    const a = computeFingerprint(bytes, 1_600_000_000);
+    const b = computeFingerprint(bytes, 1_700_000_000);
+    expect(a).not.toBe(b);                       // the fingerprints differ...
+    expect(contentCrcOf(a)).toBe(contentCrcOf(b)); // ...but the content half does not
+  });
+
+  it("changes when the content changes", () => {
+    const other = new Uint8Array(bytes);
+    other[0] ^= 0xff;
+    const a = computeFingerprint(bytes, 1_600_000_000);
+    const b = computeFingerprint(other, 1_600_000_000);
+    expect(contentCrcOf(a)).not.toBe(contentCrcOf(b));
+  });
+
+  it("returns a 32-char hex string", () => {
+    expect(contentCrcOf(computeFingerprint(bytes, 1))).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("returns empty string for malformed input instead of throwing", () => {
+    expect(contentCrcOf("")).toBe("");
+    expect(contentCrcOf("!!!")).toBe("");
+    expect(contentCrcOf("AAAA")).toBe(""); // decodes to fewer than 16 bytes
   });
 });

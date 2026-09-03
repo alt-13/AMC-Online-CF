@@ -151,3 +151,48 @@ export function computeFingerprint(data: Uint8Array, mtimeSec: number): string {
   buf.set(mtime, crc.length);
   return megaB64(buf);
 }
+
+// --- reading a fingerprint back --------------------------------------------
+//
+// Sync status compares the fingerprint we pushed against the one on the remote
+// node. But `c` is 4 CRC32 lanes followed by Serialize64(mtime), so comparing
+// the whole string also compares the mtime — and a touch that changes only the
+// mtime would then read as a CONTENT change and prompt a needless re-import.
+//
+// So compare the CRC half only. The base64 encoding runs across the CRC/mtime
+// join (16 bytes is not a multiple of 3), so the prefix MUST be taken after
+// decoding — slicing the string would mix in mtime bits.
+
+/** Inverse of megaB64: decode MEGA's url-safe, unpadded base64. Returns null on
+ *  any character outside the alphabet. */
+function megaB64Decode(s: string): Uint8Array | null {
+  const out: number[] = [];
+  let acc = 0;
+  let bits = 0;
+  for (const ch of s) {
+    const v = B64.indexOf(ch);
+    if (v < 0) return null;
+    acc = (acc << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((acc >> bits) & 0xff);
+    }
+  }
+  return Uint8Array.from(out);
+}
+
+/**
+ * The CONTENT half of a Mega fingerprint as hex: the 4 CRC32 lanes, with the
+ * trailing mtime discarded. Two fingerprints over identical bytes taken at
+ * different times give the same value.
+ *
+ * Returns "" for anything malformed, so a comparison against a garbled stored
+ * value reads as "differs" — the safe direction (it prompts a re-check, and a
+ * re-import is idempotent).
+ */
+export function contentCrcOf(fingerprint: string): string {
+  const raw = megaB64Decode(fingerprint);
+  if (!raw || raw.length < CRC_SIZE) return "";
+  return Array.from(raw.subarray(0, CRC_SIZE), (b) => b.toString(16).padStart(2, "0")).join("");
+}
