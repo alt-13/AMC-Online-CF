@@ -46,8 +46,18 @@ export interface CloudProvider {
  *
  * Named and exported so it is trivial to retune: if a phone's uplink saturates
  * below 8 connections there is no benefit, and the right value is empirical.
+ *
+ * Frozen because this one object is shared across both directions:
+ * uploadToMega spreads it into a fresh object before handing it to megajs (so
+ * megajs's in-place mutation of its argument can't touch the shared original),
+ * but downloadFromMega passes it straight through. Today's megajs only reads
+ * from it, so that's not a live bug — but nothing besides megajs's current
+ * implementation guarantees that, and a version bump could silently start
+ * corrupting this object for the rest of the session. Object.freeze turns a
+ * future write into a loud failure (throws in strict mode, a silent no-op
+ * otherwise) instead of that.
  */
-export const TRANSFER_OPTS = { maxConnections: 8, initialChunkSize: 1024 * 1024 };
+export const TRANSFER_OPTS = Object.freeze({ maxConnections: 8, initialChunkSize: 1024 * 1024 });
 
 // --- Mega provider ---------------------------------------------------------
 
