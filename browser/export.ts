@@ -29,6 +29,9 @@ export interface ExportOptions {
    * to plain fetch with the (frozen) `authHeader` for tests/standalone use.
    */
   fetcher?: AuthedFetch;
+  /** Rows per bundle page. Pages are fetched concurrently; keep it large enough
+   *  that a big catalog is a handful of requests, not hundreds. */
+  pageSize?: number;
 }
 
 /** How many poster GETs to keep in flight while prefetching. Higher than
@@ -58,9 +61,41 @@ function requester(o: ExportOptions): AuthedFetch {
 /** Rebuild an .amc file for `catalogId` and return it as a Blob for download. */
 export async function exportAmcFile(catalogId: string, opts: ExportOptions): Promise<Blob> {
   const send = requester(opts);
-  const res = await send(`/api/catalog/${encodeURIComponent(catalogId)}/export`);
-  if (!res.ok) throw new Error(`export bundle fetch failed (${res.status})`);
-  const bundle = (await res.json()) as ExportBundle;
+  const pageSize = opts.pageSize ?? 500;
+  const base = `/api/catalog/${encodeURIComponent(catalogId)}/export`;
+
+  const jget = async <T>(qs: string): Promise<T> => {
+    const res = await send(`${base}?${qs}`);
+    if (!res.ok) throw new Error(`export bundle fetch failed (${res.status})`);
+    return (await res.json()) as T;
+  };
+
+  // Meta first — it tells us how many pages there are. Then every movie and
+  // extra page at once: the Worker used to loop these serially inside a single
+  // request, which cost a round-trip per 500 rows in sequence.
+  const meta = await jget<{
+    catalog: CatalogRow;
+    customFieldDefs: CustomFieldDefRow[];
+    movieCount: number;
+    extraCount: number;
+  }>("part=meta");
+
+  const pageOffsets = (count: number): number[] =>
+    Array.from({ length: Math.ceil(count / pageSize) }, (_, i) => i * pageSize);
+
+  const [moviePages, extraPages] = await Promise.all([
+    Promise.all(pageOffsets(meta.movieCount).map((offset) =>
+      jget<MovieRow[]>(`part=movies&limit=${pageSize}&offset=${offset}`))),
+    Promise.all(pageOffsets(meta.extraCount).map((offset) =>
+      jget<ExtraRow[]>(`part=extras&limit=${pageSize}&offset=${offset}`))),
+  ]);
+
+  const bundle: ExportBundle = {
+    catalog: meta.catalog,
+    customFieldDefs: meta.customFieldDefs,
+    movies: moviePages.flat(),
+    extras: extraPages.flat(),
+  };
 
   const extrasByMovie = new Map<string, ExtraRow[]>();
   for (const e of bundle.extras) {

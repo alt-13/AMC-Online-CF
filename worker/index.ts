@@ -430,23 +430,50 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ id: cat.id, source_ref });
   }
 
-  // GET /api/catalog/:id/export  — full row bundle for the browser rebuild.
-  // Reads movies + extras in bounded pages (never one unbounded query) and
-  // reassembles the whole set the export format needs.
+  // GET /api/catalog/:id/export  — the row bundle for the browser rebuild.
+  //
+  // Three shapes:
+  //   ?part=meta                      -> catalog + defs + row counts (+ content_rev)
+  //   ?part=movies&limit=&offset=     -> one page of movies
+  //   ?part=extras&limit=&offset=     -> one page of extras
+  //   (no part)                       -> the whole bundle, as before
+  //
+  // The parts exist so the browser can fetch pages CONCURRENTLY. The unpaged
+  // form loops the same queries serially inside one request, which is the thing
+  // the parts replace; it stays for callers that have not moved over.
   if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "export" && m === "GET") {
     const cat = await db.getCatalog(env, t, seg[2]);
     if (!cat) return err(404, "catalog not found");
     const PAGE = 500;
+    const part = url.searchParams.get("part");
+    const limit = Number(url.searchParams.get("limit") ?? PAGE);
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+
+    if (part === "meta") {
+      return json({
+        catalog: cat,
+        customFieldDefs: await db.getCustomFieldDefs(env, cat.id),
+        movieCount: await db.countMovies(env, cat.id),
+        extraCount: await db.countExtras(env, cat.id),
+      });
+    }
+    if (part === "movies") {
+      return json(await db.listMovies(env, cat.id, { limit, offset }));
+    }
+    if (part === "extras") {
+      return json(await db.getAllExtras(env, cat.id, { limit, offset }));
+    }
+
     const customFieldDefs = await db.getCustomFieldDefs(env, cat.id);
     const movies: MovieRow[] = [];
-    for (let offset = 0; ; offset += PAGE) {
-      const chunk = await db.listMovies(env, cat.id, { limit: PAGE, offset });
+    for (let off = 0; ; off += PAGE) {
+      const chunk = await db.listMovies(env, cat.id, { limit: PAGE, offset: off });
       movies.push(...chunk);
       if (chunk.length < PAGE) break;
     }
     const extras: ExtraRow[] = [];
-    for (let offset = 0; ; offset += PAGE) {
-      const chunk = await db.getAllExtras(env, cat.id, { limit: PAGE, offset });
+    for (let off = 0; ; off += PAGE) {
+      const chunk = await db.getAllExtras(env, cat.id, { limit: PAGE, offset: off });
       extras.push(...chunk);
       if (chunk.length < PAGE) break;
     }

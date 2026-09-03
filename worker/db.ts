@@ -482,6 +482,17 @@ export async function countMovies(env: Env, catalogId: string): Promise<number> 
   return row?.n ?? 0;
 }
 
+export async function countExtras(env: Env, catalogId: string): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM movie_extras e
+       JOIN movies m ON m.id = e.movie_id
+      WHERE m.catalog_id = ?`,
+  )
+    .bind(catalogId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 export async function getMovie(env: Env, id: string): Promise<MovieRow | null> {
   return env.DB.prepare(`SELECT * FROM movies WHERE id = ?`).bind(id).first<MovieRow>();
 }

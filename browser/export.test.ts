@@ -53,14 +53,39 @@ const BUNDLE = {
   extras: [],
 };
 
+/**
+ * Answer the three `?part=` shapes export.ts now requests, plus the
+ * unparameterised back-compat shape (the whole bundle), for a given bundle.
+ * Shared by every stub below so each only has to describe its posters.
+ */
+function exportResponse(bundle: typeof BUNDLE, path: string): Response {
+  const u = new URL(path, "http://x");
+  const part = u.searchParams.get("part");
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+  if (part === "meta") {
+    return json({
+      catalog: bundle.catalog,
+      customFieldDefs: bundle.customFieldDefs,
+      movieCount: bundle.movies.length,
+      extraCount: bundle.extras.length,
+    });
+  }
+  if (part === "movies" || part === "extras") {
+    const rows = part === "movies" ? bundle.movies : bundle.extras;
+    const offset = Number(u.searchParams.get("offset") ?? 0);
+    const limit = Number(u.searchParams.get("limit") ?? rows.length);
+    return json(rows.slice(offset, offset + limit));
+  }
+  return json(bundle);
+}
+
 /** Stub fetcher. `delay(key)` lets a test invert completion order. */
 function stub(opts: { delay?: (key: string) => number; failKey?: string } = {}) {
   const posterCalls: string[] = [];
   const fetcher: AuthedFetch = async (path) => {
     if (path.includes("/export")) {
-      return new Response(JSON.stringify(BUNDLE), {
-        headers: { "content-type": "application/json" },
-      });
+      return exportResponse(BUNDLE, path);
     }
     if (path.startsWith("/api/poster")) {
       const key = decodeURIComponent(new URL(path, "http://x").searchParams.get("key")!);
@@ -91,9 +116,7 @@ describe("exportAmcFile poster prefetch", () => {
     const posterCalls: string[] = [];
     const fetcher: AuthedFetch = async (path) => {
       if (path.includes("/export")) {
-        return new Response(JSON.stringify(bundle), {
-          headers: { "content-type": "application/json" },
-        });
+        return exportResponse(bundle, path);
       }
       if (path.startsWith("/api/poster")) {
         const key = decodeURIComponent(new URL(path, "http://x").searchParams.get("key")!);
@@ -166,9 +189,7 @@ describe("exportAmcFile poster prefetch", () => {
 
     const fetcher: AuthedFetch = async (path) => {
       if (path.includes("/export")) {
-        return new Response(JSON.stringify(bundle), {
-          headers: { "content-type": "application/json" },
-        });
+        return exportResponse(bundle, path);
       }
       if (path.startsWith("/api/poster")) {
         live += 1;
@@ -183,5 +204,49 @@ describe("exportAmcFile poster prefetch", () => {
     await exportAmcFile("cat-1", { tenantId: T, fetcher });
     // Serial fetching would never exceed 1 in flight.
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+describe("paged export bundle", () => {
+  it("fetches meta once and the row pages concurrently, matching the unpaged result", async () => {
+    const paths: string[] = [];
+    const PAGE = 2;
+    const fetcher: AuthedFetch = async (path) => {
+      paths.push(path);
+      const u = new URL(path, "http://x");
+      const part = u.searchParams.get("part");
+      if (part === "meta") {
+        return new Response(JSON.stringify({
+          catalog: BUNDLE.catalog,
+          customFieldDefs: [],
+          movieCount: BUNDLE.movies.length,
+          extraCount: 0,
+        }), { headers: { "content-type": "application/json" } });
+      }
+      if (part === "movies") {
+        const offset = Number(u.searchParams.get("offset") ?? 0);
+        const limit = Number(u.searchParams.get("limit") ?? PAGE);
+        return new Response(JSON.stringify(BUNDLE.movies.slice(offset, offset + limit)), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (part === "extras") {
+        return new Response(JSON.stringify([]), { headers: { "content-type": "application/json" } });
+      }
+      if (path.startsWith("/api/poster")) {
+        const key = decodeURIComponent(u.searchParams.get("key")!);
+        return new Response(new Uint8Array([key === KEY_A ? 0xaa : 0xbb]));
+      }
+      throw new Error(`unexpected path ${path}`);
+    };
+
+    const paged = await exportAmcFile("cat-1", { tenantId: T, fetcher, pageSize: PAGE });
+    const unpaged = await exportAmcFile("cat-1", { tenantId: T, fetcher: stub().fetcher });
+
+    expect(new Uint8Array(await paged.arrayBuffer()))
+      .toEqual(new Uint8Array(await unpaged.arrayBuffer()));
+    expect(paths.filter((p) => p.includes("part=meta"))).toHaveLength(1);
+    // 4 movies at page size 2 => 2 movie pages.
+    expect(paths.filter((p) => p.includes("part=movies"))).toHaveLength(2);
   });
 });
