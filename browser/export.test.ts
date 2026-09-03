@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { exportAmcFile, type AuthedFetch } from "./export";
 import { parseCatalog } from "../amc/parser";
+import { clampPagingParam } from "../worker/index";
 
 // Export used to await one poster fetch per movie inside the rebuild loop, so a
 // catalog with N posters cost N sequential round-trips. These tests pin the two
@@ -54,9 +55,9 @@ const BUNDLE = {
 };
 
 /**
- * Answer the three `?part=` shapes export.ts now requests, plus the
- * unparameterised back-compat shape (the whole bundle), for a given bundle.
- * Shared by every stub below so each only has to describe its posters.
+ * Answer the three `?part=` shapes export.ts requests (meta/movies/extras —
+ * the only shapes the Worker route supports) for a given bundle. Shared by
+ * every stub below so each only has to describe its posters.
  */
 function exportResponse(bundle: typeof BUNDLE, path: string): Response {
   const u = new URL(path, "http://x");
@@ -77,7 +78,7 @@ function exportResponse(bundle: typeof BUNDLE, path: string): Response {
     const limit = Number(u.searchParams.get("limit") ?? rows.length);
     return json(rows.slice(offset, offset + limit));
   }
-  return json(bundle);
+  throw new Error(`exportResponse: unexpected part ${String(part)}`);
 }
 
 /** Stub fetcher. `delay(key)` lets a test invert completion order. */
@@ -241,12 +242,60 @@ describe("paged export bundle", () => {
     };
 
     const paged = await exportAmcFile("cat-1", { tenantId: T, fetcher, pageSize: PAGE });
-    const unpaged = await exportAmcFile("cat-1", { tenantId: T, fetcher: stub().fetcher });
+    // "default-paged": same client, default pageSize (500) instead of PAGE (2) —
+    // still always goes through part=meta/movies/extras, there is no bare/
+    // unparameterised request left to compare against (the Worker route no
+    // longer serves one; see worker/index.ts).
+    const defaultPaged = await exportAmcFile("cat-1", { tenantId: T, fetcher: stub().fetcher });
 
     expect(new Uint8Array(await paged.arrayBuffer()))
-      .toEqual(new Uint8Array(await unpaged.arrayBuffer()));
+      .toEqual(new Uint8Array(await defaultPaged.arrayBuffer()));
     expect(paths.filter((p) => p.includes("part=meta"))).toHaveLength(1);
     // 4 movies at page size 2 => 2 movie pages.
     expect(paths.filter((p) => p.includes("part=movies"))).toHaveLength(2);
+  });
+});
+
+// clampPagingParam backs the Worker's `limit`/`offset` query-param handling
+// for GET /api/catalog/:id/export (worker/index.ts). It is exported as a pure
+// function specifically so this boundary logic can be unit-tested without
+// standing up a Worker (D1/R2 bindings, auth, routing) — see worker/db.test.ts's
+// normalizeMovieNumber for the established pattern this mirrors.
+describe("clampPagingParam", () => {
+  it("falls back to the default when the param is absent", () => {
+    expect(clampPagingParam(null, 500, 1, 500)).toBe(500);
+  });
+
+  it("falls back to the default for a non-numeric value (would otherwise bind NaN to D1)", () => {
+    expect(clampPagingParam("banana", 500, 1, 500)).toBe(500);
+    expect(clampPagingParam("", 0, 0, 500)).toBe(0);
+    expect(clampPagingParam("NaN", 500, 1, 500)).toBe(500);
+  });
+
+  it("falls back to the default for non-finite input (Infinity)", () => {
+    expect(clampPagingParam("Infinity", 500, 1, 500)).toBe(500);
+    expect(clampPagingParam("-Infinity", 0, 0, 500)).toBe(0);
+  });
+
+  it("clamps a negative limit to the minimum, defeating SQLite's negative-LIMIT-means-unlimited behaviour", () => {
+    expect(clampPagingParam("-1", 500, 1, 500)).toBe(1);
+  });
+
+  it("clamps an over-large limit to the server's page cap", () => {
+    expect(clampPagingParam("999999", 500, 1, 500)).toBe(500);
+  });
+
+  it("truncates a fractional value to an integer", () => {
+    expect(clampPagingParam("12.9", 500, 1, 500)).toBe(12);
+  });
+
+  it("allows offset 0 and clamps a negative offset to 0", () => {
+    expect(clampPagingParam("0", 0, 0, Number.MAX_SAFE_INTEGER)).toBe(0);
+    expect(clampPagingParam("-5", 0, 0, Number.MAX_SAFE_INTEGER)).toBe(0);
+  });
+
+  it("passes through a valid in-range value unchanged", () => {
+    expect(clampPagingParam("250", 500, 1, 500)).toBe(250);
+    expect(clampPagingParam("1000", 0, 0, Number.MAX_SAFE_INTEGER)).toBe(1000);
   });
 });

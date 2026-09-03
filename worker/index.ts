@@ -32,6 +32,27 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
 
 const err = (status: number, message: string): Response => json({ error: message }, status);
 
+/** Clamp a client-supplied paging query param (`limit`/`offset`) at the D1
+ *  boundary — the same reasoning as `normalizeMovieNumber` in db.ts: an
+ *  untrusted numeric input must be made safe where it enters storage, not
+ *  trusted downstream. Concretely: SQLite treats a negative `LIMIT` as
+ *  "unlimited" (which would reopen the whole-catalog read paging exists to
+ *  avoid), and a non-numeric value produces `NaN`, which is not a valid D1
+ *  bind and is more likely to 500 than to fail cleanly. Anything non-finite
+ *  falls back to `fallback` instead of reaching D1; anything finite is
+ *  truncated to an integer and clamped to `[min, max]`. */
+export function clampPagingParam(
+  raw: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (raw === null) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(min, Math.trunc(n)), max);
+}
+
 /** Key used to encrypt/decrypt stored cloud credentials: a dedicated
  *  ENCRYPTION_SECRET if provided, else AUTH_SECRET (so existing deploys keep
  *  working, but rotating AUTH_SECRET no longer bricks saved credentials). */
@@ -468,22 +489,27 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
 
   // GET /api/catalog/:id/export  — the row bundle for the browser rebuild.
   //
-  // Three shapes:
+  // Three shapes, and only these three — a bare/unrecognised `part` is
+  // rejected rather than served:
   //   ?part=meta                      -> catalog + defs + row counts (+ content_rev)
   //   ?part=movies&limit=&offset=     -> one page of movies
   //   ?part=extras&limit=&offset=     -> one page of extras
-  //   (no part)                       -> the whole bundle, as before
   //
-  // The parts exist so the browser can fetch pages CONCURRENTLY. The unpaged
-  // form loops the same queries serially inside one request, which is the thing
-  // the parts replace; it stays for callers that have not moved over.
+  // The parts exist so the browser can fetch pages CONCURRENTLY (see
+  // browser/export.ts). There used to be a fourth, unparameterised shape that
+  // looped the same queries serially inside a single request to build the
+  // whole bundle at once — exactly the unbounded whole-catalog read this
+  // paging was added to get away from (see CLAUDE.md rule 7: a Worker request
+  // must never load more than a handful of rows). It had no caller — the only
+  // consumer is browser/export.ts, and it always sends a `part` — so it was
+  // removed rather than kept "just in case".
   if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "export" && m === "GET") {
     const cat = await db.getCatalog(env, t, seg[2]);
     if (!cat) return err(404, "catalog not found");
     const PAGE = 500;
     const part = url.searchParams.get("part");
-    const limit = Number(url.searchParams.get("limit") ?? PAGE);
-    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const limit = clampPagingParam(url.searchParams.get("limit"), PAGE, 1, PAGE);
+    const offset = clampPagingParam(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
 
     if (part === "meta") {
       return json({
@@ -499,21 +525,7 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     if (part === "extras") {
       return json(await db.getAllExtras(env, cat.id, { limit, offset }));
     }
-
-    const customFieldDefs = await db.getCustomFieldDefs(env, cat.id);
-    const movies: MovieRow[] = [];
-    for (let off = 0; ; off += PAGE) {
-      const chunk = await db.listMovies(env, cat.id, { limit: PAGE, offset: off });
-      movies.push(...chunk);
-      if (chunk.length < PAGE) break;
-    }
-    const extras: ExtraRow[] = [];
-    for (let off = 0; ; off += PAGE) {
-      const chunk = await db.getAllExtras(env, cat.id, { limit: PAGE, offset: off });
-      extras.push(...chunk);
-      if (chunk.length < PAGE) break;
-    }
-    return json({ catalog: cat, customFieldDefs, movies, extras });
+    return err(400, "part must be one of: meta, movies, extras");
   }
 
   // Movie item routes: /api/movies/:id
