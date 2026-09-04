@@ -114,23 +114,34 @@ async function uploadPosters(
  * means we upload everything (correct, only slower). Returns an empty set on
  * any error.
  */
+// Hard cap on pages fetched. At up to ~1000 keys/page this is far beyond any
+// real catalog, so it never bites in practice — it exists only so a
+// misbehaving/looping server can't hang this "best-effort" helper forever.
+// This function's whole contract is "never break an import", and an infinite
+// loop with no error and no progress is worse than the safe fallback (upload
+// everything) that every other failure path here already takes.
+const EXISTING_BLOBS_MAX_PAGES = 50;
+
 async function existingBlobKeys(send: AuthedFetch, catalogId: string): Promise<Set<string>> {
   const found = new Set<string>();
   let cursor: string | null = null;
   try {
-    do {
+    for (let page = 0; page < EXISTING_BLOBS_MAX_PAGES; page++) {
       const qs = new URLSearchParams({ catalogId });
       if (cursor) qs.set("cursor", cursor);
       const res = await send(`/api/import/existing-blobs?${qs}`);
       if (!res.ok) return new Set();
-      const page = (await res.json()) as { keys: string[]; next: string | null };
-      for (const k of page.keys) found.add(k);
-      cursor = page.next;
-    } while (cursor);
+      const body = (await res.json()) as { keys: string[]; next: string | null };
+      for (const k of body.keys) found.add(k);
+      cursor = body.next;
+      if (!cursor) return found;
+    }
+    // Exceeded the page cap without exhausting the cursor — bail out to the
+    // same safe fallback as any other failure: upload everything.
+    return new Set();
   } catch {
     return new Set();
   }
-  return found;
 }
 
 /**

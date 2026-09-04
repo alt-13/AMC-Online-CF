@@ -185,15 +185,19 @@ function settleDialog(action: DialogResult["action"], value?: string) {
   r?.({ action, value });
 }
 
-async function refresh() {
-  loading.value = true;
+/** Pull the catalog list. `silent` skips the loading placeholder — used when
+ *  re-pulling rows to reflect a status check, so the list updates in place
+ *  instead of blanking out to "Loading…" (the initial mount and the
+ *  post-export/post-delete refreshes still want the normal loading flash). */
+async function refresh(opts: { silent?: boolean } = {}) {
+  if (!opts.silent) loading.value = true;
   error.value = "";
   try {
     catalogs.value = await cf.listCatalogs();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    loading.value = false;
+    if (!opts.silent) loading.value = false;
   }
 }
 
@@ -407,7 +411,7 @@ async function onRefreshStatus() {
   checking.value = true;
   try {
     await checkRemoteStates(catalogs.value);
-    await refresh(); // pull the recorded verdicts back into the rows
+    await refresh({ silent: true }); // pull the recorded verdicts back into the rows in place
   } finally {
     checking.value = false;
   }

@@ -896,9 +896,15 @@ async function onFile(ev: Event) {
     await loadPoster(key);
     // Reclaim the old object only if it was a legacy per-movie key (this movie
     // alone could reference it). Blob keys may be shared by identical artwork,
-    // so they are left to the GC.
+    // so they are left to the GC. Best-effort: the new poster is already live
+    // by this point, so a cleanup failure (offline, DNS, CORS, …) must not be
+    // reported as a failed edit — it just leaves an orphaned legacy object.
     if (previous && previous !== key && !isBlobKey(previous)) {
-      await cf.deleteLegacyPoster(previous);
+      try {
+        await cf.deleteLegacyPoster(previous);
+      } catch (e) {
+        console.warn(`onFile: failed to delete legacy poster ${previous}`, e);
+      }
     }
     posterMsg.value = "";
     emit("changed");

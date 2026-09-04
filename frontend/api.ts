@@ -329,9 +329,17 @@ export const cf = {
     const updated = await cf.updateMovie(movie.id, { poster_key: key, pic_path: ".jpg" });
     // The row no longer points at the old object. A legacy key belonged to this
     // movie alone, so reclaim it now; a blob key may be shared, so leave it to
-    // the GC.
+    // the GC. Best-effort: the edit above already succeeded, so a failure here
+    // (offline, DNS, CORS, …) must not be reported as a failed poster edit — it
+    // just leaves an orphaned legacy object for the GC to catch later.
     const old = movie.poster_key;
-    if (old && old !== key && !isBlobKey(old)) await cf.deleteLegacyPoster(old);
+    if (old && old !== key && !isBlobKey(old)) {
+      try {
+        await cf.deleteLegacyPoster(old);
+      } catch (e) {
+        console.warn(`setPictureFromUrl: failed to delete legacy poster ${old}`, e);
+      }
+    }
     return updated;
   },
 
@@ -360,7 +368,8 @@ export const cf = {
    *  them — a hash can be shared, so only the GC may remove one). */
   deleteLegacyPoster: async (key: string): Promise<void> => {
     if (isBlobKey(key)) return;
-    await authedFetch(`/api/poster?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+    const res = await authedFetch(`/api/poster?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+    if (!res.ok) console.warn(`deleteLegacyPoster: ${key} -> ${res.status}`);
   },
 };
 
