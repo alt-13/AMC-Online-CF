@@ -526,6 +526,38 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ ok: true });
   }
 
+  // POST /api/catalog/:id/gc-posters?cursor=
+  //   Reclaim superseded poster blobs. Content addressing means a changed
+  //   poster writes a NEW key and leaves the old object behind (it may be shared
+  //   by identical artwork, so no write path may delete it) — this is where they
+  //   go.
+  //
+  //   One R2 list page per request, cursor returned for the browser to loop:
+  //   a catalog can hold thousands of objects and a Worker has ~10 ms of CPU.
+  if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "gc-posters" && m === "POST") {
+    const cat = await db.getCatalog(env, t, seg[2]);
+    if (!cat) return err(404, "catalog not found");
+    const referenced = await db.referencedPosterKeys(env, cat.id);
+    const blobs = `${t}/${cat.id}/blobs/`;
+    // An import PUTs blobs BEFORE committing the rows that reference them, so a
+    // concurrent import would look like an orphan. Never touch anything recent.
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    const listed = await env.R2.list({
+      prefix: blobs,
+      cursor: url.searchParams.get("cursor") ?? undefined,
+      include: ["httpMetadata"],
+    });
+    const stale = listed.objects
+      .filter((o) => !referenced.has(o.key) && o.uploaded.getTime() < cutoff)
+      .map((o) => o.key);
+    if (stale.length) await env.R2.delete(stale);
+    return json({
+      deleted: stale.length,
+      scanned: listed.objects.length,
+      next: listed.truncated ? listed.cursor : null,
+    });
+  }
+
   // POST /api/catalog/:id/source-ref  { source_ref } — adopt a cloud origin for a
   // catalog that had none (first push of a direct-upload library to the cloud).
   if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "source-ref" && m === "POST") {

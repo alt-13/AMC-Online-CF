@@ -318,6 +318,21 @@ export async function setCatalogSourceRef(
     .run();
 }
 
+/** Every poster key this catalog's rows still point at (movies + extras).
+ *  Short strings, one query — safe to hold in a Worker. */
+export async function referencedPosterKeys(env: Env, catalogId: string): Promise<Set<string>> {
+  const { results } = await env.DB.prepare(
+    `SELECT poster_key FROM movies WHERE catalog_id = ? AND poster_key IS NOT NULL
+     UNION
+     SELECT e.poster_key FROM movie_extras e
+       JOIN movies m ON m.id = e.movie_id
+      WHERE m.catalog_id = ? AND e.poster_key IS NOT NULL`,
+  )
+    .bind(catalogId, catalogId)
+    .all<{ poster_key: string }>();
+  return new Set((results ?? []).map((r) => r.poster_key));
+}
+
 /** Delete a catalog. movies + custom_field_defs + extras cascade via FK;
  *  posters in R2 are cleaned by the caller (purgeCatalog sweeps them by prefix). */
 export async function deleteCatalog(env: Env, id: string): Promise<void> {

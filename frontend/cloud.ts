@@ -454,6 +454,11 @@ export async function reimportFromOrigin(
     // Drop any cached compare-download: a later compare should re-read the
     // real file, not a stale snapshot from before this resolve.
     if (catalog.source_ref) await dropCachedAmc(catalog.source_ref);
+
+    // A re-import is the moment orphans appear in bulk: posters the previous
+    // contents referenced and the new ones do not. Best-effort, so it never
+    // fails the re-import.
+    void cf.gcPosters(catalog.id);
   } finally {
     tx.end();
     disconnect();

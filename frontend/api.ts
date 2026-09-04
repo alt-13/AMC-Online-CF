@@ -371,6 +371,30 @@ export const cf = {
     const res = await authedFetch(`/api/poster?key=${encodeURIComponent(key)}`, { method: "DELETE" });
     if (!res.ok) console.warn(`deleteLegacyPoster: ${key} -> ${res.status}`);
   },
+
+  /** Reclaim superseded poster blobs, one R2 page per request. Best-effort:
+   *  any failure just leaves the orphans for next time. Returns how many were
+   *  deleted. */
+  gcPosters: async (catalogId: string): Promise<number> => {
+    let deleted = 0;
+    let cursor: string | null = null;
+    try {
+      do {
+        const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+        const res = await authedFetch(
+          `/api/catalog/${encodeURIComponent(catalogId)}/gc-posters${qs}`,
+          { method: "POST" },
+        );
+        if (!res.ok) break;
+        const page = (await res.json()) as { deleted: number; next: string | null };
+        deleted += page.deleted;
+        cursor = page.next;
+      } while (cursor);
+    } catch {
+      /* orphans are harmless; try again after the next re-import */
+    }
+    return deleted;
+  },
 };
 
 // --- OMDb / IMDb lookup ----------------------------------------------------
