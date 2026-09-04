@@ -362,6 +362,36 @@ export async function pull(node0: MegaAmcFile, onProgress?: PullProgress): Promi
   return id;
 }
 
+/** Download a catalog's origin `.amc` and return its bytes, caching them so a
+ *  following re-import costs nothing extra. Used by the conflict dialog's
+ *  compare step. */
+export async function downloadOriginBytes(
+  catalog: CatalogRow,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<Uint8Array> {
+  if (!catalog.source_ref) throw new Error("catalog has no cloud origin");
+  const { provider, locator } = parseSourceRef(catalog.source_ref);
+  const cached = await getCachedAmc(catalog.source_ref);
+  if (cached) {
+    onProgress?.(cached.length, cached.length);
+    return cached;
+  }
+  await ensureConnected(provider);
+  try {
+    const { handle, name } = splitMegaLocator(locator);
+    const folder = folderByHandle(storage!, handle);
+    const node = folder
+      ? ((folder.children ?? []) as MegaFile[]).find((f) => !f.directory && f.name === name)
+      : null;
+    if (!node) throw new Error("the cloud file this library came from no longer exists");
+    const bytes = await connectorFor(provider).download(node, onProgress);
+    await putCachedAmc(catalog.source_ref, bytes);
+    return bytes;
+  } finally {
+    disconnect();
+  }
+}
+
 /**
  * Re-import a catalog from its cloud origin, replacing its contents in place.
  * Used when the .amc was edited externally.
@@ -420,6 +450,10 @@ export async function reimportFromOrigin(
       remote_fingerprint: (node.attributes as { c?: string } | undefined)?.c ?? "",
       remote_size: node.size ?? bytes.byteLength,
     });
+
+    // Drop any cached compare-download: a later compare should re-read the
+    // real file, not a stale snapshot from before this resolve.
+    if (catalog.source_ref) await dropCachedAmc(catalog.source_ref);
   } finally {
     tx.end();
     disconnect();
@@ -460,14 +494,17 @@ export class RemoteMovedError extends Error {
 export async function syncCatalogToOrigin(
   catalog: CatalogRow,
   onProgress?: PushProgress,
+  opts: { force?: boolean } = {},
 ): Promise<{ uploaded: boolean }> {
   if (!catalog.source_ref) throw new Error("catalog has no cloud origin");
 
-  // Refuse rather than overwrite. The dialog is the only thing allowed to
-  // resolve a moved remote.
-  const status = deriveStatus(catalog);
-  if (status.kind === "conflict" || status.kind === "changed-externally") {
-    throw new RemoteMovedError(status.kind);
+  // Refuse rather than overwrite — UNLESS the user chose "Push mine" in the
+  // conflict dialog, which is the explicit click that makes it their decision.
+  if (!opts.force) {
+    const status = deriveStatus(catalog);
+    if (status.kind === "conflict" || status.kind === "changed-externally") {
+      throw new RemoteMovedError(status.kind);
+    }
   }
 
   const { provider, locator } = parseSourceRef(catalog.source_ref);
@@ -509,6 +546,11 @@ export async function syncCatalogToOrigin(
         remote_fingerprint: fingerprint,
         remote_size: bytes.byteLength,
       });
+
+      // A forced push is the conflict dialog's "Push mine" — drop any cached
+      // compare-download so a later compare re-reads the real file.
+      if (opts.force && catalog.source_ref) await dropCachedAmc(catalog.source_ref);
+
       return { uploaded };
     } finally {
       tx.end();

@@ -447,7 +447,14 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM movies WHERE catalog_id = ?`)
       .bind(cat.id)
       .first<{ n: number }>();
-    return json({ ...cat, movie_count: count?.n ?? 0, custom_field_defs: defs });
+    return json({
+      ...cat,
+      movie_count: count?.n ?? 0,
+      custom_field_defs: defs,
+      // Movies written since the last successful push. Rows predating the
+      // updated_at column read NULL and correctly do not count.
+      touched_since_sync: await db.countMoviesTouchedSince(env, cat.id, cat.last_sync_at ?? 0),
+    });
   }
 
   // GET /api/catalog/:id/movies?limit=&offset=  — one page of grid metadata.

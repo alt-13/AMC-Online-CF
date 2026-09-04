@@ -57,6 +57,24 @@
             @click.stop="onSync(c)"
           />
           <Button
+            v-if="chipKind(c) === 'changed-externally' || chipKind(c) === 'remote-gone'"
+            outlined
+            size="small"
+            icon="pi pi-cloud-download"
+            title="Re-import from the cloud (replaces this library's contents)"
+            :disabled="!!busyId"
+            @click.stop="onReimport(c)"
+          />
+          <Button
+            v-if="chipKind(c) === 'conflict'"
+            outlined
+            severity="danger"
+            size="small"
+            label="Resolve…"
+            :disabled="!!busyId"
+            @click.stop="onResolve(c)"
+          />
+          <Button
             size="small"
             :disabled="!!busyId"
             :label="busyId === c.id && busyKind === 'export' ? busyLabel : 'Export'"
@@ -85,6 +103,14 @@
       @confirm="(v?: string) => settleDialog('confirm', v)"
       @discard="() => settleDialog('discard')"
       @cancel="() => settleDialog('cancel')"
+    />
+
+    <ConflictDialog
+      v-if="conflictFor"
+      :catalog="conflictFor"
+      :local-movies="conflictMovies"
+      @close="conflictFor = null"
+      @resolved="conflictFor = null; refresh()"
     />
   </div>
 </template>
@@ -131,10 +157,11 @@ const MovieListView = defineAsyncComponent({
   loadingComponent: LoadingWorkspace,
   errorComponent: WorkspaceLoadFailed,
 });
-import { cf, downloadAmcFile, session, type CatalogRow } from "./api";
-import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, switchProvider, CloudLoginRequiredError, cloudSettings, checkRemoteStates, transfers, anyTransferActive } from "./cloud";
+import { cf, downloadAmcFile, session, type CatalogRow, type MovieRow } from "./api";
+import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, reimportFromOrigin, switchProvider, CloudLoginRequiredError, cloudSettings, checkRemoteStates, transfers, anyTransferActive } from "./cloud";
 import { deriveStatus } from "./syncstatus";
 import { pushView, goBack } from "./nav";
+import ConflictDialog from "./ConflictDialog.vue";
 
 // Remember the last library the user opened and jump straight back into it on
 // load, instead of making them pick every time (the single-catalog Unraid app
@@ -206,8 +233,46 @@ function onImported() {
 }
 
 const busyId = ref<string | null>(null);
-const busyKind = ref<"sync" | "export" | null>(null);
+const busyKind = ref<"sync" | "export" | "reimport" | null>(null);
 const busyLabel = ref("");
+
+const conflictFor = ref<CatalogRow | null>(null);
+const conflictMovies = ref<MovieRow[]>([]);
+
+function chipKind(c: CatalogRow) {
+  return deriveStatus(c, transfers[c.id]).kind;
+}
+
+/** The dialog's compare step needs the local rows. Fetch them once, here,
+ *  rather than holding every catalog's movies in this view. */
+async function onResolve(c: CatalogRow) {
+  error.value = "";
+  try {
+    conflictMovies.value = await cf.listMovies(c.id);
+    conflictFor.value = c;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function onReimport(c: CatalogRow) {
+  if (busyId.value) return;
+  busyId.value = c.id;
+  busyKind.value = "reimport";
+  error.value = "";
+  try {
+    await reimportFromOrigin(c, (done, total, phase) => {
+      busyLabel.value = total ? `${phase} ${done}/${total}` : `${phase}…`;
+    });
+    await refresh();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    busyId.value = null;
+    busyKind.value = null;
+    busyLabel.value = "";
+  }
+}
 
 /** Origin catalog: push back to where it came from. */
 async function onSync(c: CatalogRow) {
