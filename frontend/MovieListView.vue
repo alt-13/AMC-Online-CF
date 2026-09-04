@@ -37,6 +37,18 @@
         </span>
         <span v-else class="flex-1" />
         <div class="flex gap-1.5 shrink-0">
+          <!-- Shown only when content_rev !== synced_rev (SHOWS_SYNC_BUTTON): a
+               synced catalog leaves this slot empty rather than showing a
+               permanently-dimmed control. -->
+          <Button
+            v-if="syncButton"
+            :icon="syncButton.icon"
+            text
+            size="small"
+            :disabled="syncButton.disabled"
+            :title="syncButton.title"
+            @click="onSyncClick()"
+          />
           <Button icon="pi pi-cog" text size="small" title="Field settings" @click="settingsOpen = true" />
           <Button icon="pi pi-bolt" text size="small" title="Fetch from OMDb → new film" @click="omdbOpen = true" />
         </div>
@@ -168,6 +180,7 @@
         {{ filtered.length }} / {{ movies.length }} films and series
       </div>
       <p v-if="error" class="text-danger text-[0.82rem] px-3 pb-1.5">{{ error }}</p>
+      <p v-if="syncError" class="px-3 py-2 text-danger text-sm">{{ syncError }}</p>
     </section>
 
     <!-- RIGHT: detail (overlays on mobile) -->
@@ -204,6 +217,17 @@
       @apply="createFromOmdb"
     />
 
+    <!-- The compare step needs the local rows; `movies` is already loaded here,
+         so mounting it costs nothing extra (unlike the catalogs list, which
+         fetches them only on demand). -->
+    <ConflictDialog
+      v-if="conflictOpen"
+      :catalog="liveCatalog"
+      :local-movies="movies"
+      @close="conflictOpen = false"
+      @resolved="conflictOpen = false; emit('changed')"
+    />
+
     <ConfirmDialog
       v-if="confirmOpen"
       title="Unsaved changes"
@@ -232,14 +256,23 @@ import MovieDetail from "./MovieDetail.vue";
 import SettingsDialog from "./SettingsDialog.vue";
 import OmdbDialog from "./OmdbDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
+import ConflictDialog from "./ConflictDialog.vue";
 import {
   DEFAULT_SETTINGS, type AppSettings, COLOR_TAG_COLORS, COLOR_TAG_NAMES,
   searchScopes, scopeLabel, ALL_SEARCH_FIELDS, countSeries,
 } from "./fields";
 import { pushView, goBack, dropView } from "./nav";
+import { deriveStatus, SHOWS_SYNC_BUTTON } from "./syncstatus";
+import { transfers, syncCatalogToOrigin, RemoteMovedError } from "./cloud";
 
 const props = defineProps<{ catalog: CatalogRow }>();
-defineEmits<{ (e: "back"): void }>();
+const emit = defineEmits<{
+  (e: "back"): void;
+  // The catalog's new revision, so the parent (CatalogsView) can re-point
+  // `openCatalog` at a fresh row — synced_rev only ever arrives on the prop,
+  // so without this the sync button would stay visible after a successful push.
+  (e: "changed", contentRev?: number): void;
+}>();
 
 const movies = ref<MovieRow[]>([]);
 const defs = ref<CustomFieldDefRow[]>([]);
@@ -250,6 +283,66 @@ const selectedId = ref<string | null>(null);
 const creating = ref(false);
 const settingsOpen = ref(false);
 const omdbOpen = ref(false);
+
+// --- workspace sync button ---------------------------------------------------
+// A local copy of the catalog's revision counters. The prop is correct on mount
+// but stale the moment the user saves an edit, and the button's visibility
+// depends on it — so mutation responses carry the new content_rev and we track
+// it here rather than re-fetching the catalog row after every save.
+const contentRev = ref(props.catalog.content_rev);
+watch(() => props.catalog.content_rev, (v) => { contentRev.value = v; });
+
+/** The catalog row as the button should see it: prop fields, live revision. */
+const liveCatalog = computed<CatalogRow>(() => ({
+  ...props.catalog,
+  content_rev: contentRev.value,
+}));
+
+/** Icon/tooltip/disabled for the sync button, or null when it should not show.
+ *  The three visible kinds all have content_rev !== synced_rev, so the button's
+ *  presence always means real pending work. `changed-externally` is absent on
+ *  purpose: revs are equal there, so there is nothing to push. */
+const syncButton = computed(() => {
+  const s = deriveStatus(liveCatalog.value, transfers[props.catalog.id]);
+  if (!SHOWS_SYNC_BUTTON.has(s.kind)) return null;
+  if (s.kind === "syncing") {
+    return {
+      icon: "pi pi-spin pi-spinner",
+      disabled: true,
+      title: s.total ? `Syncing… ${s.phase} ${s.done}/${s.total}` : "Syncing…",
+    };
+  }
+  if (s.kind === "conflict") {
+    return {
+      icon: "pi pi-exclamation-triangle",
+      disabled: false,
+      title: "Cloud file changed — resolve before syncing",
+    };
+  }
+  return {
+    icon: "pi pi-cloud-upload",
+    disabled: false,
+    title: `Sync ${s.pending} change${s.pending === 1 ? "" : "s"} to the cloud`,
+  };
+});
+
+const syncError = ref("");
+const conflictOpen = ref(false);
+
+async function onSyncClick() {
+  const s = deriveStatus(liveCatalog.value, transfers[props.catalog.id]);
+  // Never push blind: a moved remote goes to the dialog, so the push's own
+  // refusal can never surface as a dead button.
+  if (s.kind === "conflict") { conflictOpen.value = true; return; }
+  syncError.value = "";
+  try {
+    await syncCatalogToOrigin(liveCatalog.value);
+    emit("changed"); // let the parent reload the catalog row (synced_rev moved)
+  } catch (e) {
+    if (e instanceof RemoteMovedError) { conflictOpen.value = true; return; }
+    syncError.value = e instanceof Error ? e.message : String(e);
+  }
+}
 
 // --- unsaved-changes guard --------------------------------------------------
 // The detail pane owns the `dirty` flag; we read it (and call save/discard)
@@ -517,7 +610,8 @@ function applyLive(patch: Partial<MovieRow> & { id: string }) {
   if (row) Object.assign(row, patch);
 }
 
-async function refresh() {
+async function refresh(contentRevFromMutation?: number) {
+  if (typeof contentRevFromMutation === "number") contentRev.value = contentRevFromMutation;
   movies.value = await cf.listMovies(props.catalog.id);
   if (livePatch && detailRef.value?.dirty) {
     const row = movies.value.find((mv) => mv.id === livePatch!.id);
@@ -558,8 +652,11 @@ async function onCreate(patch: Partial<MovieRow> = {}) {
   creating.value = true;
   error.value = "";
   try {
-    const created = await cf.createMovie(props.catalog.id, patch);
-    await refresh();
+    // The Worker's create response carries the catalog's new content_rev
+    // alongside the row (not part of MovieRow's declared shape) so the sync
+    // button stays accurate without a separate catalog refetch.
+    const created = (await cf.createMovie(props.catalog.id, patch)) as MovieRow & { content_rev?: number };
+    await refresh(created.content_rev);
     openDetail(created.id); // jump straight into the editor
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -571,15 +668,20 @@ async function onCreate(patch: Partial<MovieRow> = {}) {
 async function createFromOmdb(patch: Partial<MovieRow>, posterUrl: string) {
   creating.value = true;
   try {
-    const created = await cf.createMovie(props.catalog.id, patch);
+    const created = (await cf.createMovie(props.catalog.id, patch)) as MovieRow & { content_rev?: number };
+    // The poster update is a second mutation and bumps the rev again — prefer
+    // its response when the poster attach succeeds, so contentRev reflects the
+    // later of the two rather than lagging by one.
+    let rev = created.content_rev;
     if (posterUrl) {
       try {
-        await cf.setPictureFromUrl(created, posterUrl);
+        const withPoster = (await cf.setPictureFromUrl(created, posterUrl)) as MovieRow & { content_rev?: number };
+        if (typeof withPoster.content_rev === "number") rev = withPoster.content_rev;
       } catch {
         /* text saved; poster is best-effort */
       }
     }
-    await refresh();
+    await refresh(rev);
     openDetail(created.id);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -588,11 +690,11 @@ async function createFromOmdb(patch: Partial<MovieRow>, posterUrl: string) {
   }
 }
 
-function onDeleted() {
+function onDeleted(deletedContentRev?: number) {
   // The movie is gone; clear any dirty flag so the Back below closes cleanly
   // instead of the guard re-prompting for edits that no longer have a target.
   detailRef.value?.discard();
-  void refresh();
+  void refresh(deletedContentRev);
   goBack(); // pops the detail history level and closes it
 }
 </script>

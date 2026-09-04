@@ -7,7 +7,7 @@
 -->
 <template>
   <!-- drilled into one library -->
-  <MovieListView v-if="openCatalog" :catalog="openCatalog" @back="goBack" />
+  <MovieListView v-if="openCatalog" :catalog="openCatalog" @back="goBack" @changed="onWorkspaceChanged" />
 
   <div v-else class="max-w-160 mx-auto px-4 py-6 flex flex-col gap-4">
     <div class="flex items-center justify-between gap-2">
@@ -230,6 +230,20 @@ async function refresh(opts: { silent?: boolean } = {}) {
 
 function onImported() {
   void refresh();
+}
+
+/** The workspace changed something that moves the catalog's sync counters
+ *  (an edit, or a completed sync). Reload the list and re-point `openCatalog`
+ *  at the fresh row, so the child's prop carries the new synced_rev — without
+ *  this, the workspace's sync button would stay visible until the user
+ *  navigated away, since synced_rev only ever arrives on the prop. */
+async function onWorkspaceChanged() {
+  const openId = openCatalog.value?.id;
+  await refresh();
+  if (openId) {
+    const fresh = catalogs.value.find((c) => c.id === openId);
+    if (fresh) openCatalog.value = fresh;
+  }
 }
 
 const busyId = ref<string | null>(null);

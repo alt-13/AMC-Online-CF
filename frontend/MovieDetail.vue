@@ -550,8 +550,12 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   (e: "back"): void;
-  (e: "deleted"): void;
-  (e: "changed"): void;
+  // deleteMovie's response carries the catalog's new content_rev too (a delete
+  // is a mutation like any other) — same reason as "changed" below.
+  (e: "deleted", contentRev?: number): void;
+  // The catalog's new revision, so the parent's sync button stays accurate
+  // without re-fetching the catalog row after every save.
+  (e: "changed", contentRev?: number): void;
   // Bubble the OMDb dialog's "open Settings" request up to MovieListView, which
   // owns the SettingsDialog (this view doesn't) — otherwise the key-setup link
   // in the fetch dialog is a dead end when fetching from the editor.
@@ -789,7 +793,12 @@ async function save(): Promise<boolean> {
       sort_title: (form.translated_title || form.original_title).toLowerCase(),
       extras: extras.value,
     };
-    const { extras: savedExtras, ...movieOnly } = await cf.updateMovie(form.id, patch);
+    // content_rev rides along on the update response (not part of MovieRow's
+    // declared shape) so the workspace's sync button stays accurate without a
+    // separate catalog refetch. Destructure it out before merging so it never
+    // lands as a stray key on `form`.
+    const { extras: savedExtras, content_rev, ...movieOnly } =
+      (await cf.updateMovie(form.id, patch)) as MovieRow & { extras: Extra[]; content_rev?: number };
     // Syncing the server response back into `form`/`extras` mutates the same
     // reactive sources the dirty watcher tracks, and that watcher runs on the
     // next flush (flush:'pre', async). Without this guard it refires *after* we
@@ -800,7 +809,7 @@ async function save(): Promise<boolean> {
     extras.value = (savedExtras ?? []).map((e) => ({ ...e }));
     openSet.clear();
     dirty.value = false;
-    emit("changed");
+    emit("changed", content_rev);
     await nextTick();
     hydrating.value = false;
     return true;
@@ -838,9 +847,9 @@ defineExpose({ dirty, save, discard });
 async function confirmDelete() {
   deleting.value = true;
   try {
-    await cf.deleteMovie(form.id);
+    const contentRev = await cf.deleteMovie(form.id);
     deleteOpen.value = false;
-    emit("deleted");
+    emit("deleted", contentRev);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
     deleteOpen.value = false;
@@ -891,7 +900,7 @@ async function onFile(ev: Event) {
     const key = blobKey(session().tenantId, form.catalog_id, await sha256Hex(jpeg));
 
     await putPoster(key, jpeg);
-    await cf.updateMovie(form.id, { poster_key: key, pic_path: ".jpg" });
+    const updated = (await cf.updateMovie(form.id, { poster_key: key, pic_path: ".jpg" })) as MovieRow & { content_rev?: number };
     await setPosterKeyQuietly(key);
     await loadPoster(key);
     // Reclaim the old object only if it was a legacy per-movie key (this movie
@@ -907,7 +916,7 @@ async function onFile(ev: Event) {
       }
     }
     posterMsg.value = "";
-    emit("changed");
+    emit("changed", updated.content_rev);
   } catch (e) {
     posterMsg.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -936,11 +945,11 @@ async function removePoster() {
   if (!form.poster_key) return;
   posterMsg.value = "Removing…";
   try {
-    await cf.updateMovie(form.id, { poster_key: null, pic_path: "" });
+    const updated = (await cf.updateMovie(form.id, { poster_key: null, pic_path: "" })) as MovieRow & { content_rev?: number };
     await setPosterKeyQuietly(null);
     await loadPoster(null);
     posterMsg.value = "";
-    emit("changed");
+    emit("changed", updated.content_rev);
   } catch (e) {
     posterMsg.value = e instanceof Error ? e.message : String(e);
   }
@@ -964,11 +973,11 @@ async function putPoster(key: string, bytes: Uint8Array) {
 async function applyPosterUrl(url: string) {
   posterMsg.value = "Fetching…";
   try {
-    const updated = await cf.setPictureFromUrl({ ...form } as MovieRow, url);
+    const updated = (await cf.setPictureFromUrl({ ...form } as MovieRow, url)) as MovieRow & { content_rev?: number };
     await setPosterKeyQuietly(updated.poster_key);
     await loadPoster(updated.poster_key);
     posterMsg.value = "";
-    emit("changed");
+    emit("changed", updated.content_rev);
   } catch (e) {
     posterMsg.value = e instanceof Error ? e.message : String(e);
   }
