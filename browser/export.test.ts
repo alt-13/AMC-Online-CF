@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { exportAmcFile, type AuthedFetch } from "./export";
+import { exportAmcFile, buildAmcFile, type AuthedFetch } from "./export";
 import { parseCatalog } from "../amc/parser";
 import { clampPagingParam } from "../worker/index";
 
@@ -52,6 +52,10 @@ const BUNDLE = {
     movieRow("m4", 4, "No Poster", null),
   ],
   extras: [],
+  // The revision the bundle was (notionally) read at. Defaulted here so every
+  // existing stub keeps working unchanged; tests pinning the buildAmcFile ->
+  // synced_rev contract override it per-call (see `stub({ contentRev })`).
+  content_rev: 0,
 };
 
 /**
@@ -70,6 +74,7 @@ function exportResponse(bundle: typeof BUNDLE, path: string): Response {
       customFieldDefs: bundle.customFieldDefs,
       movieCount: bundle.movies.length,
       extraCount: bundle.extras.length,
+      content_rev: bundle.content_rev,
     });
   }
   if (part === "movies" || part === "extras") {
@@ -81,12 +86,18 @@ function exportResponse(bundle: typeof BUNDLE, path: string): Response {
   throw new Error(`exportResponse: unexpected part ${String(part)}`);
 }
 
-/** Stub fetcher. `delay(key)` lets a test invert completion order. */
-function stub(opts: { delay?: (key: string) => number; failKey?: string } = {}) {
+/** Stub fetcher. `delay(key)` lets a test invert completion order. `contentRev`
+ *  overrides the bundle's part=meta content_rev (default 0). */
+function stub(opts: {
+  delay?: (key: string) => number;
+  failKey?: string;
+  contentRev?: number;
+} = {}) {
   const posterCalls: string[] = [];
+  const bundle = opts.contentRev !== undefined ? { ...BUNDLE, content_rev: opts.contentRev } : BUNDLE;
   const fetcher: AuthedFetch = async (path) => {
     if (path.includes("/export")) {
-      return exportResponse(BUNDLE, path);
+      return exportResponse(bundle, path);
     }
     if (path.startsWith("/api/poster")) {
       const key = decodeURIComponent(new URL(path, "http://x").searchParams.get("key")!);
@@ -205,6 +216,52 @@ describe("exportAmcFile poster prefetch", () => {
     await exportAmcFile("cat-1", { tenantId: T, fetcher });
     // Serial fetching would never exceed 1 in flight.
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+describe("buildAmcFile content_rev capture", () => {
+  // The most important property in the push flow: a push records
+  // `synced_rev = contentRev` from buildAmcFile, i.e. the revision the bundle
+  // was READ at — not whatever content_rev happens to be once the (possibly
+  // multi-minute) upload finishes. Recording the latter would let an edit
+  // that lands mid-push be silently marked as synced and lost at the next
+  // external change.
+
+  it("returns the content_rev reported by part=meta", async () => {
+    const { fetcher } = stub({ contentRev: 42 });
+    const built = await buildAmcFile("cat-1", { tenantId: T, fetcher });
+    expect(built.contentRev).toBe(42);
+  });
+
+  it("reports the FIRST meta read's content_rev even if a later part=meta would answer differently", async () => {
+    // Simulate an edit landing mid-push: if buildAmcFile ever re-read
+    // part=meta after its first fetch (e.g. after prefetching posters), it
+    // would pick up the changed content_rev and the caller would record
+    // synced_rev as though that edit had been included in the upload —
+    // silently losing it. Have part=meta answer a DIFFERENT content_rev on
+    // each call and confirm only the value from the read it actually used
+    // (the first) is ever reported. (If the implementation only reads meta
+    // once — which it does today — this is trivially true; that's the point:
+    // the test locks the contract so a future change that adds a second read
+    // gets caught here.)
+    let metaCalls = 0;
+    const fetcher: AuthedFetch = async (path) => {
+      const u = new URL(path, "http://x");
+      if (path.includes("/export") && u.searchParams.get("part") === "meta") {
+        metaCalls++;
+        return exportResponse({ ...BUNDLE, content_rev: metaCalls === 1 ? 42 : 999 }, path);
+      }
+      if (path.includes("/export")) return exportResponse(BUNDLE, path);
+      if (path.startsWith("/api/poster")) {
+        const key = decodeURIComponent(u.searchParams.get("key")!);
+        return new Response(new Uint8Array([key === KEY_A ? 0xaa : 0xbb]));
+      }
+      throw new Error(`unexpected path ${path}`);
+    };
+
+    const built = await buildAmcFile("cat-1", { tenantId: T, fetcher });
+    expect(built.contentRev).toBe(42);
+    expect(metaCalls).toBe(1); // documents that only one read backs the contract
   });
 });
 
