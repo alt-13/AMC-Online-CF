@@ -14,7 +14,7 @@
 // auto-reconnect (worker/crypto.ts). See CF-PORT.md "Mega import/export".
 
 import { reactive } from "vue";
-import { exportAmcFile, importAmcFile, session, cloud, type CatalogRow } from "./api";
+import { exportAmcFile, importAmcFile, session, cloud, cf, type CatalogRow } from "./api";
 import {
   loginToMega,
   uploadToMega,
@@ -35,6 +35,8 @@ import {
   formatMegaSourceRef,
   pickActiveProvider,
 } from "./cloudref";
+import type { TransferState } from "./syncstatus";
+import { contentCrcOf } from "../browser/mega-fingerprint";
 
 // megajs's MutableFile (the node type with .delete) isn't exported; we only need
 // .delete here.
@@ -73,6 +75,36 @@ export const cloudSettings = reactive({
   loaded: false,
   providers: {} as Record<string, { path: string; hasCredential: boolean }>,
 });
+
+/**
+ * Transfers currently running, keyed by catalog id.
+ *
+ * Shared rather than component-local on purpose: the catalogs-list chip and the
+ * workspace sync button both need "is a push in flight for catalog X", and
+ * MovieListView is a lazily-loaded chunk, so component state does not survive
+ * navigating between the two views. This is also exactly the `inFlight`
+ * argument deriveStatus takes, and what the beforeunload guard reads.
+ */
+export const transfers = reactive<Record<string, TransferState>>({});
+
+/** Mark a catalog as transferring and return a progress reporter + a finisher. */
+export function beginTransfer(catalogId: string, phase: string) {
+  transfers[catalogId] = { phase, done: 0, total: 0 };
+  return {
+    progress(done: number, total: number, nextPhase = phase) {
+      const t = transfers[catalogId];
+      if (t) { t.done = done; t.total = total; t.phase = nextPhase; }
+    },
+    end() {
+      delete transfers[catalogId];
+    },
+  };
+}
+
+/** True while any catalog is transferring — the beforeunload guard's condition. */
+export function anyTransferActive(): boolean {
+  return Object.keys(transfers).length > 0;
+}
 
 function providerState(p: string): { path: string; hasCredential: boolean } {
   return (cloudSettings.providers[p] ??= { path: "", hasCredential: false });
@@ -338,4 +370,92 @@ export async function pushAdoptingOrigin(
   const sourceRef = await connectorFor(provider).pushToPath(storage!, path, fallbackName, bytes);
   disconnect();
   return sourceRef;
+}
+
+// --- remote check pass -------------------------------------------------------
+
+/** What one tree read concluded about one catalog. */
+type RemoteVerdict = {
+  id: string;
+  state: "match" | "differs" | "missing";
+  remote_fingerprint?: string | null;
+  remote_size?: number | null;
+};
+
+/**
+ * Compare every cloud-backed catalog against its remote file and record the
+ * verdicts. NO DOWNLOAD: megajs decrypts the whole attribute object for each
+ * tree node, so the `c` fingerprint and the size come straight off the account
+ * tree. One login covers every catalog.
+ *
+ * Providers with no stored credential are skipped entirely — we never prompt
+ * from here. Their catalogs keep whatever verdict they had, and the UI shows its
+ * age.
+ *
+ * Best-effort: any failure leaves the affected catalogs' cached verdicts alone.
+ */
+export async function checkRemoteStates(catalogs: CatalogRow[]): Promise<void> {
+  const byProvider = new Map<string, CatalogRow[]>();
+  for (const c of catalogs) {
+    if (!c.source_ref) continue;
+    const { provider } = parseSourceRef(c.source_ref);
+    const list = byProvider.get(provider) ?? [];
+    list.push(c);
+    byProvider.set(provider, list);
+  }
+
+  const verdicts: RemoteVerdict[] = [];
+
+  for (const [provider, list] of byProvider) {
+    if (!cloudSettings.providers[provider]?.hasCredential) continue;
+    try {
+      await ensureConnected(provider);
+    } catch {
+      continue; // no session, no verdict — the cached one stands
+    }
+    for (const c of list) {
+      // Without a stored fingerprint there is nothing to compare against, so
+      // record nothing rather than guess. The next push or pull supplies one.
+      if (!c.remote_fingerprint) continue;
+      try {
+        const { locator } = parseSourceRef(c.source_ref!);
+        const { handle, name } = splitMegaLocator(locator);
+        const folder = folderByHandle(storage!, handle);
+        const node = folder
+          ? ((folder.children ?? []) as MegaFile[]).find((f) => !f.directory && f.name === name)
+          : null;
+        if (!node) {
+          verdicts.push({ id: c.id, state: "missing" });
+          continue;
+        }
+        const remoteFp = (node.attributes as { c?: string } | undefined)?.c ?? "";
+        const size = node.size ?? 0;
+        // Compare the CONTENT half only, so a mtime-only touch is not a change.
+        // Size is compared too: Mega's CRC samples ~8 KB across four lanes for
+        // large files rather than hashing everything, so pairing it with the
+        // length closes the theoretical gap.
+        const same =
+          !!remoteFp &&
+          contentCrcOf(remoteFp) === contentCrcOf(c.remote_fingerprint) &&
+          size === c.remote_size;
+        verdicts.push({
+          id: c.id,
+          state: same ? "match" : "differs",
+          remote_fingerprint: remoteFp || null,
+          remote_size: size,
+        });
+      } catch {
+        /* leave this catalog's cached verdict in place */
+      }
+    }
+    disconnect(); // ephemeral: nothing stays connected after a check
+  }
+
+  if (verdicts.length) {
+    try {
+      await cf.setRemoteStates(verdicts);
+    } catch {
+      /* the badges just stay stale */
+    }
+  }
 }
