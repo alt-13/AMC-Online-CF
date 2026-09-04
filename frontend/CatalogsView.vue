@@ -10,7 +10,17 @@
   <MovieListView v-if="openCatalog" :catalog="openCatalog" @back="goBack" />
 
   <div v-else class="max-w-160 mx-auto px-4 py-6 flex flex-col gap-4">
-    <h2 class="font-display text-gold text-xl">Your libraries</h2>
+    <div class="flex items-center justify-between gap-2">
+      <h2 class="font-display text-gold text-xl">Your libraries</h2>
+      <Button
+        icon="pi pi-refresh"
+        text
+        size="small"
+        :disabled="checking"
+        :title="checking ? 'Checking the cloud…' : 'Re-check cloud sync status'"
+        @click="onRefreshStatus()"
+      />
+    </div>
 
     <CatalogImport @imported="onImported" />
     <CloudSync @imported="onImported" />
@@ -26,7 +36,16 @@
           @click="openCatalog = c">
         <div class="flex flex-col gap-0.5 min-w-0 flex-1">
           <span class="font-semibold text-text truncate">{{ c.name || "(untitled)" }}</span>
-          <span class="text-xs text-muted">v{{ (c.version / 10).toFixed(1) }} · updated {{ fmt(c.updated_at) }}</span>
+          <span class="text-xs text-muted flex items-center gap-2 flex-wrap">
+            <span>v{{ (c.version / 10).toFixed(1) }} · updated {{ fmt(c.updated_at) }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.7rem] font-medium"
+              :class="chip(c).cls"
+            >
+              <i :class="chip(c).icon" />
+              {{ chip(c).label }}
+            </span>
+          </span>
         </div>
         <div class="flex gap-2 items-center flex-wrap">
           <Button
@@ -71,7 +90,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch, defineAsyncComponent, h } from "vue";
+import { onMounted, onUnmounted, ref, watch, defineAsyncComponent, h } from "vue";
 import Button from "primevue/button";
 import CatalogImport from "./CatalogImport.vue";
 import CloudSync from "./CloudSync.vue";
@@ -113,7 +132,8 @@ const MovieListView = defineAsyncComponent({
   errorComponent: WorkspaceLoadFailed,
 });
 import { cf, downloadAmcFile, session, type CatalogRow } from "./api";
-import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, switchProvider, CloudLoginRequiredError, cloudSettings } from "./cloud";
+import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, switchProvider, CloudLoginRequiredError, cloudSettings, checkRemoteStates, transfers, anyTransferActive } from "./cloud";
+import { deriveStatus } from "./syncstatus";
 import { pushView, goBack } from "./nav";
 
 // Remember the last library the user opened and jump straight back into it on
@@ -126,6 +146,7 @@ const openCatalog = ref<CatalogRow | null>(null);
 const loading = ref(true);
 const error = ref("");
 const deletingId = ref<string | null>(null);
+const checking = ref(false);
 
 // --- themed confirm/prompt --------------------------------------------------
 // ConfirmDialog is event-based (emits confirm/discard/cancel), so `ask()` wraps
@@ -328,6 +349,70 @@ function fmt(ms: number): string {
   }
 }
 
+/** Coarse "how long ago" for the last remote check, distinct from `fmt()`'s
+ *  calendar date — the "unknown" chip needs the age of the last verdict, not
+ *  the date it was taken. */
+function ageLabel(ms: number): string {
+  const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+/** Chip appearance per status kind. Purely presentational — every decision
+ *  about WHICH state we are in lives in deriveStatus. */
+function chip(c: CatalogRow): { label: string; icon: string; cls: string } {
+  const s = deriveStatus(c, transfers[c.id]);
+  switch (s.kind) {
+    case "local-only":
+      return { label: "local only", icon: "pi pi-desktop", cls: "bg-elevated text-muted" };
+    case "syncing":
+      return {
+        label: s.total ? `syncing ${s.done}/${s.total}` : "syncing…",
+        icon: "pi pi-spin pi-spinner",
+        cls: "bg-elevated text-gold",
+      };
+    case "unknown": {
+      // remote_checked_at is null only when never checked; deriveStatus can
+      // also fall back to "unknown" for an unrecognized (future) remote_state
+      // with a real timestamp, so show its age whenever one exists.
+      const age = c.remote_checked_at != null ? ` (checked ${ageLabel(c.remote_checked_at)})` : "";
+      return {
+        label: s.localDirty ? `${s.pending} unsynced · cloud unchecked${age}` : `cloud unchecked${age}`,
+        icon: "pi pi-question-circle",
+        cls: "bg-elevated text-muted",
+      };
+    }
+    case "remote-gone":
+      return { label: "cloud file missing", icon: "pi pi-times-circle", cls: "bg-elevated text-danger" };
+    case "synced":
+      return { label: `synced ${fmt(s.at)}`, icon: "pi pi-check-circle", cls: "bg-elevated text-success" };
+    case "not-synced":
+      return {
+        label: `${s.pending} unsynced change${s.pending === 1 ? "" : "s"}`,
+        icon: "pi pi-cloud-upload",
+        cls: "bg-elevated text-gold",
+      };
+    case "changed-externally":
+      return { label: "changed in the cloud", icon: "pi pi-exclamation-triangle", cls: "bg-elevated text-gold" };
+    case "conflict":
+      return { label: "conflict", icon: "pi pi-exclamation-triangle", cls: "bg-elevated text-danger" };
+  }
+}
+
+async function onRefreshStatus() {
+  checking.value = true;
+  try {
+    await checkRemoteStates(catalogs.value);
+    await refresh(); // pull the recorded verdicts back into the rows
+  } finally {
+    checking.value = false;
+  }
+}
+
 // Persist whichever catalog is open so the next visit reopens it, and push a
 // history entry when one opens so the OS Back button returns here (libraries).
 const catalogCloser = () => (openCatalog.value = null);
@@ -353,5 +438,21 @@ onMounted(async () => {
     const last = catalogs.value.find((c) => c.id === lastId);
     if (last) openCatalog.value = last;
   }
+  // One tree read covers every catalog, so do it once here rather than
+  // per-row. Skipped silently when no credential is stored — we never prompt
+  // for a login from a page load.
+  void onRefreshStatus();
 });
+
+// A push holds the tab: megajs runs in this page, so closing it mid-upload
+// aborts the transfer. replaceInFolder deletes the old remote file only AFTER
+// the new upload completes, so an aborted push leaves the cloud file intact and
+// the catalog simply stays "not synced" — but warn anyway.
+function guardUnload(e: BeforeUnloadEvent) {
+  if (!anyTransferActive()) return;
+  e.preventDefault();
+  e.returnValue = "";
+}
+onMounted(() => window.addEventListener("beforeunload", guardUnload));
+onUnmounted(() => window.removeEventListener("beforeunload", guardUnload));
 </script>
