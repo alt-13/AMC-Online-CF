@@ -652,10 +652,7 @@ async function onCreate(patch: Partial<MovieRow> = {}) {
   creating.value = true;
   error.value = "";
   try {
-    // The Worker's create response carries the catalog's new content_rev
-    // alongside the row (not part of MovieRow's declared shape) so the sync
-    // button stays accurate without a separate catalog refetch.
-    const created = (await cf.createMovie(props.catalog.id, patch)) as MovieRow & { content_rev?: number };
+    const created = await cf.createMovie(props.catalog.id, patch);
     await refresh(created.content_rev);
     openDetail(created.id); // jump straight into the editor
   } catch (e) {
@@ -668,14 +665,14 @@ async function onCreate(patch: Partial<MovieRow> = {}) {
 async function createFromOmdb(patch: Partial<MovieRow>, posterUrl: string) {
   creating.value = true;
   try {
-    const created = (await cf.createMovie(props.catalog.id, patch)) as MovieRow & { content_rev?: number };
+    const created = await cf.createMovie(props.catalog.id, patch);
     // The poster update is a second mutation and bumps the rev again — prefer
     // its response when the poster attach succeeds, so contentRev reflects the
     // later of the two rather than lagging by one.
     let rev = created.content_rev;
     if (posterUrl) {
       try {
-        const withPoster = (await cf.setPictureFromUrl(created, posterUrl)) as MovieRow & { content_rev?: number };
+        const withPoster = await cf.setPictureFromUrl(created, posterUrl);
         if (typeof withPoster.content_rev === "number") rev = withPoster.content_rev;
       } catch {
         /* text saved; poster is best-effort */

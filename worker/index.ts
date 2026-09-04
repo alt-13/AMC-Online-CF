@@ -545,7 +545,6 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     const listed = await env.R2.list({
       prefix: blobs,
       cursor: url.searchParams.get("cursor") ?? undefined,
-      include: ["httpMetadata"],
     });
     const stale = listed.objects
       .filter((o) => !referenced.has(o.key) && o.uploaded.getTime() < cutoff)

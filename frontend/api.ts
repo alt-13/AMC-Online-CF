@@ -225,16 +225,19 @@ export const cf = {
 
   getMovie: (id: string) => jget<MovieRow & { extras: Extra[] }>(`/api/movies/${encodeURIComponent(id)}`),
 
+  /** Update a movie. Also carries the catalog's new content_rev (a mutation
+   *  like any other) so the caller's sync button stays accurate without
+   *  re-fetching the catalog row. */
   updateMovie: async (
     id: string,
     patch: Partial<MovieRow> & { extras?: Extra[] },
-  ): Promise<MovieRow & { extras: Extra[] }> => {
+  ): Promise<MovieRow & { extras: Extra[]; content_rev?: number }> => {
     const res = await authedFetch(`/api/movies/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(patch),
     }, { "content-type": "application/json" });
     if (!res.ok) throw new Error(`update movie -> ${res.status}`);
-    return res.json() as Promise<MovieRow & { extras: Extra[] }>;
+    return res.json() as Promise<MovieRow & { extras: Extra[]; content_rev?: number }>;
   },
 
   /** Delete a movie. Returns the catalog's new content_rev so the caller's sync
@@ -295,14 +298,19 @@ export const cf = {
   },
 
   /** Create a movie in a catalog. The Worker assigns the next on-disk number;
-   *  pass any editable columns to prefill (e.g. an OMDb patch). */
-  createMovie: async (catalogId: string, patch: Partial<MovieRow> = {}): Promise<MovieRow> => {
+   *  pass any editable columns to prefill (e.g. an OMDb patch). Also carries
+   *  the catalog's new content_rev so the caller's sync button stays accurate
+   *  without re-fetching the catalog row. */
+  createMovie: async (
+    catalogId: string,
+    patch: Partial<MovieRow> = {},
+  ): Promise<MovieRow & { content_rev?: number }> => {
     const res = await authedFetch(`/api/catalog/${encodeURIComponent(catalogId)}/movies`, {
       method: "POST",
       body: JSON.stringify(patch),
     }, { "content-type": "application/json" });
     if (!res.ok) throw new Error(`create movie -> ${res.status}`);
-    return res.json() as Promise<MovieRow>;
+    return res.json() as Promise<MovieRow & { content_rev?: number }>;
   },
 
   /**
@@ -310,8 +318,15 @@ export const cf = {
    * browser (consistent with import/export): the Worker only proxies the fetch
    * to dodge the IMDb CDN's missing CORS headers, then a canvas re-encodes the
    * image to JPEG (the format .amc embeds) before it's stored in R2.
+   *
+   * Also carries the catalog's new content_rev (via the underlying
+   * updateMovie call) so the caller's sync button stays accurate without
+   * re-fetching the catalog row.
    */
-  setPictureFromUrl: async (movie: MovieRow, imageUrl: string): Promise<MovieRow> => {
+  setPictureFromUrl: async (
+    movie: MovieRow,
+    imageUrl: string,
+  ): Promise<MovieRow & { content_rev?: number }> => {
     const proxied = await authedFetch(`/api/proxy-image?url=${encodeURIComponent(imageUrl)}`);
     if (!proxied.ok) throw new Error(`fetch image -> ${proxied.status}`);
     const jpeg = await toJpeg(await proxied.blob());

@@ -793,12 +793,10 @@ async function save(): Promise<boolean> {
       sort_title: (form.translated_title || form.original_title).toLowerCase(),
       extras: extras.value,
     };
-    // content_rev rides along on the update response (not part of MovieRow's
-    // declared shape) so the workspace's sync button stays accurate without a
-    // separate catalog refetch. Destructure it out before merging so it never
-    // lands as a stray key on `form`.
-    const { extras: savedExtras, content_rev, ...movieOnly } =
-      (await cf.updateMovie(form.id, patch)) as MovieRow & { extras: Extra[]; content_rev?: number };
+    // content_rev rides along on the update response so the workspace's sync
+    // button stays accurate without a separate catalog refetch. Destructure it
+    // out before merging so it never lands as a stray key on `form`.
+    const { extras: savedExtras, content_rev, ...movieOnly } = await cf.updateMovie(form.id, patch);
     // Syncing the server response back into `form`/`extras` mutates the same
     // reactive sources the dirty watcher tracks, and that watcher runs on the
     // next flush (flush:'pre', async). Without this guard it refires *after* we
@@ -900,7 +898,7 @@ async function onFile(ev: Event) {
     const key = blobKey(session().tenantId, form.catalog_id, await sha256Hex(jpeg));
 
     await putPoster(key, jpeg);
-    const updated = (await cf.updateMovie(form.id, { poster_key: key, pic_path: ".jpg" })) as MovieRow & { content_rev?: number };
+    const updated = await cf.updateMovie(form.id, { poster_key: key, pic_path: ".jpg" });
     await setPosterKeyQuietly(key);
     await loadPoster(key);
     // Reclaim the old object only if it was a legacy per-movie key (this movie
@@ -945,7 +943,7 @@ async function removePoster() {
   if (!form.poster_key) return;
   posterMsg.value = "Removing…";
   try {
-    const updated = (await cf.updateMovie(form.id, { poster_key: null, pic_path: "" })) as MovieRow & { content_rev?: number };
+    const updated = await cf.updateMovie(form.id, { poster_key: null, pic_path: "" });
     await setPosterKeyQuietly(null);
     await loadPoster(null);
     posterMsg.value = "";
@@ -973,7 +971,7 @@ async function putPoster(key: string, bytes: Uint8Array) {
 async function applyPosterUrl(url: string) {
   posterMsg.value = "Fetching…";
   try {
-    const updated = (await cf.setPictureFromUrl({ ...form } as MovieRow, url)) as MovieRow & { content_rev?: number };
+    const updated = await cf.setPictureFromUrl({ ...form } as MovieRow, url);
     await setPosterKeyQuietly(updated.poster_key);
     await loadPoster(updated.poster_key);
     posterMsg.value = "";
