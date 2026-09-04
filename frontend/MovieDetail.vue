@@ -943,9 +943,22 @@ async function removePoster() {
   if (!form.poster_key) return;
   posterMsg.value = "Removing…";
   try {
+    const previous = form.poster_key;
     const updated = await cf.updateMovie(form.id, { poster_key: null, pic_path: "" });
     await setPosterKeyQuietly(null);
     await loadPoster(null);
+    // Reclaim the old object only if it was a legacy per-movie key (this movie
+    // alone could reference it). Blob keys may be shared by identical artwork,
+    // so they are left to the GC. Best-effort: the clear has already succeeded
+    // by this point, so a cleanup failure (offline, DNS, CORS, …) must not be
+    // reported as a failed edit — it just leaves an orphaned legacy object.
+    if (previous && !isBlobKey(previous)) {
+      try {
+        await cf.deleteLegacyPoster(previous);
+      } catch (e) {
+        console.warn(`removePoster: failed to delete legacy poster ${previous}`, e);
+      }
+    }
     posterMsg.value = "";
     emit("changed", updated.content_rev);
   } catch (e) {
