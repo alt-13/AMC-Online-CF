@@ -192,6 +192,22 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ catalogId: body.catalog.id }, 201);
   }
 
+  // POST /api/import/custom-field-defs  { catalogId, customFieldDefs }
+  //   Defs only, for the re-import path (the catalog row already exists and
+  //   must keep its id, source_ref and sync bookkeeping).
+  if (p === "/api/import/custom-field-defs" && m === "POST") {
+    const body = (await req.json()) as {
+      catalogId: string;
+      customFieldDefs: CustomFieldDefRow[];
+    };
+    const cat = await db.getCatalog(env, t, body.catalogId);
+    if (!cat) return err(404, "catalog not found");
+    // Trust the server-verified id, never the body's per-def catalog_id.
+    const defs = (body.customFieldDefs ?? []).map((d) => ({ ...d, catalog_id: cat.id }));
+    await db.insertCustomFieldDefs(env, defs);
+    return json({ inserted: defs.length });
+  }
+
   // POST /api/import/movies?catalogId=  — one chunk of movies + their extras
   if (p === "/api/import/movies" && m === "POST") {
     const catalogId = url.searchParams.get("catalogId");
@@ -474,6 +490,33 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       superseded += 1;
     }
     return json({ superseded });
+  }
+
+  // POST /api/catalog/:id/reimport-begin
+  //   Clear a catalog's contents so a fresh .amc can be imported INTO it,
+  //   keeping the catalog id, its source_ref and its sync bookkeeping.
+  //
+  //   Deliberately keeps everything under blobs/: those objects are content-
+  //   addressed, so the incoming import will re-reference most of them and the
+  //   dedup probe can skip re-uploading them. That is the whole reason a
+  //   re-import is cheap. Legacy per-movie objects ARE swept, since nothing
+  //   will reference them again.
+  if (seg[0] === "api" && seg[1] === "catalog" && seg[3] === "reimport-begin" && m === "POST") {
+    const cat = await db.getCatalog(env, t, seg[2]);
+    if (!cat) return err(404, "catalog not found");
+    // movies cascade to movie_extras; defs cascade from the catalog, so delete
+    // them explicitly (the catalog row itself must survive).
+    await db.deleteCatalogContents(env, cat.id);
+    const prefix = `${t}/${cat.id}/`;
+    const blobs = `${prefix}blobs/`;
+    let cursor: string | undefined;
+    do {
+      const listed = await env.R2.list({ prefix, cursor });
+      const stale = listed.objects.map((o) => o.key).filter((k) => !k.startsWith(blobs));
+      if (stale.length) await env.R2.delete(stale);
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+    return json({ ok: true });
   }
 
   // POST /api/catalog/:id/source-ref  { source_ref } — adopt a cloud origin for a

@@ -362,6 +362,70 @@ export async function pull(node0: MegaAmcFile, onProgress?: PullProgress): Promi
   return id;
 }
 
+/**
+ * Re-import a catalog from its cloud origin, replacing its contents in place.
+ * Used when the .amc was edited externally.
+ *
+ * Rows are replaced wholesale — no per-movie merge. The format has no movie id,
+ * and `number` is non-unique and user-editable (rule 12), so any merge key is a
+ * heuristic that fails on exactly the edits people make (renames, renumbers).
+ * Posters are what dedup saves, and content addressing makes that exact.
+ *
+ * `cachedBytes` lets the conflict dialog's "Compare with remote" download feed
+ * straight into the re-import at no extra cost.
+ */
+export async function reimportFromOrigin(
+  catalog: CatalogRow,
+  onProgress?: PullProgress,
+  cachedBytes?: Uint8Array,
+): Promise<void> {
+  if (!catalog.source_ref) throw new Error("catalog has no cloud origin");
+  const { provider, locator } = parseSourceRef(catalog.source_ref);
+  const connector = connectorFor(provider);
+  await ensureConnected(provider);
+
+  const tx = beginTransfer(catalog.id, "download");
+  try {
+    const { handle, name } = splitMegaLocator(locator);
+    const folder = folderByHandle(storage!, handle);
+    const node = folder
+      ? ((folder.children ?? []) as MegaFile[]).find((f) => !f.directory && f.name === name)
+      : null;
+    if (!node) throw new Error("the cloud file this library came from no longer exists");
+
+    const bytes =
+      cachedBytes ??
+      (await connector.download(node, (loaded, total) => {
+        tx.progress(loaded, total, "download");
+        onProgress?.(loaded, total, "download");
+      }));
+
+    await importAmcFile(new Blob([bytes as BlobPart]), {
+      ...session(),
+      reimportInto: catalog.id,
+      sourceRef: catalog.source_ref,
+      fallbackName: (node.name ?? "").replace(/\.amc$/i, ""),
+      onProgress: (done, total, phase) => {
+        tx.progress(done, total, phase);
+        onProgress?.(done, total, phase);
+      },
+    });
+
+    // The DB now matches the file we just read, so record that rather than
+    // leaving the catalog "changed externally".
+    const meta = await cf.catalogInfo(catalog.id);
+    await cf.setSyncState(catalog.id, {
+      synced_rev: meta.content_rev,
+      content_hash: await sha256Hex(bytes),
+      remote_fingerprint: (node.attributes as { c?: string } | undefined)?.c ?? "",
+      remote_size: node.size ?? bytes.byteLength,
+    });
+  } finally {
+    tx.end();
+    disconnect();
+  }
+}
+
 // --- export (push direction) -----------------------------------------------
 
 /** Ensure a live session to `provider`: reuse the current one if it matches,

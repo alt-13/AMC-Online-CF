@@ -319,3 +319,46 @@ describe("blob dedup on import", () => {
     expect(uploaded).toEqual([key]);
   });
 });
+
+describe("re-import into an existing catalog", () => {
+  it("calls reimport-begin and skips catalog-create and supersede", async () => {
+    const calls: string[] = [];
+    const fetcher: AuthedFetch = async (path) => {
+      calls.push(path.split("?")[0]);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const id = await importAmcFile(amcBlob(), {
+      tenantId: "t1", fetcher, reimportInto: "CAT", sourceRef: "mega:f:films.amc",
+    });
+    expect(id).toBe("CAT");
+    expect(calls).toContain("/api/catalog/CAT/reimport-begin");
+    expect(calls).not.toContain("/api/import/catalog");
+    expect(calls).not.toContain("/api/catalog/CAT/supersede");
+  });
+
+  it("does NOT abort-purge when a re-import fails", async () => {
+    const calls: string[] = [];
+    const fetcher: AuthedFetch = async (path) => {
+      calls.push(path.split("?")[0]);
+      if (path.startsWith("/api/import/movies")) return new Response("boom", { status: 500 });
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    await expect(
+      importAmcFile(amcBlob(), { tenantId: "t1", fetcher, reimportInto: "CAT" }),
+    ).rejects.toThrow();
+    // Purging here would destroy a catalog whose only other copy is the .amc on
+    // Mega. Retrying the re-import is the recovery path instead.
+    expect(calls).not.toContain("/api/import/abort");
+  });
+
+  it("still abort-purges a normal (non-re-import) failure", async () => {
+    const calls: string[] = [];
+    const fetcher: AuthedFetch = async (path) => {
+      calls.push(path.split("?")[0]);
+      if (path.startsWith("/api/import/movies")) return new Response("boom", { status: 500 });
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    await expect(importAmcFile(amcBlob(), { tenantId: "t1", fetcher })).rejects.toThrow();
+    expect(calls).toContain("/api/import/abort");
+  });
+});

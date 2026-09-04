@@ -61,6 +61,16 @@ export interface ImportOptions {
    * existing catalog) and by tests that need a predictable poster key.
    */
   catalogId?: string;
+  /**
+   * Re-import INTO this existing catalog instead of creating a new one. The
+   * catalog id, its source_ref and its sync bookkeeping survive, and — because
+   * the R2 prefix is unchanged — the blob dedup probe skips re-uploading every
+   * poster whose bytes are already there.
+   *
+   * Changes the failure policy: a failed re-import must NOT purge, because the
+   * catalog's only other copy may be the .amc on the cloud. Retry instead.
+   */
+  reimportInto?: string;
 }
 
 function headers(o: ImportOptions, extra: Record<string, string> = {}): HeadersInit {
@@ -167,7 +177,8 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
   // Fix the catalog id up front so a failure anywhere below — even during the
   // poster phase — can be rolled back by its prefix. Import is otherwise a
   // sequence of independent requests with no server-side transaction.
-  const catalogId = opts.catalogId ?? crypto.randomUUID();
+  const reimport = !!opts.reimportInto;
+  const catalogId = opts.reimportInto ?? opts.catalogId ?? crypto.randomUUID();
   const send = requester(opts);
 
   try {
@@ -212,23 +223,41 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
     }
 
     // Drop posters R2 already holds. On a re-import where a few movies changed
-    // this removes almost all of the poster traffic.
-    const present = await existingBlobKeys(send, catalogId);
+    // this removes almost all of the poster traffic. Skipped for a brand-new
+    // catalog: at this point its row does not exist in D1 yet, so the probe
+    // would just 404 and fall back to uploading everything anyway.
+    const existingCatalogId = opts.reimportInto ?? opts.catalogId;
+    const present = existingCatalogId ? await existingBlobKeys(send, existingCatalogId) : new Set<string>();
     const toUpload = present.size ? posterJobs.filter((j) => !present.has(j.key)) : posterJobs;
 
     // Upload posters with a small pool of concurrent PUTs (overlaps latency).
     await uploadPosters(send, toUpload, opts.onProgress);
 
-    // 1. Create the catalog + custom field definitions.
-    const created = await send(
-      "/api/import/catalog",
-      {
-        method: "POST",
-        body: JSON.stringify({ catalog: rows.catalog, customFieldDefs: rows.customFieldDefs }),
-      },
-      { "content-type": "application/json" },
-    );
-    if (!created.ok) throw new Error(`catalog create failed (${created.status})`);
+    // 1. Create the catalog + custom field definitions — or, for a re-import,
+    //    clear the existing catalog's contents and keep the row.
+    if (reimport) {
+      const begun = await send(
+        `/api/catalog/${encodeURIComponent(catalogId)}/reimport-begin`,
+        { method: "POST" },
+      );
+      if (!begun.ok) throw new Error(`reimport begin failed (${begun.status})`);
+      const defs = await send(
+        "/api/import/custom-field-defs",
+        { method: "POST", body: JSON.stringify({ catalogId, customFieldDefs: rows.customFieldDefs }) },
+        { "content-type": "application/json" },
+      );
+      if (!defs.ok) throw new Error(`custom field defs failed (${defs.status})`);
+    } else {
+      const created = await send(
+        "/api/import/catalog",
+        {
+          method: "POST",
+          body: JSON.stringify({ catalog: rows.catalog, customFieldDefs: rows.customFieldDefs }),
+        },
+        { "content-type": "application/json" },
+      );
+      if (!created.ok) throw new Error(`catalog create failed (${created.status})`);
+    }
 
     // 2. Insert movies in chunks, carrying each chunk's extras alongside.
     const extrasByMovie = new Map<string, ImportResult["extras"]>();
@@ -250,10 +279,12 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
       opts.onProgress?.(Math.min(i + chunkSize, rows.movies.length), rows.movies.length, "rows");
     }
 
-    // 3. For a cloud re-pull, drop older copies of the same source now that the
-    //    fresh one is fully committed. Best-effort: a failure here only leaves a
-    //    harmless duplicate, never a missing catalog.
-    if (opts.sourceRef) {
+    // 3. For a cloud re-pull that created a NEW catalog, drop older copies of
+    //    the same source now that the fresh one is fully committed. A re-import
+    //    wrote into the existing catalog, so there is nothing to supersede.
+    //    Best-effort: a failure here only leaves a harmless duplicate, never a
+    //    missing catalog.
+    if (opts.sourceRef && !reimport) {
       try {
         await send(`/api/catalog/${encodeURIComponent(catalogId)}/supersede`, { method: "POST" });
       } catch {
@@ -264,11 +295,19 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
     return catalogId;
   } catch (e) {
     // Best-effort rollback so a failed import never leaves a half-catalog or
-    // orphan posters behind. Swallow cleanup errors — surface the real cause.
-    try {
-      await send(`/api/import/abort?catalogId=${encodeURIComponent(catalogId)}`, { method: "POST" });
-    } catch {
-      /* leave any residue for the next import/abort to clear */
+    // orphan posters behind.
+    //
+    // NOT for a re-import: that catalog already existed, and its only other
+    // copy may be the .amc on the cloud — purging it on a failed re-import
+    // would destroy the user's data. A half-applied re-import is recoverable by
+    // retrying (reimport-begin is idempotent), so leave it dirty and surface
+    // the error.
+    if (!reimport) {
+      try {
+        await send(`/api/import/abort?catalogId=${encodeURIComponent(catalogId)}`, { method: "POST" });
+      } catch {
+        /* leave any residue for the next import/abort to clear */
+      }
     }
     throw e;
   }

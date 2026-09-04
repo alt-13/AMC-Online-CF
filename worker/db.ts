@@ -324,6 +324,21 @@ export async function deleteCatalog(env: Env, id: string): Promise<void> {
   await env.DB.prepare(`DELETE FROM catalogs WHERE id = ?`).bind(id).run();
 }
 
+/** Delete a catalog's CONTENTS but keep the catalog row itself. Used by
+ *  re-import, which writes a fresh .amc into an existing catalog so its id,
+ *  source_ref and sync bookkeeping survive. */
+export async function deleteCatalogContents(env: Env, catalogId: string): Promise<void> {
+  await env.DB.batch([
+    // movie_extras cascades from movies via FK, but be explicit: the FK is only
+    // enforced when PRAGMA foreign_keys is on for the connection.
+    env.DB.prepare(
+      `DELETE FROM movie_extras WHERE movie_id IN (SELECT id FROM movies WHERE catalog_id = ?)`,
+    ).bind(catalogId),
+    env.DB.prepare(`DELETE FROM movies WHERE catalog_id = ?`).bind(catalogId),
+    env.DB.prepare(`DELETE FROM custom_field_defs WHERE catalog_id = ?`).bind(catalogId),
+  ]);
+}
+
 // --- custom field defs -----------------------------------------------------
 
 export async function insertCustomFieldDefs(
