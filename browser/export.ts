@@ -58,8 +58,13 @@ function requester(o: ExportOptions): AuthedFetch {
   return o.fetcher ?? ((path, init = {}) => fetch(path, { ...init, headers: headers(o) }));
 }
 
-/** Rebuild an .amc file for `catalogId` and return it as a Blob for download. */
-export async function exportAmcFile(catalogId: string, opts: ExportOptions): Promise<Blob> {
+/** Rebuild an .amc file for `catalogId`, returning both the Blob and the
+ *  content_rev its bundle was read at. Shared by exportAmcFile (download path,
+ *  rev discarded) and buildAmcFile (push path, rev recorded as synced_rev). */
+async function buildInternal(
+  catalogId: string,
+  opts: ExportOptions,
+): Promise<{ blob: Blob; contentRev: number }> {
   const send = requester(opts);
   const pageSize = opts.pageSize ?? 500;
   const base = `/api/catalog/${encodeURIComponent(catalogId)}/export`;
@@ -78,6 +83,10 @@ export async function exportAmcFile(catalogId: string, opts: ExportOptions): Pro
     customFieldDefs: CustomFieldDefRow[];
     movieCount: number;
     extraCount: number;
+    // The revision this bundle was read at. A push records THIS as
+    // synced_rev, so an edit made during a multi-minute upload stays pending
+    // instead of being silently marked synced.
+    content_rev: number;
   }>("part=meta");
 
   const pageOffsets = (count: number): number[] =>
@@ -161,7 +170,28 @@ export async function exportAmcFile(catalogId: string, opts: ExportOptions): Pro
   const enc = (bundle.catalog.text_encoding ?? "utf-8") as TextEncoding;
   const raw = toRaw(catalog, enc);
 
-  return new Blob([serializeCatalog(raw)], { type: "application/octet-stream" });
+  return {
+    blob: new Blob([serializeCatalog(raw)], { type: "application/octet-stream" }),
+    contentRev: meta.content_rev,
+  };
+}
+
+/** Rebuild an .amc file for `catalogId` and return it as a Blob for download. */
+export async function exportAmcFile(catalogId: string, opts: ExportOptions): Promise<Blob> {
+  return (await buildInternal(catalogId, opts)).blob;
+}
+
+/** The built `.amc` plus the revision its bundle was read at. The push path
+ *  needs both: the bytes to upload, and the rev to record as synced. */
+export interface BuiltAmc {
+  bytes: Uint8Array;
+  contentRev: number;
+}
+
+/** Like exportAmcFile, but also reports the content_rev the bundle was read at. */
+export async function buildAmcFile(catalogId: string, opts: ExportOptions): Promise<BuiltAmc> {
+  const { blob, contentRev } = await buildInternal(catalogId, opts);
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), contentRev };
 }
 
 /** Convenience: build the file and trigger a browser download. */

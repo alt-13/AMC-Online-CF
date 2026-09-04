@@ -581,6 +581,10 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
         customFieldDefs: await db.getCustomFieldDefs(env, cat.id),
         movieCount: await db.countMovies(env, cat.id),
         extraCount: await db.countExtras(env, cat.id),
+        // The revision this bundle was read at. A push records THIS as
+        // synced_rev, so an edit made during a multi-minute upload stays
+        // pending instead of being silently marked synced.
+        content_rev: cat.content_rev,
       });
     }
     if (part === "movies") {

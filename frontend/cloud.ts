@@ -14,7 +14,8 @@
 // auto-reconnect (worker/crypto.ts). See CF-PORT.md "Mega import/export".
 
 import { reactive } from "vue";
-import { exportAmcFile, importAmcFile, session, cloud, cf, type CatalogRow } from "./api";
+import { importAmcFile, session, cloud, cf, type CatalogRow } from "./api";
+import { buildAmcFile } from "../browser/export";
 import {
   loginToMega,
   uploadToMega,
@@ -36,7 +37,10 @@ import {
   pickActiveProvider,
 } from "./cloudref";
 import type { TransferState } from "./syncstatus";
-import { contentCrcOf } from "../browser/mega-fingerprint";
+import { deriveStatus } from "./syncstatus";
+import { contentCrcOf, computeFingerprint } from "../browser/mega-fingerprint";
+import { sha256Hex } from "../amc/posterkey";
+import { withWakeLock } from "./wakelock";
 
 // megajs's MutableFile (the node type with .delete) isn't exported; we only need
 // .delete here.
@@ -146,10 +150,18 @@ interface CloudConnector {
   /** Stable "same file" origin key for a downloaded node, or null if incomplete. */
   sourceRefOf(node: MegaFile): string | null;
   download(node: MegaFile, onProgress?: (loaded: number, total: number) => void): Promise<Uint8Array>;
-  /** Push to the origin the source_ref locator points at (folder handle + name). */
-  pushToLocator(storage: Storage, locator: string, bytes: Uint8Array): Promise<void>;
+  /** Push to the origin the source_ref locator points at (folder handle + name).
+   *  `mtimeSec` is passed through so the caller's precomputed fingerprint and
+   *  the uploaded file agree. */
+  pushToLocator(storage: Storage, locator: string, bytes: Uint8Array, mtimeSec?: number): Promise<void>;
   /** Push to a user-chosen path; return the resulting full source_ref. */
-  pushToPath(storage: Storage, path: string, fallbackName: string, bytes: Uint8Array): Promise<string>;
+  pushToPath(
+    storage: Storage,
+    path: string,
+    fallbackName: string,
+    bytes: Uint8Array,
+    mtimeSec?: number,
+  ): Promise<string>;
 }
 
 const megaConnector: CloudConnector = {
@@ -179,20 +191,20 @@ const megaConnector: CloudConnector = {
     return file.bytes;
   },
 
-  async pushToLocator(storage, locator, bytes) {
+  async pushToLocator(storage, locator, bytes, mtimeSec) {
     const { handle, name } = splitMegaLocator(locator);
     const folder = folderByHandle(storage, handle);
     if (!folder) throw new Error("the folder this library came from no longer exists on Mega");
-    await replaceInFolder(storage, folder, name, bytes);
+    await replaceInFolder(storage, folder, name, bytes, mtimeSec);
   },
 
-  async pushToPath(storage, path, fallbackName, bytes) {
+  async pushToPath(storage, path, fallbackName, bytes, mtimeSec) {
     const { segments, filename } = splitAmcPath(path);
     const name = filename ?? (fallbackName.toLowerCase().endsWith(".amc") ? fallbackName : `${fallbackName}.amc`);
     const folder = segments.length
       ? await ensureFolderAt(storage, segments)
       : (storage.root as unknown as MegaFile);
-    await replaceInFolder(storage, folder, name, bytes);
+    await replaceInFolder(storage, folder, name, bytes, mtimeSec);
     const handle = folder.nodeId ?? storage.root?.nodeId ?? "";
     return formatMegaSourceRef(handle, name);
   },
@@ -205,11 +217,12 @@ async function replaceInFolder(
   folder: MegaFile,
   name: string,
   bytes: Uint8Array,
+  mtimeSec?: number,
 ): Promise<void> {
   const previous =
     (((folder.children ?? []) as MegaFile[]).find((f) => !f.directory && f.name === name)) ?? null;
   const target = folder === (storage.root as unknown as MegaFile) ? storage : folder;
-  await uploadToMega(target as Storage | MegaFile, name, bytes);
+  await uploadToMega(target as Storage | MegaFile, name, bytes, mtimeSec);
   if (previous) {
     try {
       await (previous as unknown as Deletable).delete(true);
@@ -304,16 +317,16 @@ export function listAmc(path = providerState(cloudSettings.active).path, deep = 
 
 /** Download an `.amc` and import it into D1+R2, then auto-disconnect. Returns the
  *  new catalog id. Mirrors the local-upload path (cache-then-import). */
-export async function pull(node: MegaAmcFile, onProgress?: PullProgress): Promise<string> {
+export async function pull(node0: MegaAmcFile, onProgress?: PullProgress): Promise<string> {
   if (!storage) throw new Error("Not connected");
   const connector = connectorFor(cloudSession.provider);
-  const sourceRef = connector.sourceRefOf(node.node);
+  const sourceRef = connector.sourceRefOf(node0.node);
 
   let bytes = sourceRef ? await getCachedAmc(sourceRef) : null;
   if (bytes) {
     onProgress?.(bytes.length, bytes.length, "download");
   } else {
-    bytes = await connector.download(node.node, (loaded, total) => onProgress?.(loaded, total, "download"));
+    bytes = await connector.download(node0.node, (loaded, total) => onProgress?.(loaded, total, "download"));
     if (sourceRef) await putCachedAmc(sourceRef, bytes);
   }
 
@@ -322,8 +335,28 @@ export async function pull(node: MegaAmcFile, onProgress?: PullProgress): Promis
     ...session(),
     onProgress,
     sourceRef,
-    fallbackName: (node.name ?? "").replace(/\.amc$/i, ""),
+    fallbackName: (node0.name ?? "").replace(/\.amc$/i, ""),
   });
+
+  // Record the bookkeeping now, or a freshly imported catalog sits at "unknown"
+  // despite provably matching the file it came from. The bytes are in hand, so
+  // the content hash is free — which makes an immediately-following Sync a
+  // no-op via the skip-if-unchanged path.
+  if (sourceRef) {
+    try {
+      const meta = await cf.catalogInfo(id);
+      const node = node0.node as unknown as { attributes?: { c?: string }; size?: number };
+      await cf.setSyncState(id, {
+        synced_rev: meta.content_rev,
+        content_hash: await sha256Hex(bytes),
+        remote_fingerprint: node.attributes?.c ?? "",
+        remote_size: node.size ?? bytes.byteLength,
+      });
+    } catch {
+      /* the catalog just reads "unknown" until the next check */
+    }
+  }
+
   if (sourceRef) await dropCachedAmc(sourceRef);
   disconnect(); // ephemeral: nothing needs to stay connected after an import
   return id;
@@ -339,25 +372,91 @@ async function ensureConnected(provider: string): Promise<void> {
   if (!(await autoConnect(provider))) throw new CloudLoginRequiredError(provider);
 }
 
-async function buildAmc(catalog: CatalogRow, onProgress?: PushProgress): Promise<Uint8Array> {
-  const blob = await exportAmcFile(catalog.id, { ...session(), onProgress });
-  return new Uint8Array(await blob.arrayBuffer());
+/** Thrown when a push is refused because the remote moved. The caller opens the
+ *  conflict dialog rather than overwriting anything. */
+export class RemoteMovedError extends Error {
+  constructor(public kind: "conflict" | "changed-externally") {
+    super(
+      kind === "conflict"
+        ? "This library and the cloud file have both changed - resolve before syncing"
+        : "The cloud file changed outside the app - re-import or resolve first",
+    );
+    this.name = "RemoteMovedError";
+  }
 }
 
-/** Push a catalog back to its cloud origin (its source_ref), just-in-time. */
-export async function syncCatalogToOrigin(catalog: CatalogRow, onProgress?: PushProgress): Promise<void> {
+/**
+ * Push a catalog back to its cloud origin. The two properties that matter:
+ *
+ *  - `synced_rev` records the revision the BUNDLE was read at, never the
+ *    current one. An edit made during a multi-minute upload must stay pending.
+ *  - If the rebuilt bytes hash to the stored content_hash, nothing is uploaded.
+ *    Covers a repeated Sync click and an edit-then-undo.
+ */
+export async function syncCatalogToOrigin(
+  catalog: CatalogRow,
+  onProgress?: PushProgress,
+): Promise<{ uploaded: boolean }> {
   if (!catalog.source_ref) throw new Error("catalog has no cloud origin");
+
+  // Refuse rather than overwrite. The dialog is the only thing allowed to
+  // resolve a moved remote.
+  const status = deriveStatus(catalog);
+  if (status.kind === "conflict" || status.kind === "changed-externally") {
+    throw new RemoteMovedError(status.kind);
+  }
+
   const { provider, locator } = parseSourceRef(catalog.source_ref);
   const connector = connectorFor(provider);
   await ensureConnected(provider);
-  const bytes = await buildAmc(catalog, onProgress);
-  await connector.pushToLocator(storage!, locator, bytes);
-  disconnect();
+
+  const tx = beginTransfer(catalog.id, "building");
+  // wakelock.ts exports exactly one thing: withWakeLock(fn), a wrapper. So the
+  // whole push body runs inside it rather than acquiring/releasing a handle.
+  return withWakeLock(async () => {
+    try {
+      const { bytes, contentRev } = await buildAmcFile(catalog.id, {
+        ...session(),
+        onProgress: (done, total) => {
+          tx.progress(done, total, "posters");
+          onProgress?.(done, total);
+        },
+      });
+
+      const hash = await sha256Hex(bytes);
+      let uploaded = false;
+      let fingerprint = catalog.remote_fingerprint ?? "";
+
+      if (hash === catalog.content_hash && fingerprint) {
+        // Byte-identical to what is already up there. Skip the upload; still
+        // advance synced_rev so the badge goes clean.
+        tx.progress(1, 1, "unchanged");
+      } else {
+        tx.progress(0, bytes.byteLength, "uploading");
+        const mtimeSec = Math.floor(Date.now() / 1000);
+        fingerprint = computeFingerprint(bytes, mtimeSec);
+        await connector.pushToLocator(storage!, locator, bytes, mtimeSec);
+        uploaded = true;
+      }
+
+      await cf.setSyncState(catalog.id, {
+        synced_rev: contentRev,
+        content_hash: hash,
+        remote_fingerprint: fingerprint,
+        remote_size: bytes.byteLength,
+      });
+      return { uploaded };
+    } finally {
+      tx.end();
+      disconnect();
+    }
+  });
 }
 
 /** First push of a no-origin catalog: push to a chosen provider+path, write the
  *  resulting source_ref back to the catalog, and return it. Assumes a live
- *  session to `provider` already exists (the caller connected it). */
+ *  session to `provider` already exists (the caller connected it). It is a
+ *  first push, so the catalog should read `synced` afterwards. */
 export async function pushAdoptingOrigin(
   catalog: CatalogRow,
   provider: string,
@@ -365,11 +464,29 @@ export async function pushAdoptingOrigin(
   onProgress?: PushProgress,
 ): Promise<string> {
   await ensureConnected(provider);
-  const bytes = await buildAmc(catalog, onProgress);
-  const fallbackName = catalog.name || "catalog";
-  const sourceRef = await connectorFor(provider).pushToPath(storage!, path, fallbackName, bytes);
-  disconnect();
-  return sourceRef;
+  const tx = beginTransfer(catalog.id, "building");
+  try {
+    const { bytes, contentRev } = await buildAmcFile(catalog.id, {
+      ...session(),
+      onProgress: (done, total) => { tx.progress(done, total, "posters"); onProgress?.(done, total); },
+    });
+    const mtimeSec = Math.floor(Date.now() / 1000);
+    const fingerprint = computeFingerprint(bytes, mtimeSec);
+    const fallbackName = catalog.name || "catalog";
+    const sourceRef = await connectorFor(provider).pushToPath(
+      storage!, path, fallbackName, bytes, mtimeSec,
+    );
+    await cf.setSyncState(catalog.id, {
+      synced_rev: contentRev,
+      content_hash: await sha256Hex(bytes),
+      remote_fingerprint: fingerprint,
+      remote_size: bytes.byteLength,
+    });
+    return sourceRef;
+  } finally {
+    tx.end();
+    disconnect();
+  }
 }
 
 // --- remote check pass -------------------------------------------------------
