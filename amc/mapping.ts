@@ -130,6 +130,10 @@ export interface ImportSinks {
   now: () => number; // epoch ms
   /** Persist poster bytes and return the R2 key that references them. */
   putPoster: (bytes: Uint8Array, suggestedKey: string) => Promise<string>;
+  /** Optional per-movie tick. Import content-addresses every poster in here, so
+   *  on a big catalog this loop is a long stretch with nothing else to report —
+   *  the caller turns these into progress. */
+  onMovie?: (done: number, total: number) => void;
 }
 
 export interface ImportResult {
@@ -312,6 +316,7 @@ export async function catalogToRows(
         poster_key: ePosterKey,
       });
     }
+    sinks.onMovie?.(movies.length, cat.movies.length);
   }
 
   return { catalog, customFieldDefs, movies, extras };

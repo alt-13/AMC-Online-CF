@@ -4,12 +4,10 @@
 // poster on demand from R2, rebuilds the in-memory catalog, and serialises it
 // back to the exact binary layout the desktop Ant Movie Catalog expects.
 
-import { serializeCatalog } from "../amc/parser";
-import { rowsToCatalog } from "../amc/mapping";
 import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../amc/mapping";
-import { toRaw } from "../amc/transcode";
 import type { TextEncoding } from "../amc/codepages";
 import { runPool } from "./pool";
+import { runJob } from "./amcworker";
 
 /** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
 export type AuthedFetch = (
@@ -106,13 +104,6 @@ async function buildInternal(
     extras: extraPages.flat(),
   };
 
-  const extrasByMovie = new Map<string, ExtraRow[]>();
-  for (const e of bundle.extras) {
-    const list = extrasByMovie.get(e.movie_id) ?? [];
-    list.push(e);
-    extrasByMovie.set(e.movie_id, list);
-  }
-
   // Collect every distinct key first. A key shared across rows (two movies with
   // the same artwork) is fetched once.
   const posterKeys = new Set<string>();
@@ -141,37 +132,36 @@ async function buildInternal(
     (done, total) => opts.onProgress?.(done, total),
   );
 
-  // After the prefetch every key is cached, so this is a map read.
-  // rowsToCatalog only ever calls getPoster with a row.poster_key/e.poster_key
-  // drawn from these same bundle.movies/bundle.extras arrays, which is exactly
-  // what `posterKeys` above was built from — so the cache always hits and the
-  // fetch below is unreachable by construction, not an expected path. It is
-  // kept anyway as a cheap, defensively-correct guard in case that invariant
-  // ever stops holding.
-  const getPoster = async (key: string): Promise<Uint8Array> => {
-    const cached = posterCache.get(key);
-    if (cached) return cached;
-    const bytes = await fetchPoster(key);
-    posterCache.set(key, bytes);
-    return bytes;
-  };
-
-  const catalog = await rowsToCatalog({
-    catalog: bundle.catalog,
-    customFieldDefs: bundle.customFieldDefs,
-    movies: bundle.movies,
-    extrasByMovie,
-    getPoster,
-  });
-
-  // Re-encode strings to the catalog's original on-disk codepage so the .amc is
-  // byte-identical to what was imported (no-op for UTF-8 catalogs). Older rows
-  // predating this column read back as undefined -> treated as UTF-8.
-  const enc = (bundle.catalog.text_encoding ?? "utf-8") as TextEncoding;
-  const raw = toRaw(catalog, enc);
+  // Rebuild + serialise in a Worker: it is 10-30 s of blocked main thread on a
+  // big catalog, which is exactly when a mobile browser kills the tab. The
+  // prefetched posters are TRANSFERRED in rather than copied, so peak memory is
+  // unchanged — but this side loses them, which is fine, nothing below reads
+  // the cache again.
+  //
+  // The prefetch above filled the cache with every key the rows reference, so
+  // the job's poster lookup is a map read; a miss is unreachable by
+  // construction and the job throws rather than silently dropping artwork.
+  //
+  // `text_encoding` re-encodes strings to the catalog's original on-disk
+  // codepage so the .amc is byte-identical to what was imported (no-op for
+  // UTF-8). Rows predating that column read back as undefined -> UTF-8.
+  const posters = [...posterCache.entries()];
+  const job = await runJob(
+    {
+      op: "export",
+      catalog: bundle.catalog,
+      customFieldDefs: bundle.customFieldDefs,
+      movies: bundle.movies,
+      extras: bundle.extras,
+      posters,
+      encoding: (bundle.catalog.text_encoding ?? "utf-8") as TextEncoding,
+    },
+    posters.map(([, bytes]) => bytes.buffer as ArrayBuffer),
+  );
+  const out = (job as { result: Uint8Array }).result;
 
   return {
-    blob: new Blob([serializeCatalog(raw)], { type: "application/octet-stream" }),
+    blob: new Blob([out as BlobPart], { type: "application/octet-stream" }),
     contentRev: meta.content_rev,
   };
 }

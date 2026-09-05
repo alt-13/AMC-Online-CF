@@ -79,6 +79,11 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 ├── browser/
 │   ├── import.ts       ← importAmcFile(file, opts): parse, upload posters, chunked row commit
 │   ├── export.ts       ← exportAmcFile/downloadAmcFile: fetch bundle, rebuild, download
+│   ├── amcjob.ts       ← the two CPU-bound halves (parse→rows, rows→bytes) as one pure runAmcJob
+│   ├── amc.worker.ts   ← Web Worker shim over runAmcJob
+│   ├── amcworker.ts    ← spawn/transfer/terminate one worker per job; runs inline where Worker is absent
+│   ├── pool.ts         ← runPool: bounded-concurrency task pool
+│   ├── sweep.ts        ← sweepAll: client loop that drives the Worker's bounded R2 sweeps
 │   └── mega.ts         ← megajs login + fingerprinted up/download + folder-path helpers
 ├── frontend/
 │   ├── api.ts          ← auth (status/register/login/refresh/logout) + session + metadata client (incl. create/setPictureFromUrl) + omdb + settings + cloud config + re-exports

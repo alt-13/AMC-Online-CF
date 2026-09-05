@@ -234,15 +234,17 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ inserted: movies.length });
   }
 
-  // POST /api/import/abort?catalogId=  — roll back a failed/partial import: drop
-  // the catalog rows (if the catalog row was created) and sweep every R2 poster
-  // under this catalog's prefix, including ones uploaded before any row existed.
-  // Always tenant-scoped (`${t}/…`), so it can only ever touch the caller's data.
+  // POST /api/import/abort?catalogId=&cursor=  — roll back a failed/partial
+  // import: drop the catalog rows (if the catalog row was created) and sweep
+  // every R2 poster under this catalog's prefix, including ones uploaded before
+  // any row existed. Always tenant-scoped (`${t}/…`), so it can only ever touch
+  // the caller's data. Bounded per request: `next` is the cursor to call back
+  // with, null when the prefix is clear.
   if (p === "/api/import/abort" && m === "POST") {
     const catalogId = url.searchParams.get("catalogId");
     if (!catalogId) return err(400, "missing catalogId");
-    await purgeCatalog(env, t, catalogId);
-    return new Response(null, { status: 204 });
+    const next = await purgeCatalog(env, t, catalogId, url.searchParams.get("cursor") ?? undefined);
+    return json({ next });
   }
 
   // GET /api/catalogs  — list this tenant's catalogs
@@ -473,12 +475,18 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json({ movies, total, limit, offset });
   }
 
-  // DELETE /api/catalog/:id  — drop a catalog, its rows, and its R2 posters.
+  // DELETE /api/catalog/:id?cursor=  — drop a catalog, its rows, and its R2
+  //   posters. Bounded per request: `next` is the cursor to call back with,
+  //   null when the sweep is done.
+  //
+  //   The ownership check runs on the FIRST call only. A continuation has no
+  //   catalog row left to check — it is the same tenant-rooted prefix sweep,
+  //   which is what enforces rule 8 here, and it is also how `supersede` hands
+  //   its leftover prefixes back to the browser to finish.
   if (seg[0] === "api" && seg[1] === "catalog" && seg[2] && !seg[3] && m === "DELETE") {
-    const cat = await db.getCatalog(env, t, seg[2]);
-    if (!cat) return err(404, "catalog not found");
-    await purgeCatalog(env, t, cat.id);
-    return new Response(null, { status: 204 });
+    const cursor = url.searchParams.get("cursor") ?? undefined;
+    if (!cursor && !(await db.getCatalog(env, t, seg[2]))) return err(404, "catalog not found");
+    return json({ next: await purgeCatalog(env, t, seg[2], cursor) });
   }
 
   // POST /api/catalog/:id/supersede  — after a cloud re-pull finishes, drop every
@@ -490,13 +498,19 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     if (!cat) return err(404, "catalog not found");
     if (!cat.source_ref) return json({ superseded: 0 });
     const dupes = await db.catalogsBySource(env, t, cat.source_ref);
+    // Rows go now (cheap, and what the UI reads). The R2 sweep is bounded like
+    // every other one, so a dupe with more objects than one request can clear
+    // comes back in `pending`; the browser finishes it via DELETE
+    // /api/catalog/:id?cursor=.
+    const pending: Array<{ id: string; cursor: string }> = [];
     let superseded = 0;
     for (const d of dupes) {
       if (d.id === cat.id) continue;
-      await purgeCatalog(env, t, d.id);
+      const next = await purgeCatalog(env, t, d.id);
+      if (next) pending.push({ id: d.id, cursor: next });
       superseded += 1;
     }
-    return json({ superseded });
+    return json({ superseded, pending });
   }
 
   // POST /api/catalog/:id/reimport-begin
@@ -513,17 +527,12 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     if (!cat) return err(404, "catalog not found");
     // movies cascade to movie_extras; defs cascade from the catalog, so delete
     // them explicitly (the catalog row itself must survive).
-    await db.deleteCatalogContents(env, cat.id);
-    const prefix = `${t}/${cat.id}/`;
-    const blobs = `${prefix}blobs/`;
-    let cursor: string | undefined;
-    do {
-      const listed = await env.R2.list({ prefix, cursor });
-      const stale = listed.objects.map((o) => o.key).filter((k) => !k.startsWith(blobs));
-      if (stale.length) await env.R2.delete(stale);
-      cursor = listed.truncated ? listed.cursor : undefined;
-    } while (cursor);
-    return json({ ok: true });
+    const cursor = url.searchParams.get("cursor") ?? undefined;
+    // Rows go on the first call only; a continuation is a pure R2 sweep.
+    if (!cursor) await db.deleteCatalogContents(env, cat.id);
+    const blobs = `${t}/${cat.id}/blobs/`;
+    const next = await sweepPrefix(env, `${t}/${cat.id}/`, cursor, (k) => k.startsWith(blobs));
+    return json({ ok: true, next });
   }
 
   // POST /api/catalog/:id/gc-posters?cursor=
@@ -843,21 +852,59 @@ const DUMMY_HASH =
   "pbkdf2-sha256$100000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 /**
- * Drop a catalog's rows (movies/defs/extras cascade) and sweep every R2 poster
- * under its tenant-scoped prefix — including posters uploaded before any row
- * existed. Idempotent, and the `${tenantId}/` prefix means it can only ever
- * touch the caller's own objects.
+ * R2 list pages swept per request. A page is up to 1000 keys, so one request
+ * clears ~4000 objects — more than any normal catalog holds, while still
+ * bounding the work a single Worker request can do (rule 7). Every sweeping
+ * route returns the cursor it stopped at and the browser loops until null.
  */
-async function purgeCatalog(env: Env, tenantId: string, catalogId: string): Promise<void> {
-  const cat = await db.getCatalog(env, tenantId, catalogId);
-  if (cat) await db.deleteCatalog(env, cat.id);
-  const prefix = `${tenantId}/${catalogId}/`;
-  let cursor: string | undefined;
-  do {
+const SWEEP_PAGES = 4;
+
+/**
+ * Delete R2 objects under `prefix`, at most SWEEP_PAGES list pages per call.
+ * Returns the cursor to resume from, or null once the prefix is exhausted.
+ * `keep` (optional) spares the keys it matches — the re-import path keeps
+ * everything under `blobs/`.
+ *
+ * Callers must pass a `${tenantId}/`-rooted prefix; that is what makes this
+ * safe without a row-level ownership check (rule 8), which matters because the
+ * catalog row is already gone by the time the sweep is resumed.
+ */
+async function sweepPrefix(
+  env: Env,
+  prefix: string,
+  cursor: string | undefined,
+  keep?: (key: string) => boolean,
+): Promise<string | null> {
+  for (let page = 0; page < SWEEP_PAGES; page++) {
     const listed = await env.R2.list({ prefix, cursor });
-    if (listed.objects.length) await env.R2.delete(listed.objects.map((o) => o.key));
-    cursor = listed.truncated ? listed.cursor : undefined;
-  } while (cursor);
+    const doomed = listed.objects.map((o) => o.key).filter((k) => !keep?.(k));
+    if (doomed.length) await env.R2.delete(doomed);
+    if (!listed.truncated) return null;
+    cursor = listed.cursor;
+  }
+  return cursor ?? null;
+}
+
+/**
+ * Drop a catalog's rows (movies/defs/extras cascade) and sweep its R2 posters —
+ * including posters uploaded before any row existed. The row delete happens on
+ * the FIRST call only (`cursor` undefined); later calls just continue the
+ * sweep. Returns the cursor to resume from, or null when nothing is left.
+ *
+ * Idempotent, and the `${tenantId}/` prefix means it can only ever touch the
+ * caller's own objects.
+ */
+async function purgeCatalog(
+  env: Env,
+  tenantId: string,
+  catalogId: string,
+  cursor?: string,
+): Promise<string | null> {
+  if (!cursor) {
+    const cat = await db.getCatalog(env, tenantId, catalogId);
+    if (cat) await db.deleteCatalog(env, cat.id);
+  }
+  return sweepPrefix(env, `${tenantId}/${catalogId}/`, cursor);
 }
 
 /** Fetch a movie only if it belongs to a catalog owned by this tenant. */

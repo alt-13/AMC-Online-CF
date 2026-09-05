@@ -5,13 +5,15 @@
 // every embedded poster into R2 via the Worker, then streams the resulting
 // rows to D1 in small chunks so no single Worker request is large or slow.
 
-import { parseCatalog } from "../amc/parser";
-import { catalogToRows } from "../amc/mapping";
 import type { ImportResult } from "../amc/mapping";
-import { detectEncoding, toReadable } from "../amc/transcode";
 import type { LegacyEncoding } from "../amc/codepages";
 import { runPool } from "./pool";
-import { sha256Hex, blobKey } from "../amc/posterkey";
+import { runJob } from "./amcworker";
+import type { ImportJobResult, PosterJob } from "./amcjob";
+import { sweepAll } from "./sweep";
+
+/** Progress stages an import reports, in the order they occur. */
+export type ImportPhase = "reading" | "hashing" | "posters" | "rows";
 
 /** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
 export type AuthedFetch = (
@@ -34,8 +36,9 @@ export interface ImportOptions {
   /** Movies per commit request. Keep small to respect the Free-plan CPU cap. */
   chunkSize?: number;
   /** Progress callback: (done, total, phase). "reading" = parsing the binary
-   *  (done/total are 0 — it's a synchronous step, not countable). */
-  onProgress?: (done: number, total: number, phase: "reading" | "posters" | "rows") => void;
+   *  (done/total are 0 — one synchronous pass, not countable); "hashing" =
+   *  content-addressing each poster, counted per movie. */
+  onProgress?: (done: number, total: number, phase: ImportPhase) => void;
   /**
    * Stable origin key for a cloud pull (e.g. "mega:<folder>:<file>.amc"). When
    * set, once the import succeeds every older catalog with the same key is
@@ -96,8 +99,8 @@ const POSTER_CONCURRENCY = 6;
  *  the import rolls back) on the first failure. Reports "posters" progress. */
 async function uploadPosters(
   send: AuthedFetch,
-  jobs: Array<{ data: Uint8Array; key: string }>,
-  onProgress?: (done: number, total: number, phase: "reading" | "posters" | "rows") => void,
+  jobs: PosterJob[],
+  onProgress?: (done: number, total: number, phase: ImportPhase) => void,
 ): Promise<void> {
   if (!jobs.length) return;
   onProgress?.(0, jobs.length, "posters");
@@ -160,19 +163,7 @@ async function existingBlobKeys(send: AuthedFetch, catalogId: string): Promise<S
  */
 export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<string> {
   const chunkSize = opts.chunkSize ?? 200;
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  // Parsing a large .amc is synchronous and blocks the thread; signal "reading"
-  // and yield one macrotask so the UI paints that state before the parse locks up.
-  opts.onProgress?.(0, 0, "reading");
-  await new Promise((r) => setTimeout(r));
-  const parsed = parseCatalog(bytes);
-
-  // Detect the on-disk text encoding (auto for legacy ANSI files; opts.legacyEncoding
-  // is an optional override) and, for legacy catalogs, reinterpret every string
-  // through the codepage so umlauts are readable AND survive D1 (lone surrogates
-  // would be stored as U+FFFD). Byte-exact export reverses this.
-  const textEncoding = detectEncoding(parsed, opts.legacyEncoding);
-  const catalog = toReadable(parsed, textEncoding);
+  const bytes = await file.arrayBuffer();
 
   // Fix the catalog id up front so a failure anywhere below — even during the
   // poster phase — can be rolled back by its prefix. Import is otherwise a
@@ -182,39 +173,30 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
   const send = requester(opts);
 
   try {
-    // Flatten to rows. Poster keys are deterministic, so we just RECORD each
-    // upload here and return the key immediately; the bytes are pushed to R2
-    // afterwards with bounded concurrency. Uploading one-at-a-time was the main
-    // slowdown — a big catalog is thousands of serial round-trips over a phone.
-    const posterJobs: Array<{ data: Uint8Array; key: string }> = [];
-    // Distinct keys already queued. Content addressing makes this exact: two
-    // movies with the same artwork hash to the same key, so we upload it once.
-    const posterKeys = new Set<string>();
-    const rows: ImportResult = await catalogToRows(
-      catalog,
-      opts.tenantId,
+    // Parse the binary, detect its codepage and flatten it to rows — all in one
+    // Worker job. It is the only long synchronous stretch in an import, and off
+    // the main thread it no longer freezes the tab (which is how mobile
+    // browsers decide to kill it). `bytes` is TRANSFERRED, not copied, so the
+    // file never exists twice in memory.
+    //
+    // Poster keys are content-addressed and deterministic, so the job just
+    // RECORDS each upload and returns the key; the bytes are pushed to R2 below
+    // with bounded concurrency. Uploading one-at-a-time was the main slowdown —
+    // a big catalog is thousands of serial round-trips over a phone.
+    opts.onProgress?.(0, 0, "reading");
+    const job = await runJob(
       {
-        newId: () => crypto.randomUUID(),
-        now: () => Date.now(),
-        // Content-address the poster: the key IS the hash of the bytes, so the
-        // R2 object is immutable (cacheable for a year) and identical artwork
-        // shared by several movies is stored and uploaded ONCE. `putPoster`'s
-        // contract is that the sink returns the key it actually used, so the
-        // suggested per-movie key is deliberately ignored — mapping.ts needs no
-        // change for this.
-        putPoster: async (data, _suggestedKey) => {
-          const key = blobKey(opts.tenantId, catalogId, await sha256Hex(data));
-          if (!posterKeys.has(key)) {
-            posterKeys.add(key);
-            posterJobs.push({ data, key });
-          }
-          return key;
-        },
+        op: "import",
+        bytes,
+        tenantId: opts.tenantId,
+        catalogId,
+        sourceRef: opts.sourceRef ?? null,
+        legacyEncoding: opts.legacyEncoding,
       },
-      catalogId,
-      opts.sourceRef ?? null,
-      textEncoding,
+      [bytes],
+      (p) => opts.onProgress?.(p.done, p.total, p.phase),
     );
+    const { rows, posterJobs } = (job as { result: ImportJobResult }).result;
 
     // Most .amc files carry no internal catalog name — fall back to the source
     // filename so the library shows something meaningful, not "(untitled)".
@@ -236,11 +218,9 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
     // 1. Create the catalog + custom field definitions — or, for a re-import,
     //    clear the existing catalog's contents and keep the row.
     if (reimport) {
-      const begun = await send(
-        `/api/catalog/${encodeURIComponent(catalogId)}/reimport-begin`,
-        { method: "POST" },
-      );
-      if (!begun.ok) throw new Error(`reimport begin failed (${begun.status})`);
+      // Bounded per request: the route clears a few R2 pages and hands back a
+      // cursor, so loop it until the stale (non-blob) objects are gone.
+      await sweepAll(send, `/api/catalog/${encodeURIComponent(catalogId)}/reimport-begin`);
       const defs = await send(
         "/api/import/custom-field-defs",
         { method: "POST", body: JSON.stringify({ catalogId, customFieldDefs: rows.customFieldDefs }) },
@@ -286,7 +266,18 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
     //    missing catalog.
     if (opts.sourceRef && !reimport) {
       try {
-        await send(`/api/catalog/${encodeURIComponent(catalogId)}/supersede`, { method: "POST" });
+        const res = await send(`/api/catalog/${encodeURIComponent(catalogId)}/supersede`, {
+          method: "POST",
+        });
+        // The superseded catalogs' rows are already gone; anything listed in
+        // `pending` still has R2 objects that outran one bounded sweep. Finish
+        // them here — best-effort, they are orphans either way.
+        const body = (await res.json().catch(() => ({}))) as {
+          pending?: Array<{ id: string; cursor: string }>;
+        };
+        for (const d of body.pending ?? []) {
+          await sweepAll(send, `/api/catalog/${encodeURIComponent(d.id)}`, "DELETE", d.cursor);
+        }
       } catch {
         /* keep the duplicate; the user can delete it manually */
       }
@@ -304,7 +295,7 @@ export async function importAmcFile(file: Blob, opts: ImportOptions): Promise<st
     // the error.
     if (!reimport) {
       try {
-        await send(`/api/import/abort?catalogId=${encodeURIComponent(catalogId)}`, { method: "POST" });
+        await sweepAll(send, `/api/import/abort?catalogId=${encodeURIComponent(catalogId)}`);
       } catch {
         /* leave any residue for the next import/abort to clear */
       }

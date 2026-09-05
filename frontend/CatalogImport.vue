@@ -47,12 +47,13 @@
 import { computed, ref } from "vue";
 import { importAmcFile, session } from "./api";
 import { withWakeLock } from "./wakelock";
+import type { ImportPhase } from "../browser/import";
 
 const emit = defineEmits<{ imported: [catalogId: string] }>();
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const busy = ref(false);
-const phase = ref<"reading" | "posters" | "rows">("reading");
+const phase = ref<ImportPhase>("reading");
 const done = ref(0);
 const total = ref(0);
 const error = ref("");
@@ -62,6 +63,7 @@ const indeterminate = computed(() => phase.value === "reading" || !total.value);
 const phaseLabel = computed(() => {
   switch (phase.value) {
     case "reading": return "Reading file…";
+    case "hashing": return "Preparing posters…";
     case "posters": return "Uploading posters…";
     default: return "Importing movies…";
   }

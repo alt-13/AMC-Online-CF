@@ -133,6 +133,7 @@ import {
   type MegaAmcFile,
 } from "./cloud";
 import { withWakeLock } from "./wakelock";
+import type { ImportPhase } from "../browser/import";
 
 const providerOptions = [
   { label: "Mega.nz", value: "mega", disabled: false },
@@ -156,7 +157,7 @@ const deep = ref(true);
 
 const active = computed(() => settings.providers[settings.active] ?? { path: "", hasCredential: false });
 
-type Phase = "download" | "reading" | "posters" | "rows" | "";
+type Phase = "download" | ImportPhase | "";
 const phase = ref<Phase>("");
 const pDone = ref(0);
 const pTotal = ref(0);
@@ -166,6 +167,7 @@ const phaseText = computed(() => {
   switch (phase.value) {
     case "download": return `Downloading ${human(pDone.value)} / ${human(pTotal.value)}`;
     case "reading": return "Reading file…";
+    case "hashing": return `Preparing ${pDone.value} / ${pTotal.value}`;
     case "posters": return `Posters ${pDone.value} / ${pTotal.value}`;
     case "rows": return `Importing ${pDone.value} / ${pTotal.value}`;
     default: return "Starting…";
@@ -175,6 +177,7 @@ const shortLabel = computed(() => {
   switch (phase.value) {
     case "download": return pTotal.value ? `${pPct.value}%` : "Downloading…";
     case "reading": return "Reading…";
+    case "hashing": return "Preparing…";
     case "posters": return "Posters…";
     case "rows": return "Importing…";
     default: return "…";

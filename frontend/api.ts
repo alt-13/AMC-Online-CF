@@ -6,6 +6,7 @@
 
 import type { CatalogRow, CustomFieldDefRow, MovieRow } from "../amc/mapping";
 import { sha256Hex, blobKey, isBlobKey } from "../amc/posterkey";
+import { sweepAll } from "../browser/sweep";
 
 export type { CatalogRow, CustomFieldDefRow, MovieRow };
 export { importAmcFile } from "../browser/import";
@@ -250,10 +251,10 @@ export const cf = {
     return body.content_rev;
   },
 
-  /** Delete a catalog and all its posters. */
+  /** Delete a catalog and all its posters. The rows go in the first request;
+   *  the R2 sweep is bounded per request, so loop until the prefix is clear. */
   deleteCatalog: async (id: string): Promise<void> => {
-    const res = await authedFetch(`/api/catalog/${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (!res.ok && res.status !== 204) throw new Error(`delete catalog -> ${res.status}`);
+    await sweepAll(authedFetch, `/api/catalog/${encodeURIComponent(id)}`, "DELETE");
   },
 
   /** Adopt a cloud origin for a catalog that had none (first cloud push). */

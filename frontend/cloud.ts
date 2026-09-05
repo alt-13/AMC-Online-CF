@@ -16,6 +16,7 @@
 import { reactive } from "vue";
 import { importAmcFile, session, cloud, cf, type CatalogRow } from "./api";
 import { buildAmcFile } from "../browser/export";
+import type { ImportPhase } from "../browser/import";
 import {
   loginToMega,
   uploadToMega,
@@ -62,7 +63,7 @@ export interface MegaAmcFile {
   node: MegaFile;
 }
 
-type Phase = "download" | "reading" | "posters" | "rows";
+type Phase = "download" | ImportPhase;
 type PullProgress = (done: number, total: number, phase: Phase) => void;
 type PushProgress = (done: number, total: number) => void;
 
