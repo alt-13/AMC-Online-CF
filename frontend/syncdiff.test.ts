@@ -36,7 +36,7 @@ describe("summarizeDiff", () => {
     expect(d.samples.differing).toEqual(["Stalker"]);
   });
 
-  it("prefers the translated title in the key, matching sort_title", () => {
+  it("prefers the translated title in the key, matching the listing sort", () => {
     // Same movie, keyed by its translated title on both sides.
     const d = summarizeDiff([local(1, "Stalker", "Pikkoputki")], [remote(1, "Different", "Pikkoputki")]);
     expect(d.onlyLocal).toBe(0);

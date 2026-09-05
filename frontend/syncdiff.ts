@@ -36,8 +36,8 @@ export interface DiffSummary {
 
 const SAMPLE_CAP = 5;
 
-/** Display title: translated wins, matching how sort_title is derived
- *  (`lower(coalesce(translated, original))`, worker/index.ts). */
+/** Display title: translated wins, matching the listing sort key
+ *  (SORT_TITLE_SQL in worker/db.ts). */
 function localTitle(m: MovieRow): string {
   return m.translated_title || m.original_title || "";
 }

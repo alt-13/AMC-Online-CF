@@ -790,7 +790,6 @@ async function save(): Promise<boolean> {
     const patch: Partial<MovieRow> & { extras: Extra[] } = {
       ...form,
       custom_values: JSON.stringify(custom),
-      sort_title: (form.translated_title || form.original_title).toLowerCase(),
       extras: extras.value,
     };
     // content_rev rides along on the update response so the workspace's sync

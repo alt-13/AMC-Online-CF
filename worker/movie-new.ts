@@ -84,7 +84,6 @@ export function newMovieRow(
     pic_path: "",
     poster_key: null,
     custom_values: "{}",
-    sort_title: "",
     updated_at: nowMs,
   };
 
@@ -94,6 +93,5 @@ export function newMovieRow(
     }
   }
   if (!("date" in patch) || patch.date === undefined) row.date = todayDelphi(nowMs);
-  row.sort_title = (row.translated_title || row.original_title).toLowerCase();
   return row;
 }

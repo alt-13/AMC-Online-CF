@@ -125,13 +125,15 @@ CREATE TABLE IF NOT EXISTS movies (
   pic_path         TEXT NOT NULL DEFAULT '',     -- original external path (preserved)
   poster_key       TEXT,                         -- R2 object key, NULL if no embedded image
   custom_values    TEXT NOT NULL DEFAULT '{}',   -- JSON {tag: value}
-  sort_title       TEXT                          -- lower(coalesce(translated,original)) for listing
+  sort_title       TEXT                          -- DROPPED by migrations/0004_drop_sort_title.sql
+                                                 -- (replaced by an expression index; see SORT_TITLE_SQL in worker/db.ts)
   -- NOTE: no UNIQUE on (catalog_id, number). AMC does NOT enforce unique movie
   -- numbers, so real catalogs contain duplicates (and 0s) — a unique constraint
   -- would reject those imports. new in-app movies still get a fresh number via
   -- nextMovieNumber() (MAX+1); the index below just keeps export's ORDER BY fast.
 );
 CREATE INDEX IF NOT EXISTS idx_movies_catalog ON movies (catalog_id);
+-- Rebuilt as an expression index by migrations/0004_drop_sort_title.sql.
 CREATE INDEX IF NOT EXISTS idx_movies_sort ON movies (catalog_id, sort_title);
 CREATE INDEX IF NOT EXISTS idx_movies_number ON movies (catalog_id, number);
 CREATE INDEX IF NOT EXISTS idx_movies_year ON movies (catalog_id, year);

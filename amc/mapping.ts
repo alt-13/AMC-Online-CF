@@ -114,7 +114,6 @@ export interface MovieRow {
   pic_path: string;
   poster_key: string | null;
   custom_values: string; // JSON {tag: value}
-  sort_title: string;
   /** Row mtime (epoch ms), for "M films touched since the last sync". NULL on
    *  rows written before migration 0003. Not part of the .amc — rowsToCatalog
    *  never reads it, so the round-trip is unaffected. */
@@ -287,7 +286,6 @@ export async function catalogToRows(
       pic_path: m.picture.picPath,
       poster_key: posterKey,
       custom_values: JSON.stringify(customValues),
-      sort_title: (m.translatedTitle || m.originalTitle).toLowerCase(),
       updated_at: ts,
     });
 

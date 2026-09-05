@@ -704,13 +704,6 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       const extrasInput = body.extras;
       delete (body as { extras?: unknown }).extras;
       const patch = body as Partial<MovieRow>;
-      // Keep sort_title consistent with the titles even for clients that don't
-      // send it (the grid orders by it). Derive from the patch overlaid on the row.
-      if (("original_title" in patch || "translated_title" in patch) && !("sort_title" in patch)) {
-        const translated = patch.translated_title ?? movie.translated_title;
-        const original = patch.original_title ?? movie.original_title;
-        patch.sort_title = (translated || original).toLowerCase();
-      }
       await db.updateMovie(env, id, patch);
 
       // Replace-all extras when the client sends the set. Ordinals follow array

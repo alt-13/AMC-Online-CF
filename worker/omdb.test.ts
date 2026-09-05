@@ -99,14 +99,14 @@ describe("newMovieRow", () => {
     expect(row.date).toBe(todayDelphi(epochMs)); // defaults to "today"
   });
 
-  it("overlays the patch and derives sort_title", () => {
+  it("overlays the patch", () => {
     const row = newMovieRow("id", "cat", 1, {
       original_title: "Inception",
       translated_title: "Inception (DE)",
       year: 2010,
     }, epochMs);
     expect(row.year).toBe(2010);
-    expect(row.sort_title).toBe("inception (de)"); // prefers translated title
+    expect(row.translated_title).toBe("Inception (DE)");
   });
 
   it("respects an explicit date in the patch", () => {

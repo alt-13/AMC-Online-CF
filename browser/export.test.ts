@@ -24,7 +24,7 @@ function movieRow(id: string, number: number, title: string, poster_key: string 
     file_path: "", video_format: "", audio_format: "", resolution: "",
     framerate: "", languages: "", subtitles: "", size: "",
     pic_path: poster_key ? ".jpg" : "", poster_key,
-    custom_values: "{}", sort_title: title.toLowerCase(),
+    custom_values: "{}",
   };
 }
 

@@ -404,8 +404,16 @@ const MOVIE_COLS = [
   "category", "certification", "actors", "url", "description", "comments",
   "file_path", "video_format", "audio_format", "resolution", "framerate",
   "languages", "subtitles", "size", "pic_path", "poster_key", "custom_values",
-  "sort_title", "updated_at",
+  "updated_at",
 ] as const;
+
+/** Listing sort key, computed instead of stored. MUST stay byte-identical to
+ *  the expression in idx_movies_sort (migrations/0004_drop_sort_title.sql) or
+ *  SQLite will not use the index and every list turns into a sort of the whole
+ *  catalog. translated_title is NOT NULL DEFAULT '' (never NULL), hence CASE
+ *  rather than coalesce. */
+const SORT_TITLE_SQL =
+  `lower(CASE WHEN translated_title <> '' THEN translated_title ELSE original_title END)`;
 
 export async function insertMovies(env: Env, movies: MovieRow[]): Promise<void> {
   if (!movies.length) return;
@@ -491,7 +499,8 @@ export async function listMovies(
   // number DESCENDING. AMC numbers are NOT unique (whole series share number 1),
   // so the title breaks those ties alphabetically; `id` is a final stable
   // tiebreak so LIMIT/OFFSET paging never skips or repeats a row.
-  let sql = `SELECT * FROM movies WHERE catalog_id = ? ORDER BY number DESC, sort_title, id`;
+  let sql =
+    `SELECT * FROM movies WHERE catalog_id = ? ORDER BY number DESC, ${SORT_TITLE_SQL}, id`;
   const binds: unknown[] = [catalogId];
   if (page.limit != null) {
     sql += ` LIMIT ?`;
