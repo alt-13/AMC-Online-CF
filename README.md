@@ -36,7 +36,10 @@ that keep `.amc` export byte-exact.
 - OMDb / IMDb metadata lookup ("⚡ Fetch → new").
 - Per-user field-visibility settings (desktop / mobile).
 - **Mega.nz** import/export (fingerprinted so the desktop client accepts uploads);
-  saved credentials are AES-256-GCM encrypted at rest.
+  saved credentials are AES-256-GCM encrypted at rest. Sign-in happens straight
+  from your browser, so Mega's "new login" notification email names the browser
+  you are actually using (Safari on an iPhone, Chrome on a desktop, …) — that mail
+  is this app connecting, not a stranger.
 - Legacy Windows-1252/1250/1251 (ANSI) catalogs round-trip losslessly.
 
 ## Requirements
