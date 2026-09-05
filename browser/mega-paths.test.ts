@@ -5,6 +5,7 @@ import {
   folderAt,
   listAmcFiles,
   resolveAmcFile,
+  TRANSFER_OPTS,
 } from "./mega";
 
 // Minimal fake of the megajs node tree — just the fields the path helpers touch
@@ -124,5 +125,14 @@ describe("resolveAmcFile", () => {
 
   it("returns null for a folder-only path (no filename)", () => {
     expect(resolveAmcFile(fakeStorage(), "/Backups")).toBeNull();
+  });
+});
+
+// Regression guard: an `initialChunkSize` here moves the upload POST offsets off
+// MEGA's canonical chunk boundaries and the API answers "Server returned error
+// -7" (ERANGE) for any file over 1 MB. Connection count is the only knob.
+describe("TRANSFER_OPTS", () => {
+  it("does not override megajs's chunk sizing", () => {
+    expect(Object.keys(TRANSFER_OPTS)).toEqual(["maxConnections"]);
   });
 });

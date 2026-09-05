@@ -35,17 +35,20 @@ export interface CloudProvider {
 /**
  * Transfer tuning for both directions.
  *
- * megajs defaults to 4 connections and a 128 KB initial chunk that grows by
- * 128 KB (main.browser-es.mjs — `maxConnections` in both the download and
- * upload paths). Those defaults are conservative for a multi-hundred-megabyte
- * .amc: the import download and the export upload are the two costs that
- * dominate a sync once posters are cached.
+ * megajs defaults to 4 connections (main.browser-es.mjs — `maxConnections` in
+ * both the download and upload paths). That is conservative for a multi-hundred-
+ * megabyte .amc: the import download and the export upload are the two costs that
+ * dominate a sync once posters are cached. More connections is the one cheap win,
+ * and the right value is empirical — named and exported so it is trivial to
+ * retune (a phone whose uplink saturates below 8 connections gains nothing).
  *
- * `maxChunkSize` is deliberately NOT set — megajs's 1 MB default is what the
- * upload MAC chunking expects, and there is no clear gain in changing it.
- *
- * Named and exported so it is trivial to retune: if a phone's uplink saturates
- * below 8 connections there is no benefit, and the right value is empirical.
+ * Chunk SIZE stays on megajs's defaults. Download would tolerate a bigger one (a
+ * chunk there is a plain ranged GET), but upload must not: the 128 KB start +
+ * 128 KB increment is exactly what lands every POST offset on MEGA's canonical
+ * chunk boundaries (128K, 384K, 768K, 1280K, …, then 1 MB steps). An
+ * `initialChunkSize` of 1 MB moves the offsets to 1M/2M/3M — off boundary — and
+ * the API rejects the second chunk with "Server returned error -7" (ERANGE) for
+ * every file over 1 MB. Do not set it here.
  *
  * Frozen because this one object is shared across both directions:
  * uploadToMega spreads it into a fresh object before handing it to megajs (so
@@ -57,7 +60,7 @@ export interface CloudProvider {
  * future write into a loud failure (throws in strict mode, a silent no-op
  * otherwise) instead of that.
  */
-export const TRANSFER_OPTS = Object.freeze({ maxConnections: 8, initialChunkSize: 1024 * 1024 });
+export const TRANSFER_OPTS = Object.freeze({ maxConnections: 8 });
 
 // --- Mega provider ---------------------------------------------------------
 
