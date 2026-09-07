@@ -98,25 +98,27 @@
                 {{ (form.user_rating / 10).toFixed(1) }}
                 <span class="font-light text-[0.7rem] text-muted max-md:hidden">mine</span>
               </div>
-              <!-- Watched is a READ-ONLY badge: Date Watched decides the flag
-                   (see `dateWatched`), so there is nothing to click. It reads the
-                   stored flag rather than the date, so a legacy row ticked in
-                   the Delphi app without a date still reads "Watched" and still
-                   exports as watched.
+              <!-- Watched is a READ-ONLY badge: Date Watched decides it, so
+                   there is nothing to click. In the default synced mode it reads
+                   the stored `checked` flag rather than the date, so a legacy row
+                   ticked in the Delphi app without a date still reads "Watched"
+                   and still exports as watched. With `checked_separate` on, the
+                   flag no longer means "watched", so the badge reads the date and
+                   the flag gets its own "Checked" control in the form.
                    `max-md:hidden` because it is the widest pill in the header
                    and the one a phone least needs: the list row already carries
-                   the same `pi pi-eye` marker for every watched film, and Date
-                   Watched (the actual control) is right below in the form. -->
+                   the same `pi pi-eye` marker, and Date Watched (the actual
+                   control) is right below in the form. -->
               <div
                 v-show="showField('checked')"
                 class="flex items-center gap-1 text-[0.78rem] px-2 py-[0.2rem] rounded-[10px] border border-border select-none max-md:hidden"
-                :class="form.checked ? 'text-success border-success/40' : 'text-muted'"
-                :title="form.checked
+                :class="watched ? 'text-success border-success/40' : 'text-muted'"
+                :title="watched
                   ? 'Watched — set by Date Watched'
                   : 'Not watched — set a Date Watched to mark it'"
               >
-                <i :class="form.checked ? 'pi pi-eye' : 'pi pi-eye-slash'" />
-                <span>{{ form.checked ? "Watched" : "Unwatched" }}</span>
+                <i :class="watched ? 'pi pi-eye' : 'pi pi-eye-slash'" />
+                <span>{{ watched ? "Watched" : "Unwatched" }}</span>
               </div>
               <div
                 class="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0 max-md:hidden"
@@ -282,9 +284,11 @@
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Certification</label>
               <InputText v-model="form.certification" class="w-full" size="small" />
             </div>
-            <!-- No "Watched" checkbox: the flag is derived from Date Watched
-                 (set it → watched, clear it → unwatched, see `dateWatched`). The
-                 header badge shows the result and is read-only. -->
+            <!-- No "Watched" checkbox: in the default synced mode the flag is
+                 derived from Date Watched (set it → watched, clear it →
+                 unwatched, see `dateWatched`) and the header badge shows the
+                 result, read-only. The "Checked" toggle below appears only when
+                 the user has unlinked the two in Settings. -->
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('color_tag')">
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Color Tag</label>
               <Select
@@ -308,6 +312,17 @@
                   </div>
                 </template>
               </Select>
+            </div>
+            <div
+              class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0"
+              v-show="props.settings.checked_separate && showField('checked')"
+            >
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Checked</label>
+              <Checkbox
+                :binary="true"
+                :modelValue="!!form.checked"
+                @update:modelValue="(v: boolean) => form.checked = v ? 1 : 0"
+              />
             </div>
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('borrower')">
               <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Borrower</label>
@@ -763,14 +778,24 @@ const dateAdded = computed<Date | null>({
 // Date Watched drives the `checked` flag (there is no Watched checkbox any
 // more): picking a date marks the film watched, clearing it marks it unwatched.
 // The header pill stays available for a watch with no known date.
+//
+// Unless the user has unlinked them: with `checked_separate` on, the date is
+// only a date and `checked` is edited by its own toggle in the form.
 const dateWatched = computed<Date | null>({
   get: () => delphiToDate(num("date_watched")),
   set: (d) => {
     const days = dateToDelphi(d);
     form.date_watched = days;
-    form.checked = days ? 1 : 0;
+    if (!props.settings.checked_separate) form.checked = days ? 1 : 0;
   },
 });
+
+// What the header badge means. Synced: the stored flag (so a legacy row with no
+// date still reads "Watched"). Separate: the flag is not about watching any
+// more, so only the date can answer.
+const watched = computed(() =>
+  props.settings.checked_separate ? !!num("date_watched") : !!form.checked,
+);
 const ratingDec = (k: string) => {
   const v = num(k);
   return v > 0 ? v / 10 : "";

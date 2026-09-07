@@ -238,12 +238,23 @@ not a guarantee, and an edit may change it afterwards. Two things follow:
   `frontend/fields.ts`, persisted as `series_rule` in `user_settings`, **default
   off**. See [`SERIES-RULES.md`](SERIES-RULES.md). Don't add a heuristic default.
 
-**13. `movies.checked` ("Watched") is derived from `date_watched`.** The detail
-form has no Watched control: setting a Date Watched marks the film watched,
-clearing it marks it unwatched (`dateWatched` in `MovieDetail.vue`), and the
-header badge is read-only display. It reads the **stored flag**, not the date, so
-a legacy row ticked in the Delphi app with no date still reads (and exports as)
-watched — nothing rewrites `checked` unless the date is edited.
+**13. `movies.checked` ("Watched") is derived from `date_watched` — by default.**
+The format stores both and never links them, so whether `checked` means "watched"
+is the user's convention: `checked_separate` in `user_settings` (**default
+false** = synced) decides.
+
+- **Synced (default).** The detail form has no Watched control: setting a Date
+  Watched marks the film watched, clearing it marks it unwatched (`dateWatched`
+  in `MovieDetail.vue`), and the header badge is read-only display. It reads the
+  **stored flag**, not the date, so a legacy row ticked in the Delphi app with no
+  date still reads (and exports as) watched — nothing rewrites `checked` unless
+  the date is edited.
+- **Separate.** `dateWatched` stops writing `checked`; a "Checked" checkbox
+  appears under Color Tag and owns the flag. The header badge then reads the
+  **date** (the flag no longer means watching), and the list's `pi pi-eye` marker
+  is retitled "Checked".
+
+Both modes share the `checked` visibility key (labelled "Watched / Checked").
 
 **14. Per-user settings need no migration.** `user_settings` holds one opaque
 JSON blob. The Worker's `DEFAULT_SETTINGS` in `worker/index.ts` is spread

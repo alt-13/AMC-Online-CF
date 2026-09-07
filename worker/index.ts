@@ -324,6 +324,7 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     field_visibility: { desktop: {}, mobile: {} },
     search_field: "",
     series_rule: { kind: "off" },
+    checked_separate: false,
   };
   if (p === "/api/settings" && m === "GET") {
     const raw = await db.getUserSettings(env, t);

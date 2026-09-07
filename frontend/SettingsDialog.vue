@@ -80,6 +80,21 @@
       </div>
 
       <div class="mt-4 flex flex-col gap-2 px-2">
+        <span class="text-sm font-semibold text-gold">Watched / Checked</span>
+        <p class="m-0 text-xs text-muted">
+          The .amc format stores a Date Watched and a separate “checked” flag and
+          never links them. By default this app keeps them in sync: setting a Date
+          Watched marks the film watched, clearing it unmarks it. Unlink them if
+          you use “checked” for something of your own — the detail form then gets
+          its own <em>Checked</em> toggle under Color Tag.
+        </p>
+        <div class="flex items-center gap-2">
+          <Checkbox v-model="draft.checked_separate" :binary="true" inputId="checked-separate" />
+          <label for="checked-separate" class="text-sm">Keep Checked separate from Watched</label>
+        </div>
+      </div>
+
+      <div class="mt-4 flex flex-col gap-2 px-2">
         <span class="text-sm font-semibold text-gold">Series count</span>
         <p class="m-0 text-xs text-muted">
           The catalog bar can show a “N films / N series” tally. There is no

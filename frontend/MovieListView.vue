@@ -170,7 +170,7 @@
             <template #body="{ data }"><span class="text-sm font-semibold text-gold tabular-nums text-right block">{{ data.rating > 0 ? (data.rating / 10).toFixed(1) : "" }}</span></template>
           </Column>
           <Column headerStyle="width:1.5rem" bodyStyle="width:1.5rem">
-            <template #body="{ data }"><i v-if="data.checked" class="pi pi-eye text-success text-sm" title="Watched" /></template>
+            <template #body="{ data }"><i v-if="data.checked" class="pi pi-eye text-success text-sm" :title="settings.checked_separate ? 'Checked' : 'Watched'" /></template>
           </Column>
         </DataTable>
       </div>

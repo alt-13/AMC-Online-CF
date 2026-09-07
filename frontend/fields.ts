@@ -51,7 +51,7 @@ export const STATIC_SECTIONS: FieldSection[] = [
       { key: "rating", label: "Rating" },
       { key: "user_rating", label: "My Rating" },
       { key: "certification", label: "Certification" },
-      { key: "checked", label: "Watched" },
+      { key: "checked", label: "Watched / Checked" },
       { key: "color_tag", label: "Color Tag" },
       { key: "borrower", label: "Borrower" },
     ],
@@ -143,11 +143,19 @@ export interface AppSettings {
   field_visibility: { desktop: Record<string, boolean>; mobile: Record<string, boolean> };
   search_field: string;
   series_rule: SeriesRule;
+  /** false (default): `checked` mirrors Date Watched — setting a date marks the
+   *  film watched, clearing it unmarks it, and there is no Checked control.
+   *  true: the two are independent — Date Watched only stores the date, and
+   *  `checked` gets its own "Checked" toggle in the detail form. The .amc format
+   *  has both fields and never links them, so which one a catalog means by
+   *  "checked" is the user's convention, not something to infer. */
+  checked_separate: boolean;
 }
 export const DEFAULT_SETTINGS: AppSettings = {
   field_visibility: { desktop: {}, mobile: {} },
   search_field: "",
   series_rule: { kind: "off" },
+  checked_separate: false,
 };
 
 // --- series counting --------------------------------------------------------
