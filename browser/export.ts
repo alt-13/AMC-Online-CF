@@ -8,6 +8,7 @@ import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../a
 import type { TextEncoding } from "../amc/codepages";
 import { runPool } from "./pool";
 import { runJob } from "./amcworker";
+import { isBlobKey } from "../amc/posterkey";
 
 /** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
 export type AuthedFetch = (
@@ -113,7 +114,14 @@ async function buildInternal(
   const posterCache = new Map<string, Uint8Array>();
 
   const fetchPoster = async (key: string): Promise<Uint8Array> => {
-    const r = await send(`/api/poster?key=${encodeURIComponent(key)}`);
+    // Same rule as api.ts posterObjectUrl: a LEGACY key is overwritten in place
+    // and revalidates, and a 304 can hand back an empty body — which here would
+    // write a 0-byte poster into the .amc. A blob key is immutable, so it may
+    // cache.
+    const r = await send(
+      `/api/poster?key=${encodeURIComponent(key)}`,
+      isBlobKey(key) ? {} : { cache: "no-store" },
+    );
     if (!r.ok) throw new Error(`poster fetch failed (${r.status}) for ${key}`);
     return new Uint8Array(await r.arrayBuffer());
   };

@@ -108,7 +108,10 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     // caching for a year. If-None-Match lets R2 answer 304 without re-streaming
     // the bytes. A blob key is immutable (see below), so a browser holding one
     // has no reason to ever send If-None-Match for it in the first place.
-    const inm = req.headers.get("if-none-match");
+    // R2's onlyIf wants the BARE etag, not the header's quoted form (a quoted
+    // value throws "Conditional ETag should not be wrapped in quotes"). Only a
+    // single etag is honoured; a list or "*" just skips the conditional.
+    const inm = req.headers.get("if-none-match")?.match(/^(?:W\/)?"([^"]*)"$/)?.[1];
     const obj = await env.R2.get(key, inm ? { onlyIf: { etagDoesNotMatch: inm } } : undefined);
     if (!obj) return err(404, "poster not found");
     // A content-addressed key names its own bytes, so the object can never
