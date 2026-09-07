@@ -9,6 +9,7 @@
 // button and the on-screen button take exactly the same path.
 
 const closers: Array<() => void> = [];
+let afterBack: (() => void) | null = null;
 let installed = false;
 
 function install(): void {
@@ -17,6 +18,9 @@ function install(): void {
   window.addEventListener("popstate", () => {
     const close = closers.pop();
     if (close) close();
+    const then = afterBack;
+    afterBack = null;
+    if (then) then();
   });
 }
 
@@ -31,9 +35,16 @@ export function pushView(close: () => void): void {
   }
 }
 
-/** Programmatic back (an on-screen back button); mirrors the hardware Back. */
-export function goBack(): void {
-  if (closers.length) history.back(); // popstate runs the top closer
+/** Programmatic back (an on-screen back button); mirrors the hardware Back.
+ *  `then` runs once the closer has run — for a caller that must close one view
+ *  before opening the next, since popstate lands a tick later. */
+export function goBack(then?: () => void): void {
+  if (closers.length) {
+    afterBack = then ?? null;
+    history.back(); // popstate runs the top closer
+  } else if (then) {
+    then();
+  }
 }
 
 /** Remove a registered closer without navigating — for a component that unmounts

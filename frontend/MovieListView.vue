@@ -23,7 +23,7 @@
         <!-- Deliberately `text`, not `outlined`: the catalog bar is chrome, and
              three bordered boxes flanking the title read heavier than the bar
              needs. (The detail header's actions ARE outlined.) -->
-        <Button icon="pi pi-arrow-left" text size="small" v-tooltip.bottom="'Back to libraries'" aria-label="Back to libraries" @click="$emit('back')" />
+        <Button icon="pi pi-th-large" text size="small" v-tooltip.bottom="'Libraries'" aria-label="Libraries" @click="toLibraries()" />
         <span class="min-w-0 font-display font-bold text-gold text-[1.05rem] tracking-wide truncate">
           {{ catalog.name || "(untitled)" }}
         </span>
@@ -280,9 +280,13 @@ import { pushView, goBack, dropView } from "./nav";
 import { deriveStatus, SHOWS_SYNC_BUTTON, formatTransfer } from "./syncstatus";
 import { transfers, syncCatalogToOrigin, RemoteMovedError } from "./cloud";
 
-const props = defineProps<{ catalog: CatalogRow }>();
+// `initialMovieId`: which film to reopen — set when the parent restores this
+// workspace from history (Back out of the libraries), so the selection the user
+// left behind comes back with it.
+const props = defineProps<{ catalog: CatalogRow; initialMovieId?: string | null }>();
 const emit = defineEmits<{
-  (e: "back"): void;
+  // Carries the open film, so Back out of the libraries restores the selection.
+  (e: "libraries", movieId: string | null): void;
   // The catalog's new revision, so the parent (CatalogsView) can re-point
   // `openCatalog` at a fresh row — synced_rev only ever arrives on the prop,
   // so without this the sync button would stay visible after a successful push.
@@ -585,6 +589,9 @@ function colorNameOf(tag: number): string {
 // --- lifecycle -------------------------------------------------------------
 onMounted(async () => {
   await load();
+  if (props.initialMovieId && movies.value.some((m) => m.id === props.initialMovieId)) {
+    openDetail(props.initialMovieId);
+  }
   document.addEventListener("click", onDocClick);
 });
 onBeforeUnmount(() => {
@@ -658,9 +665,21 @@ function select(id: string) {
   if (id === selectedId.value) return; // no-op re-click: never prompt
   guard(() => openDetail(id));
 }
-// On-screen Back button (mobile) routes through the same guard as hardware Back.
+// On-screen Back button (mobile) routes through the same guard as hardware Back:
+// one level, so it lands on the list.
 function requestClose() {
   guard(() => goBack());
+}
+
+// The catalog-bar library button leaves the catalog outright rather than just
+// deselecting the movie: close the detail level first (so its history entry is
+// consumed, not orphaned), then ask the parent to show the libraries.
+function toLibraries() {
+  guard(() => {
+    const sel = selectedId.value;
+    if (sel === null) emit("libraries", null);
+    else goBack(() => emit("libraries", sel));
+  });
 }
 
 // Both add paths (the + button and an OMDb apply) route through here so the

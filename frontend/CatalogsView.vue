@@ -7,7 +7,7 @@
 -->
 <template>
   <!-- drilled into one library -->
-  <MovieListView v-if="openCatalog" :catalog="openCatalog" @back="goBack" @changed="onWorkspaceChanged" />
+  <MovieListView v-if="openCatalog" :catalog="openCatalog" :initial-movie-id="openMovieId" @libraries="showLibraries" @changed="onWorkspaceChanged" />
 
   <div v-else class="max-w-4xl mx-auto px-4 py-6 flex flex-col gap-4">
     <div class="flex items-center justify-between gap-2">
@@ -34,7 +34,7 @@
     <ul v-else class="list-none flex flex-col gap-2 p-0 m-0">
       <li v-for="c in catalogs" :key="c.id"
           class="flex items-center justify-between gap-x-4 gap-y-3 flex-wrap p-3 px-4 bg-card border border-border rounded-lg cursor-pointer hover:border-gold"
-          @click="openCatalog = c">
+          @click="openLibrary(c)">
         <div class="flex flex-col gap-0.5 min-w-0 flex-1">
           <span class="font-semibold text-text truncate">{{ c.name || "(untitled)" }}</span>
           <span class="text-xs text-muted flex items-center gap-2 flex-wrap">
@@ -173,7 +173,7 @@ const MovieListView = defineAsyncComponent({
 import { cf, downloadAmcFile, session, type CatalogRow, type MovieRow } from "./api";
 import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, reimportFromOrigin, switchProvider, CloudLoginRequiredError, cloudSettings, checkRemoteStates, transfers, anyTransferActive } from "./cloud";
 import { deriveStatus, formatTransfer } from "./syncstatus";
-import { pushView, goBack } from "./nav";
+import { pushView } from "./nav";
 import ConflictDialog from "./ConflictDialog.vue";
 
 // Remember the last library the user opened and jump straight back into it on
@@ -515,11 +515,33 @@ async function onRefreshStatus() {
   }
 }
 
-// Persist whichever catalog is open so the next visit reopens it, and push a
-// history entry when one opens so the OS Back button returns here (libraries).
+// Persist whichever catalog is open so the next visit reopens it.
 const catalogCloser = () => (openCatalog.value = null);
-watch(openCatalog, (c, prev) => {
-  if (c && !prev) pushView(catalogCloser);
+const openMovieId = ref<string | null>(null);
+
+// Opening a catalog is a history level, so the OS Back button returns here.
+// (Pushed here rather than from the watcher: re-pointing `openCatalog` at a
+// refreshed row, or reopening it from the closer below, must not push.)
+function openLibrary(c: CatalogRow) {
+  openMovieId.value = null;
+  openCatalog.value = c;
+  pushView(catalogCloser);
+}
+
+// The workspace's library button. It goes FORWARD to the libraries — one more
+// history level, whose closer reopens the catalog — so Back returns to the
+// catalog you just left instead of leaving the app.
+function showLibraries(movieId: string | null) {
+  const c = openCatalog.value;
+  if (!c) return;
+  openCatalog.value = null;
+  pushView(() => {
+    openMovieId.value = movieId; // restore the film that was open, too
+    openCatalog.value = c;
+  });
+}
+
+watch(openCatalog, (c) => {
   try {
     if (c) localStorage.setItem(LAST_KEY, c.id);
   } catch {
@@ -538,7 +560,7 @@ onMounted(async () => {
   }
   if (lastId && !openCatalog.value) {
     const last = catalogs.value.find((c) => c.id === lastId);
-    if (last) openCatalog.value = last;
+    if (last) openLibrary(last);
   }
   // One tree read covers every catalog, so do it once here rather than
   // per-row. Skipped silently when no credential is stored — we never prompt
