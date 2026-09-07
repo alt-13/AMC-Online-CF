@@ -532,9 +532,9 @@ export async function syncCatalogToOrigin(
     try {
       const { bytes, contentRev } = await buildAmcFile(catalog.id, {
         ...session(),
-        onProgress: (done, total) => {
-          tx.progress(done, total, "posters");
-          onProgress?.(done, total, "posters");
+        onProgress: (done, total, phase) => {
+          tx.progress(done, total, phase);
+          onProgress?.(done, total, phase);
         },
       });
 
@@ -593,7 +593,7 @@ export async function pushAdoptingOrigin(
   try {
     const { bytes, contentRev } = await buildAmcFile(catalog.id, {
       ...session(),
-      onProgress: (done, total) => { tx.progress(done, total, "posters"); onProgress?.(done, total, "posters"); },
+      onProgress: (done, total, phase) => { tx.progress(done, total, phase); onProgress?.(done, total, phase); },
     });
     const mtimeSec = Math.floor(Date.now() / 1000);
     const fingerprint = computeFingerprint(bytes, mtimeSec);

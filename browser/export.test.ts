@@ -176,13 +176,17 @@ describe("exportAmcFile poster prefetch", () => {
 
   it("reports progress against the distinct-key count", async () => {
     const { fetcher } = stub();
-    const seen: Array<[number, number]> = [];
+    const seen: Array<[number, number, string]> = [];
     await exportAmcFile("cat-1", {
       tenantId: T, fetcher,
-      onProgress: (done, total) => seen.push([done, total]),
+      onProgress: (done, total, phase) => seen.push([done, total, phase]),
     });
-    expect(seen.every(([, total]) => total === 2)).toBe(true);
-    expect(seen[seen.length - 1][0]).toBe(2);
+    const posters = seen.filter(([, , phase]) => phase === "posters");
+    expect(posters.every(([, total]) => total === 2)).toBe(true);
+    expect(posters[posters.length - 1][0]).toBe(2);
+    // The rebuild+serialise pass has no countable unit, so it must still
+    // announce itself — otherwise the UI sits on "posters 2/2" looking frozen.
+    expect(seen[seen.length - 1]).toEqual([0, 0, "building"]);
   });
 
   it("rejects when a poster fetch fails", async () => {

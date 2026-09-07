@@ -10,6 +10,11 @@ import { runPool } from "./pool";
 import { runJob } from "./amcworker";
 import { isBlobKey } from "../amc/posterkey";
 
+/** Which half of an export is running. "building" has no count to report — the
+ *  rebuild+serialise pass is one opaque chunk of Worker CPU — so it is reported
+ *  as (0, 0) and the UI shows it indeterminate. */
+export type ExportPhase = "posters" | "building";
+
 /** fetch() that applies the caller's auth headers and can refresh+retry on 401. */
 export type AuthedFetch = (
   path: string,
@@ -20,7 +25,7 @@ export type AuthedFetch = (
 export interface ExportOptions {
   tenantId: string;
   authHeader?: string;
-  onProgress?: (done: number, total: number) => void;
+  onProgress?: (done: number, total: number, phase: ExportPhase) => void;
   /**
    * Request function to use. Export fetches one poster per movie, so a big
    * catalog can run past the access-token TTL; the app passes its `authedFetch`,
@@ -133,12 +138,17 @@ async function buildInternal(
   // rowsToCatalog already holds every poster in the movies array before
   // serialising, so the cache is not an extra copy of anything.
   const keys = [...posterKeys];
-  if (keys.length) opts.onProgress?.(0, keys.length);
+  if (keys.length) opts.onProgress?.(0, keys.length, "posters");
   await runPool(
     keys.map((key) => async () => { posterCache.set(key, await fetchPoster(key)); }),
     PREFETCH_CONCURRENCY,
-    (done, total) => opts.onProgress?.(done, total),
+    (done, total) => opts.onProgress?.(done, total, "posters"),
   );
+
+  // Posters are in; everything after this is one long synchronous pass with no
+  // countable unit of work, so say so instead of leaving the last poster count
+  // on screen looking stuck.
+  opts.onProgress?.(0, 0, "building");
 
   // Rebuild + serialise in a Worker: it is 10-30 s of blocked main thread on a
   // big catalog, which is exactly when a mobile browser kills the tab. The

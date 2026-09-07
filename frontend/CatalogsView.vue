@@ -89,11 +89,13 @@
             @click.stop="onDelete(c)"
           />
         </div>
-        <!-- Only a transfer with a known total gets a bar; the phases without
-             one (login, build) keep the button label alone. -->
+        <!-- A transfer with a known total gets a real bar; the phases without
+             one (login, build) get an indeterminate one, so a minute of
+             rebuild+serialise doesn't read as a frozen screen. -->
         <ProgressBar
-          v-if="busyId === c.id && busyPct !== null"
-          :value="busyPct"
+          v-if="busyId === c.id"
+          :value="busyPct ?? 0"
+          :mode="busyPct === null ? 'indeterminate' : 'determinate'"
           :show-value="false"
           class="basis-full h-1.5"
         />
@@ -406,7 +408,7 @@ async function downloadLocal(c: CatalogRow) {
   try {
     await downloadAmcFile(c.id, c.name || "catalog", {
       ...session(),
-      onProgress: (d, t) => setBusy(d, t, "posters"),
+      onProgress: setBusy,
     });
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
