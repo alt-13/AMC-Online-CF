@@ -41,8 +41,12 @@ touches at most a handful of D1 rows and one poster — so 128 MB is never in pl
 | `amc/types.ts` | shared | TS model, field-for-field mirror of the Python dataclasses |
 | `amc/parser.ts` | browser | `parseCatalog` / `serializeCatalog` — dependency-free, byte-exact |
 | `amc/mapping.ts` | shared | `catalogToRows` (import) / `rowsToCatalog` (export); the poster→R2 split |
+| `amc/posterkey.ts` | shared | `sha256Hex` / `blobKey` / `isBlobKey` — content-addressed poster keys |
+| `amc/codepages.ts` | shared | bijective Windows-1252/1250/1251 codecs |
+| `amc/transcode.ts` | browser | legacy bytes ↔ D1-safe readable Unicode |
 | `amc/index.ts` | — | barrel exports |
-| `schema.sql` | D1 | tables: `users`, `catalogs`, `custom_field_defs`, `movies`, `movie_extras`, `movies_fts`, `user_cloud`, `user_settings` |
+| `migrations/` | D1 | incremental deltas applied with `wrangler d1 migrations apply` |
+| `schema.sql` | D1 | BASELINE tables: `users`, `catalogs`, `custom_field_defs`, `movies`, `movie_extras`, `movies_fts`, `user_cloud`, `user_settings` |
 | `worker/index.ts` | Worker | `/api/*` router: auth + CRUD + create + import commit + export bundle + poster stream + cloud + omdb + settings + proxy-image |
 | `worker/auth.ts` | Worker | WebCrypto PBKDF2 password hashing + HS256 JWT + refresh cookie |
 | `worker/crypto.ts` | Worker | AES-256-GCM encrypt/decrypt for saved cloud credentials (HKDF key off `AUTH_SECRET`) |
@@ -51,25 +55,35 @@ touches at most a handful of D1 rows and one poster — so 128 MB is never in pl
 | `worker/db.ts` | Worker | prepared-statement D1 helpers |
 | `browser/import.ts` | browser | `importAmcFile(file, opts)` — parse, upload posters, chunked row commit |
 | `browser/export.ts` | browser | `exportAmcFile` / `downloadAmcFile` — fetch bundle, rebuild, download |
+| `browser/amcjob.ts` + `amc.worker.ts` + `amcworker.ts` | browser | parse/serialize off the main thread (one Web Worker per job) |
+| `browser/pool.ts` / `sweep.ts` | browser | bounded-concurrency task pool / client-driven paged R2 sweeps |
+| `browser/mega.ts` + `mega-fingerprint.ts` | browser | megajs login, fingerprinted up/download, folder paths |
+| `frontend/syncstatus.ts` / `syncdiff.ts` / `cloudref.ts` | browser | pure sync-status derivation / conflict diff summary / `source_ref` parsing — see `SYNC.md` |
 | `frontend/api.ts` | browser | auth + session + metadata client (incl. create/setPictureFromUrl) + omdb + settings + cloud + re-exports import/export |
 | `frontend/fields.ts` | browser | shared field metadata (sections, labels, Delphi-date + colour-tag + custom-value helpers) — no store |
 | `frontend/CatalogImport.vue` | browser | drag/drop upload with poster+row progress; emits the new catalog id |
 | `frontend/CatalogsView.vue` | browser | top-level screen: import, list libraries, export/→Mega, drill into a library |
-| `frontend/MovieListView.vue` | browser | poster grid for one catalog: search, create, field-settings; drill into a movie |
+| `frontend/MovieListView.vue` | browser | two-pane workspace for one catalog: virtualized PrimeVue DataTable (search, create, field-settings) + detail |
 | `frontend/MovieDetail.vue` | browser | edit one movie: poster (upload/URL/OMDb), every field (visibility-aware), custom fields, delete |
 | `frontend/OmdbDialog.vue` | browser | search IMDb, pick a title, fetch OMDb metadata → emit patch + poster URL |
 | `frontend/SettingsDialog.vue` | browser | per-user field visibility (desktop/mobile) + search field; persists to `user_settings` |
 | `setup.sh` | — | one-shot bootstrap: provision D1+R2, inject db id, apply schema, set secrets via stdin, deploy |
 | `wrangler.jsonc` | — | Worker config (D1 + R2 + static-asset bindings) |
 
+Cloud sync (revision counters, status derivation, conflicts, re-import) has its
+own doc: [`SYNC.md`](SYNC.md).
+
 ## Data-model decisions
 
 1. **D1 holds metadata only.** Every embedded JPEG (movie poster + extra poster)
    goes to R2; the row stores the R2 **key**, never the bytes. This is the single
    decision that removes the memory problem.
-2. **One shared D1, `tenant_id` on the root table** + R2 key prefixes
-   (`{tenant}/{catalog}/{movie}.jpg`). Not one-DB-per-user — Cloudflare caps the
-   number of databases per account.
+2. **One shared D1, `tenant_id` on the root table** + R2 key prefixes. Not
+   one-DB-per-user — Cloudflare caps the number of databases per account.
+   Poster keys are **content-addressed**: `{tenant}/{catalog}/blobs/{sha256}.jpg`
+   (`amc/posterkey.ts`), so objects are immutable (cacheable for a year) and an
+   import can skip bytes R2 already holds. Legacy per-movie keys
+   (`{tenant}/{catalog}/{movie}.jpg`) still resolve and are never rewritten.
 3. **Custom-field values stay positional.** The binary stores per-movie custom
    values by position (no per-value tag). `custom_field_defs.ordinal` is
    authoritative; import stores values as a `{tag: value}` JSON map for edit
@@ -144,13 +158,21 @@ All routes except `/api/auth/*` require `Authorization: Bearer <access_token>`.
 | `GET /api/catalogs` | list this tenant's catalogs |
 | `GET /api/catalog/:id/info` | catalog header + defs + movie count |
 | `GET /api/catalog/:id/movies?limit=&offset=` | one bounded page of grid metadata + `total` (client walks pages) |
-| `GET /api/catalog/:id/export` | full row bundle (poster keys, no bytes), read in bounded pages |
+| `GET /api/catalog/:id/export?part=meta\|movies\|extras` | the row bundle (poster keys, no bytes) — **paged, `part` required** |
 | `POST /api/catalog/:id/movies` | create a movie: next on-disk `number` + schema defaults + patch |
 | `POST /api/catalog/:id/supersede` | after a cloud re-pull, drop older catalogs sharing this one's `source_ref` |
 | `DELETE /api/catalog/:id` | delete a catalog (+ all its movies/extras/posters) |
 | `GET /api/movies/:id` | movie detail + extras |
 | `PUT /api/movies/:id` | patch scalar movie columns |
 | `DELETE /api/movies/:id` | delete movie (+ its R2 posters) |
+| `GET /api/import/existing-blobs` | which content-addressed keys R2 already holds (skip re-upload) |
+| `POST /api/catalog/:id/reimport-begin?cursor=` | replace a catalog's contents in place (paged R2 sweep) |
+| `POST /api/catalog/:id/gc-posters?cursor=` | reclaim unreferenced poster blobs, one R2 list page per request |
+| `POST /api/catalog/:id/source-ref` | adopt a cloud origin for a catalog that had none |
+| `POST /api/catalog/:id/sync-state` | record a push outcome (`synced_rev`, hash, fingerprint, size) |
+| `POST /api/catalogs/remote-state` | record a remote-check pass, no download |
+| `GET /api/omdb/key` / `PUT /api/omdb/key` | per-user OMDb key (encrypted at rest) |
+| `DELETE /api/poster?key=` | drop one poster object (tenant-scoped) |
 | `GET /api/poster?key=` | stream a poster from R2 (tenant-scoped; fetch with the auth header, not a bare `<img src>` — see `posterObjectUrl`) |
 | `GET /api/omdb/search?q=` | IMDb title suggestions (no key) |
 | `GET /api/omdb/fetch?i=` | fetch one title's OMDb metadata → `{ patch, poster_url }` (needs `OMDB_API_KEY`; 503 if unset) |
@@ -240,8 +262,9 @@ Build deps still not added for the Worker itself: `wrangler` and
 ## Mega import / export
 
 **Status: implemented** — `browser/mega.ts` (login, fingerprinted upload/download,
-folder-path helpers), `frontend/mega.ts` (bridge to import/export + a persisted
-path setting), and `MegaSync.vue` (provider picker + connect + list + import) with
+folder-path helpers), `frontend/cloud.ts` (bridge to import/export + the
+per-user cloud config), and `CloudSync.vue` (provider picker + connect + list +
+import) with
 a per-catalog "→ Mega" push button in `CatalogsView.vue`. Both concerns below
 (fingerprint, credentials) are handled: the fingerprint is computed client-side
 (`mega-fingerprint.ts`) and injected as `attributes.c`; login always happens in
@@ -249,10 +272,10 @@ the browser (megajs's crypto can't live in a Worker), and the plaintext password
 is never handled server-side except to encrypt it (see credential storage below).
 
 The `.amc` needn't sit at the account root: the location is a `"/"`-path
-(`megaSettings.path`) that can name a folder to list/push into (`/Backups`) or one
+(the per-user cloud `path`) that can name a folder to list/push into
+(`/Backups`) or one
 specific file (`/Backups/movies.amc`); `resolveAmcFile` deep-searches by filename
-as a fallback. Bind the path input in `MegaSync.vue` — the CF port has no
-standalone settings page yet, so the config lives in the Mega panel. Tests:
+as a fallback. The path input lives in `CloudSync.vue`. Tests:
 `mega-paths.test.ts` (path parsing + navigation), `mega-fingerprint.test.ts`, and
 the gated `mega.integration.test.ts`.
 
@@ -283,7 +306,7 @@ the decrypted secret only ever round-trips back to that same user's browser (it
 has to — megajs runs there). Mega has no OAuth/JWT, so the stored blob is
 `{email,password}` JSON; when Drive/Dropbox/S3 land they should use scoped OAuth
 refresh tokens instead. The `remember` checkbox is opt-in — unchecked, the session
-stays in tab memory only and nothing is persisted. `MegaSync.vue` auto-reconnects
+stays in tab memory only and nothing is persisted. `CloudSync.vue` auto-reconnects
 on load when a credential is stored, and offers a "Forget saved login" button.
 
 The original sketch, for reference:
@@ -352,7 +375,7 @@ settings, poster via upload/URL/OMDb, custom fields, delete). `OmdbDialog` and
   IFS transpiler + Python subprocess machinery is out of scope; OMDb above
   replaces it as a native lookup. (The `excluded_in_scripts` *data* column stays
   — it's part of the on-disk custom-field format, unrelated to the runner.)
-- **Cloud sync (Mega).** See `MegaSync.vue` / `browser/mega.ts` — export-to-cloud
+- **Cloud sync (Mega).** See `CloudSync.vue` / `browser/mega.ts` — export-to-cloud
   hangs off `browser/export.ts` (write the Blob to Mega instead of downloading).
 - **Non-UTF-8 (legacy ANSI) strings — done.** `decodeAmcString`/`encodeAmcString`
   in `parser.ts` mirror Python's `errors="surrogateescape"`: clean UTF-8 decodes

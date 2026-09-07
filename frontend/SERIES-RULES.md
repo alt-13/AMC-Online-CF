@@ -21,7 +21,7 @@ the shipped default is **off**, and the user states the rule.
 
 ## What ships today
 
-`SeriesRule` in [`frontend/fields.ts`](frontend/fields.ts), persisted in the
+`SeriesRule` in [`fields.ts`](fields.ts), persisted in the
 `user_settings` JSON blob as `series_rule` (no migration — the Worker's
 `DEFAULT_SETTINGS` spread backfills the key for existing users).
 
@@ -35,7 +35,7 @@ type SeriesRule =
 
 `countSeries(movies, rule)` returns `{ films, series }` or `null` (= show
 nothing). Configured under **Settings → Series count**. Covered by
-`frontend/series-count.test.ts`.
+`series-count.test.ts`.
 
 `certification_in` seeds with `["TV Series", "TV Mini-Series"]` and the list is
 edited as chips, because certification is free text in the format — there is no
@@ -63,7 +63,7 @@ not scale. Subsume it:
 `field` reuses the existing `custom_<tag>` key convention already shared by
 `settings.search_field` and the search-scope picker, so `custom_SERIES` and
 plain columns (`category`, `media_type`) address uniformly, and
-`frontend/fields.ts` `parseCustom` already resolves the custom side.
+`fields.ts` `parseCustom` already resolves the custom side.
 `certification_in` then becomes sugar for
 `{ kind: "field", field: "certification", op: "in", values }` — keep the old
 kind readable in `countSeries` so stored settings keep working, or migrate it in

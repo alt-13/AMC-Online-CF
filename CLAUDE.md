@@ -66,16 +66,17 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── parser.ts       ← ByteReader/ByteWriter + parseCatalog/serializeCatalog (byte-exact)
 │   ├── codepages.ts    ← bijective Windows-1252/1250/1251 decode/encode (legacy ANSI codecs)
 │   ├── transcode.ts    ← detectEncoding + toReadable(import)/toRaw(export): legacy bytes ↔ readable D1-safe Unicode (rule 5)
+│   ├── posterkey.ts    ← sha256Hex/blobKey/isBlobKey: content-addressed poster keys (rule 15)
 │   └── mapping.ts      ← catalogToRows (import) / rowsToCatalog (export); the poster→R2 split
 ├── schema.sql          ← D1 BASELINE: users, catalogs, custom_field_defs, movies, movie_extras, movies_fts, user_cloud, user_settings
-├── migrations/         ← incremental deltas applied via `wrangler d1 migrations apply` (0001 catalogs.text_encoding, 0002 multi-provider user_cloud)
+├── migrations/         ← incremental deltas applied via `wrangler d1 migrations apply` (0001 catalogs.text_encoding, 0002 multi-provider user_cloud, 0003 sync tracking, 0004 sort_title → expression index)
 ├── worker/
-│   ├── index.ts        ← /api/* router: auth gate + CRUD + create + import/export + poster + /api/cloud + omdb + settings + proxy-image
+│   ├── index.ts        ← /api/* router: auth gate + CRUD + create + import/export + poster + /api/cloud + sync state + omdb + settings + proxy-image
 │   ├── auth.ts         ← WebCrypto PBKDF2 password hashing + HS256 JWT + refresh cookie
 │   ├── crypto.ts       ← AES-256-GCM encrypt/decrypt for cloud creds (HKDF key off AUTH_SECRET)
 │   ├── omdb.ts         ← native IMDb-suggest search + omdbapi.com fetch (needs OMDB_API_KEY); pure parsers unit-tested
 │   ├── movie-new.ts    ← newMovieRow: build a full movie row from an edit patch (next-number create)
-│   └── db.ts           ← prepared-statement D1 helpers (Env binding lives here) + user_cloud + user_settings
+│   └── db.ts           ← prepared-statement D1 helpers (Env binding lives here) + user_cloud + user_settings + SORT_TITLE_SQL (listMovies MUST order by it verbatim, else idx_movies_sort is ignored; 0004 dropped movies.sort_title)
 ├── browser/
 │   ├── import.ts       ← importAmcFile(file, opts): parse, upload posters, chunked row commit
 │   ├── export.ts       ← exportAmcFile/downloadAmcFile: fetch bundle, rebuild, download
@@ -84,12 +85,15 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── amcworker.ts    ← spawn/transfer/terminate one worker per job; runs inline where Worker is absent
 │   ├── pool.ts         ← runPool: bounded-concurrency task pool
 │   ├── sweep.ts        ← sweepAll: client loop that drives the Worker's bounded R2 sweeps
-│   └── mega.ts         ← megajs login + fingerprinted up/download + folder-path helpers
+│   ├── mega.ts         ← megajs login + fingerprinted up/download + folder-path helpers
+│   └── mega-fingerprint.ts ← client-side Mega fingerprint (MEGAsync rejects files without it)
 ├── frontend/
 │   ├── api.ts          ← auth (status/register/login/refresh/logout) + session + metadata client (incl. create/setPictureFromUrl) + omdb + settings + cloud config + re-exports
 │   ├── fields.ts       ← shared field metadata: sections/labels, Delphi-date + colour-tag + custom-value helpers, AppSettings + SeriesRule/countSeries (no store)
 │   ├── cloud.ts        ← bridge: cloud provider ↔ import/export; per-user cloud config + remember-me
-│   ├── cloudref.ts     ← catalog ↔ remote-file reference bookkeeping
+│   ├── cloudref.ts     ← catalog ↔ remote-file reference bookkeeping (source_ref parsing)
+│   ├── syncstatus.ts   ← deriveStatus: the ONE pure sync-status derivation (see SYNC.md)
+│   ├── syncdiff.ts     ← read-only local-vs-remote diff summary for the conflict dialog
 │   ├── amccache.ts     ← Cache Storage for downloaded .amc blobs (pruned on boot)
 │   ├── nav.ts          ← history-stack helper so hardware Back closes a view, not the app
 │   ├── wakelock.ts     ← hold a screen wake lock across long imports/exports
@@ -100,13 +104,16 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── CatalogsView.vue    ← top-level screen: import, list catalogs, export/→Mega, drill into a library
 │   ├── MovieListView.vue   ← two-pane workspace for one catalog: virtualized PrimeVue DataTable (search, create, field-settings) + MovieDetail; lazy-loaded chunk
 │   ├── MovieDetail.vue     ← edit one movie: poster (upload/URL/OMDb), every field (visibility-aware), custom fields, delete
+│   ├── ConflictDialog.vue  ← both sides moved: pick push/pull, with an opt-in remote compare
 │   ├── OmdbDialog.vue      ← search IMDb, pick a title, fetch OMDb → patch + poster URL
+│   ├── SERIES-RULES.md     ← why "series" is user-configured, and the planned rule kinds
 │   └── SettingsDialog.vue  ← per-user field visibility (desktop/mobile) + search field + series-count rule + OMDb key → user_settings
+├── scripts/            ← predev hooks: ensure-dist (assets placeholder) + seed-local-db (auto-seed emulated D1)
 ├── setup.sh            ← one-shot bootstrap: provision D1+R2, inject db id, apply schema, set secrets via stdin, deploy
 ├── wrangler.jsonc      ← Worker config: D1 (DB), R2 (R2), assets (ASSETS) bindings
 ├── vite.config.ts      ← frontend build + megajs node-polyfill wiring + /api dev proxy
 ├── tsconfig.json
-├── SERIES-RULES.md     ← why "series" is user-configured, and the planned rule kinds
+├── SYNC.md             ← cloud sync: revisions, status derivation, conflicts (rule 16)
 └── CF-PORT.md          ← architecture doc (start here)
 ```
 
@@ -187,7 +194,9 @@ the detected header version exactly as the Delphi/Python readers do.
 
 **7. D1 is metadata only; R2 holds every poster.** Never store image bytes in a
 D1 column. A Worker request must never load more than a handful of rows + one
-poster, or it risks the 128 MB / 10 ms limits.
+poster, or it risks the 128 MB / 10 ms limits. Any R2 sweep is **paged**: the
+Worker does one list page per request and returns a `cursor`/`next`, the browser
+loops it (`browser/sweep.ts`). Never write an unbounded server-side sweep.
 
 **8. Everything is tenant-scoped; `sub` == `tenant_id`.** Every `/api/*` route
 except `/api/auth/*` requires a valid Bearer access token; the JWT `sub` is the
@@ -236,7 +245,8 @@ not a guarantee, and an edit may change it afterwards. Two things follow:
   of them, one number shared by a series' episodes, a certification string, a
   custom field, …). The user states the rule — `SeriesRule`/`countSeries` in
   `frontend/fields.ts`, persisted as `series_rule` in `user_settings`, **default
-  off**. See [`SERIES-RULES.md`](SERIES-RULES.md). Don't add a heuristic default.
+  off**. See [`frontend/SERIES-RULES.md`](frontend/SERIES-RULES.md). Don't add a
+  heuristic default.
 
 **13. `movies.checked` ("Watched") is derived from `date_watched` — by default.**
 The format stores both and never links them, so whether `checked` means "watched"
@@ -261,6 +271,37 @@ JSON blob. The Worker's `DEFAULT_SETTINGS` in `worker/index.ts` is spread
 *under* the parsed blob on GET, so adding a key there + to `AppSettings`/
 `DEFAULT_SETTINGS` in `frontend/fields.ts` backfills every existing user. Keep
 the two in sync — they are the same shape written twice.
+
+**15. Poster keys are content-addressed and immutable.**
+`{tenant}/{catalog}/blobs/{sha256}.jpg` (`amc/posterkey.ts`). The key IS the hash,
+so an object never changes: `/api/poster` serves blob keys `immutable` for a year,
+an import can skip bytes R2 already holds (`GET /api/import/existing-blobs`), and
+"same artwork?" is answerable without a movie identity the `.amc` format doesn't
+provide. Consequences:
+
+- A changed poster **writes a new key and leaves the old object behind** — it may
+  be shared by identical artwork, so no write path may delete it. Reclaim happens
+  only in `POST /api/catalog/:id/gc-posters`, which skips objects younger than 1 h
+  (an import PUTs blobs before committing the rows referencing them).
+- Legacy per-movie keys are never rewritten; both shapes coexist and `isBlobKey`
+  decides the cache policy. `isBlobKey` rejects traversal via its explicit
+  `includes("..")` guard, **not** the regex — keep the guard.
+
+**16. Cloud sync state lives in one place.** `content_rev`/`synced_rev` on
+`catalogs`, derived by the single pure `deriveStatus` in `frontend/syncstatus.ts`.
+Ambiguity always resolves away from "synced", and rows are never merged by
+`number + title`. See [`SYNC.md`](SYNC.md) before touching sync, conflicts, or
+re-import.
+
+**17. Keep this file (and its satellites) up to date.** A change that alters
+anything a future session would otherwise have to re-derive — a new rule of the
+format, a new module or table, a route surface change, an invariant, a settings
+key, a dev-workflow step — updates the docs **in the same commit** as the code.
+Corollary: keep it short. A rule that grows past ~15 lines moves into its own
+`.md` linked from here (`CF-PORT.md`, `SYNC.md`, `frontend/SERIES-RULES.md`) —
+next to the source it describes when one directory owns it — leaving a two-line
+pointer behind. Delete what stopped being true instead of appending
+next to it.
 
 ---
 
@@ -338,6 +379,8 @@ implementations the TS port mirrors live in the
 | What | Where |
 |---|---|
 | Architecture (this repo) | `CF-PORT.md` |
+| Cloud sync / revisions / conflicts | `SYNC.md` |
+| Series counting | `frontend/SERIES-RULES.md` |
 | TS model / parser / mapping | `amc/types.ts`, `amc/parser.ts`, `amc/mapping.ts` |
 | Binary format spec | `BinaryFormatResearch.md` *(AMC-Online monorepo)* |
 | Python parser (reference impl the TS port mirrors) | `backend/app/parser/amc_file.py` *(AMC-Online monorepo)* |
