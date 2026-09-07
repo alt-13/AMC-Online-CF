@@ -1,5 +1,5 @@
 // Pure helpers for cloud origin keys (catalogs.source_ref) and provider choice.
-// No megajs / DOM imports, so this is trivially unit-testable.
+// No provider SDK / DOM imports, so this is trivially unit-testable.
 
 /** A catalog's source_ref is "<provider>:<provider-specific locator>". Split on
  *  the FIRST colon only — the locator keeps any colons of its own. */
@@ -9,16 +9,22 @@ export function parseSourceRef(ref: string): { provider: string; locator: string
   return { provider: ref.slice(0, i), locator: ref.slice(i + 1) };
 }
 
-/** A Mega locator is "<folderHandle>:<filename>". Split on the first colon so the
- *  filename may contain spaces/parens/colons. */
-export function splitMegaLocator(locator: string): { handle: string; name: string } {
+/**
+ * Both connectors locate a file as "<folder handle>:<filename>" — Mega by node
+ * handle, Drive by folder id. Resolving by NAME inside a stable folder is what
+ * survives the delete-and-recreate that both providers' overwrite paths (and
+ * users) do to a file, so neither stores the file's own id.
+ *
+ * Split on the first colon so the filename may contain spaces/parens/colons.
+ */
+export function splitLocator(locator: string): { handle: string; name: string } {
   const i = locator.indexOf(":");
   if (i < 0) return { handle: locator, name: "" };
   return { handle: locator.slice(0, i), name: locator.slice(i + 1) };
 }
 
-export function formatMegaSourceRef(folderHandle: string, name: string): string {
-  return `mega:${folderHandle}:${name}`;
+export function formatSourceRef(provider: string, folderHandle: string, name: string): string {
+  return `${provider}:${folderHandle}:${name}`;
 }
 
 /** The provider whose row to show/active first: the newest credentialed one,

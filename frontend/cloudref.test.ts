@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSourceRef, splitMegaLocator, formatMegaSourceRef, pickActiveProvider } from "./cloudref";
+import { parseSourceRef, splitLocator, formatSourceRef, pickActiveProvider } from "./cloudref";
 
 describe("source_ref helpers", () => {
   it("parses provider + locator (locator keeps its own colons)", () => {
@@ -10,14 +10,14 @@ describe("source_ref helpers", () => {
   });
 
   it("splits a mega locator into handle + name, preserving spaces", () => {
-    expect(splitMegaLocator("ABC123:Filme (Bewertungen).amc")).toEqual({
+    expect(splitLocator("ABC123:Filme (Bewertungen).amc")).toEqual({
       handle: "ABC123",
       name: "Filme (Bewertungen).amc",
     });
   });
 
   it("formats a mega source_ref", () => {
-    expect(formatMegaSourceRef("ABC123", "movies.amc")).toBe("mega:ABC123:movies.amc");
+    expect(formatSourceRef("mega", "ABC123", "movies.amc")).toBe("mega:ABC123:movies.amc");
   });
 });
 

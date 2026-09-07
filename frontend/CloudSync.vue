@@ -17,7 +17,6 @@
         :options="providerOptions"
         optionLabel="label"
         optionValue="value"
-        optionDisabled="disabled"
         class="text-sm w-44"
         @update:modelValue="onSwitch"
       />
@@ -130,17 +129,14 @@ import {
   disconnect as cloudDisconnect,
   listAmc,
   pull,
-  type MegaAmcFile,
 } from "./cloud";
+import { providerList, type CloudAmcFile } from "./connector";
 import { withWakeLock } from "./wakelock";
 import type { ImportPhase } from "../browser/import";
 
-const providerOptions = [
-  { label: "Mega.nz", value: "mega", disabled: false },
-  { label: "Google Drive (soon)", value: "drive", disabled: true },
-  { label: "Dropbox (soon)", value: "dropbox", disabled: true },
-  { label: "S3 (soon)", value: "s3", disabled: true },
-];
+// Straight from the connector registry, so registering a backend is all it
+// takes to make it pickable (connector.ts).
+const providerOptions = providerList();
 
 const emit = defineEmits<{ imported: [catalogId: string] }>();
 
@@ -150,7 +146,7 @@ const remember = ref(false);
 const busy = ref(false);
 const reconnecting = ref(false);
 const error = ref("");
-const files = ref<MegaAmcFile[]>([]);
+const files = ref<CloudAmcFile[]>([]);
 const importing = ref<string | null>(null);
 const path = ref("");
 const deep = ref(true);
@@ -245,10 +241,10 @@ async function forget() {
   }
 }
 
-function refresh() {
+async function refresh() {
   error.value = "";
   try {
-    files.value = listAmc(path.value, deep.value);
+    files.value = await listAmc(path.value, deep.value);
   } catch (e) {
     error.value = msg(e);
   }
@@ -266,7 +262,7 @@ async function applyPath() {
   refresh();
 }
 
-async function pullFile(f: MegaAmcFile) {
+async function pullFile(f: CloudAmcFile) {
   if (importing.value) return;
   importing.value = f.name;
   phase.value = "download";
