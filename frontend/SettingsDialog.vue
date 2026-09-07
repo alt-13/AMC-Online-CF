@@ -40,7 +40,43 @@
           :dt="{ header: { padding: '0.75rem 0.5rem' }, content: { padding: '0 0 0.75rem 0' } }"
         >
           <AccordionPanel v-for="sec in sections" :key="sec.key" :value="sec.key">
-            <AccordionHeader>{{ sec.label }}</AccordionHeader>
+            <!-- The section master toggles sit IN the header, on the same grid as
+                 the rows below. `as="div"` because a Checkbox may not nest in a
+                 <button>, the default toggle icon is suppressed and re-drawn in
+                 the label cell (it renders after the slot, which would push the
+                 two toggle columns out of alignment), and click/keydown are
+                 stopped on the boxes so ticking one doesn't collapse the panel. -->
+            <AccordionHeader as="div">
+              <template #default="{ active }">
+                <div class="w-full grid grid-cols-[1fr_2.5rem_2.5rem] items-center">
+                  <span class="flex items-center gap-2">
+                    <i :class="['pi text-xs', active ? 'pi-chevron-up' : 'pi-chevron-down']" />
+                    {{ sec.label }}
+                  </span>
+                  <Checkbox
+                    class="justify-self-center"
+                    :binary="true"
+                    :modelValue="secState(sec, 'desktop').all"
+                    :indeterminate="secState(sec, 'desktop').some"
+                    :aria-label="`Show all ${sec.label} fields on desktop`"
+                    @click.stop
+                    @keydown.stop
+                    @update:modelValue="(v: boolean) => setSection(sec, 'desktop', v)"
+                  />
+                  <Checkbox
+                    class="justify-self-center"
+                    :binary="true"
+                    :modelValue="secState(sec, 'mobile').all"
+                    :indeterminate="secState(sec, 'mobile').some"
+                    :aria-label="`Show all ${sec.label} fields on mobile`"
+                    @click.stop
+                    @keydown.stop
+                    @update:modelValue="(v: boolean) => setSection(sec, 'mobile', v)"
+                  />
+                </div>
+              </template>
+              <template #toggleicon><span class="hidden" /></template>
+            </AccordionHeader>
             <AccordionContent>
               <div
                 v-for="f in sec.fields"
@@ -207,7 +243,7 @@ import AccordionContent from "primevue/accordioncontent";
 import { settings as settingsApi, omdb, type CustomFieldDefRow, type OmdbKeyState } from "./api";
 import {
   sectionsFor, DEFAULT_SETTINGS, MAX_MOVIE_NUMBER, DEFAULT_CERTIFICATION_VALUES,
-  type AppSettings, type SeriesRule,
+  type AppSettings, type SeriesRule, type FieldSection, type FieldDef,
 } from "./fields";
 
 const props = defineProps<{ defs: CustomFieldDefRow[] }>();
@@ -318,6 +354,18 @@ function vis(key: string, mode: "desktop" | "mobile"): boolean {
 }
 function set(key: string, mode: "desktop" | "mobile", value: boolean) {
   draft.value.field_visibility[mode][key] = value;
+}
+/** Fields whose checkbox isn't disabled — the ones a section master can move. */
+function togglable(sec: FieldSection): FieldDef[] {
+  return sec.fields.filter((f) => !f.always && f.key !== "original_title");
+}
+function secState(sec: FieldSection, mode: "desktop" | "mobile") {
+  const fields = togglable(sec);
+  const on = fields.filter((f) => vis(f.key, mode)).length;
+  return { all: fields.length > 0 && on === fields.length, some: on > 0 && on < fields.length };
+}
+function setSection(sec: FieldSection, mode: "desktop" | "mobile", value: boolean) {
+  for (const f of togglable(sec)) set(f.key, mode, value);
 }
 function reset() {
   draft.value = { ...draft.value, field_visibility: { desktop: {}, mobile: {} } };
