@@ -319,6 +319,10 @@ async function onSync(c: CatalogRow) {
     await syncCatalogToOrigin(c, setBusy);
     busyPct.value = null;
     busyLabel.value = "Done ✓";
+    // The push wrote synced_rev/remote_state server-side; the row in hand is
+    // the pre-push copy, so without a re-list the chip keeps showing the old
+    // verdict ("cloud file missing") until a reload.
+    await refresh({ silent: true });
     await new Promise((r) => setTimeout(r, 1200));
   } catch (e) {
     if (e instanceof CloudLoginRequiredError) {

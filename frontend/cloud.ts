@@ -38,7 +38,7 @@ import {
   pickActiveProvider,
 } from "./cloudref";
 import type { TransferState } from "./syncstatus";
-import { deriveStatus } from "./syncstatus";
+import { canSkipUpload, deriveStatus } from "./syncstatus";
 import { contentCrcOf, computeFingerprint } from "../browser/mega-fingerprint";
 import { sha256Hex } from "../amc/posterkey";
 import { withWakeLock } from "./wakelock";
@@ -542,9 +542,9 @@ export async function syncCatalogToOrigin(
       let uploaded = false;
       let fingerprint = catalog.remote_fingerprint ?? "";
 
-      if (hash === catalog.content_hash && fingerprint) {
-        // Byte-identical to what is already up there. Skip the upload; still
-        // advance synced_rev so the badge goes clean.
+      if (canSkipUpload(catalog, hash)) {
+        // Byte-identical to a remote we just confirmed is there. Skip the
+        // upload; still advance synced_rev so the badge goes clean.
         tx.progress(1, 1, "unchanged");
         onProgress?.(1, 1, "unchanged");
       } else {

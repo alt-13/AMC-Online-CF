@@ -90,3 +90,22 @@ export function formatTransfer(phase: string, done: number, total: number): stri
   }
   return `${phase} ${done}/${total}`;
 }
+
+/**
+ * May a push skip the upload because the rebuilt bytes are what is already up
+ * there? Only when the remote file is KNOWN to exist. Byte-equality alone is
+ * not enough: delete the .amc on the provider and press Sync, and the hash
+ * still matches the last push, so the upload was skipped and setSyncState then
+ * recorded remote_state='match' — the app claimed synced with nothing in the
+ * cloud. Anything but a confirmed 'match' re-uploads, which also re-creates a
+ * deleted file.
+ */
+export function canSkipUpload(cat: CatalogRow, hash: string): boolean {
+  return (
+    cat.remote_checked_at != null &&
+    cat.remote_state === "match" &&
+    !!cat.remote_fingerprint &&
+    !!cat.content_hash &&
+    cat.content_hash === hash
+  );
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveStatus, SHOWS_SYNC_BUTTON, formatTransfer, type SyncStatus } from "./syncstatus";
+import { canSkipUpload, deriveStatus, SHOWS_SYNC_BUTTON, formatTransfer, type SyncStatus } from "./syncstatus";
 import type { CatalogRow } from "./api";
 
 function cat(over: Partial<CatalogRow> = {}): CatalogRow {
@@ -117,5 +117,22 @@ describe("formatTransfer", () => {
 
   it("falls back to the bare phase when no total is known", () => {
     expect(formatTransfer("building", 0, 0)).toBe("building…");
+  });
+});
+
+describe("canSkipUpload", () => {
+  const clean = { content_hash: "h", remote_fingerprint: "fp", remote_state: "match" };
+
+  it("skips only when the bytes match a remote we confirmed is there", () => {
+    expect(canSkipUpload(cat(clean), "h")).toBe(true);
+    expect(canSkipUpload(cat(clean), "other")).toBe(false);
+  });
+
+  it("re-uploads when the remote file was deleted", () => {
+    // The regression: same bytes as the last push, but the .amc is gone, so
+    // skipping would leave the cloud empty and still record 'synced'.
+    expect(canSkipUpload(cat({ ...clean, remote_state: "missing" }), "h")).toBe(false);
+    expect(canSkipUpload(cat({ ...clean, remote_state: "differs" }), "h")).toBe(false);
+    expect(canSkipUpload(cat({ ...clean, remote_checked_at: null }), "h")).toBe(false);
   });
 });
