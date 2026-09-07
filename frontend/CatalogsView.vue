@@ -9,7 +9,7 @@
   <!-- drilled into one library -->
   <MovieListView v-if="openCatalog" :catalog="openCatalog" @back="goBack" @changed="onWorkspaceChanged" />
 
-  <div v-else class="max-w-160 mx-auto px-4 py-6 flex flex-col gap-4">
+  <div v-else class="max-w-4xl mx-auto px-4 py-6 flex flex-col gap-4">
     <div class="flex items-center justify-between gap-2">
       <h2 class="font-display text-gold text-xl">Your libraries</h2>
       <Button
