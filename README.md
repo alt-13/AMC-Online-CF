@@ -48,6 +48,12 @@ that keep `.amc` export byte-exact.
 
 - Node.js 20+
 - A Cloudflare account (for deploy) with Workers, D1, and R2 available.
+- **For Google Drive sync only:** your own Google OAuth client ID — about five
+  minutes in the Google Cloud Console, once per deploy. This is unavoidable:
+  Google binds an OAuth client to specific *authorized JavaScript origins*, and
+  wildcards are not allowed, so no client ID can be shipped that covers your
+  domain. Walkthrough: [Connecting Google Drive](#connecting-google-drive).
+  **Mega.nz needs none of this** — email and password, nothing to register.
 
 ## Local development
 
@@ -117,9 +123,15 @@ npm run deploy                                # applies migrations + wrangler de
 
 ### Connecting Google Drive
 
-Drive needs an OAuth **client ID** of your own — it identifies your deploy to
-Google, and there is nothing secret about it (no client secret is used, and no
-Worker secret or redeploy is involved). One-off setup:
+> **Heads up — Drive is not zero-setup.** Before the app can see your Drive you
+> must register an OAuth client in the Google Cloud Console and paste its client
+> ID into the Cloud sync panel once. Hosted services skip this only because the
+> vendor registered *their* one domain; a self-hosted deploy has to register its
+> own, since Google allows no wildcard origins. Budget five minutes. If that is
+> not worth it, use Mega.nz instead — it needs nothing.
+
+The client ID identifies your deploy to Google and is **not** a secret (no client
+secret is used, and no Worker secret or redeploy is involved). One-off setup:
 
 1. [Google Cloud Console](https://console.cloud.google.com/) → create (or pick) a
    project → **APIs & Services → Library** → enable the **Google Drive API**.
