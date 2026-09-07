@@ -491,6 +491,16 @@
     />
 
     <ConfirmDialog
+      v-if="dupe"
+      title="Already in this catalog"
+      :message="`“${dupe.original_title || '(untitled)'}” already has the same ${dupeFieldLabel}. Save anyway?`"
+      confirm-label="Save anyway"
+      cancel-label="Keep editing"
+      @confirm="answerDupe(true)"
+      @cancel="answerDupe(false)"
+    />
+
+    <ConfirmDialog
       v-if="deleteOpen"
       title="Delete film"
       :message="`Delete “${form.original_title || 'this movie'}”? This cannot be undone.`"
@@ -555,13 +565,16 @@ import OmdbDialog from "./OmdbDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import {
   isVisible, parseCustom, delphiToDate, dateToDelphi, SENTINEL, MAX_MOVIE_NUMBER,
-  COLOR_TAG_COLORS, COLOR_TAG_NAMES, type AppSettings,
+  COLOR_TAG_COLORS, COLOR_TAG_NAMES, type AppSettings, findDuplicateOnEdit, fieldLabel,
 } from "./fields";
 
 const props = defineProps<{
   movieId: string;
   defs: CustomFieldDefRow[];
   settings: AppSettings;
+  /** The catalog's other rows, for the duplicate check on save. Already loaded
+   *  in the list, so passing the array costs nothing. */
+  siblings: MovieRow[];
 }>();
 const emit = defineEmits<{
   (e: "back"): void;
@@ -656,6 +669,7 @@ async function load() {
     // Clear stale keys, then hydrate (reactive object is reused across reloads).
     for (const k of Object.keys(form)) delete (form as Record<string, unknown>)[k];
     Object.assign(form, m);
+    loadedRow = { ...m };
     for (const k of Object.keys(custom)) delete custom[k];
     Object.assign(custom, parseCustom(m));
     for (const d of props.defs) if (!(d.tag in custom)) custom[d.tag] = "";
@@ -808,15 +822,44 @@ function setRating(k: string, v: string) {
 // --- save / delete ----------------------------------------------------------
 // Returns true on success, false on failure — the unsaved-changes guard in the
 // parent uses this to decide whether "Save & continue" may proceed.
+// The saved-row snapshot the duplicate check compares against, so an edit that
+// leaves the compared field alone never warns. Refreshed on load and on save.
+let loadedRow: Partial<MovieRow> = {};
+const dupe = ref<MovieRow | null>(null);
+let dupeResolve: ((ok: boolean) => void) | null = null;
+const dupeFieldLabel = computed(() =>
+  fieldLabel(props.settings.duplicate_field, props.defs).toLowerCase(),
+);
+
+/** Resolves true when the save may go ahead: no collision, or the user chose
+ *  "Save anyway". Same warning the add path raises, reached by editing a film
+ *  into an existing one instead of creating it. */
+function allowDuplicate(patch: Partial<MovieRow>): Promise<boolean> {
+  const hit = findDuplicateOnEdit(
+    props.siblings, loadedRow, patch, props.settings.duplicate_field, form.id,
+  );
+  if (!hit) return Promise.resolve(true);
+  dupe.value = hit;
+  return new Promise((resolve) => { dupeResolve = resolve; });
+}
+
+function answerDupe(ok: boolean) {
+  dupe.value = null;
+  dupeResolve?.(ok);
+  dupeResolve = null;
+}
+
 async function save(): Promise<boolean> {
+  const patch: Partial<MovieRow> & { extras: Extra[] } = {
+    ...form,
+    custom_values: JSON.stringify(custom),
+    extras: extras.value,
+  };
+  // Ask before the write, not after — cancelling leaves the form dirty and open.
+  if (!(await allowDuplicate(patch))) return false;
   saving.value = true;
   error.value = "";
   try {
-    const patch: Partial<MovieRow> & { extras: Extra[] } = {
-      ...form,
-      custom_values: JSON.stringify(custom),
-      extras: extras.value,
-    };
     // content_rev rides along on the update response so the workspace's sync
     // button stays accurate without a separate catalog refetch. Destructure it
     // out before merging so it never lands as a stray key on `form`.
@@ -828,6 +871,7 @@ async function save(): Promise<boolean> {
     // Mirror load(): suppress the watcher across the sync, clear it after flush.
     hydrating.value = true;
     Object.assign(form, movieOnly);
+    loadedRow = { ...movieOnly };
     extras.value = (savedExtras ?? []).map((e) => ({ ...e }));
     openSet.clear();
     dirty.value = false;

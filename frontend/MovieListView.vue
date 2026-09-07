@@ -191,6 +191,7 @@
         :movie-id="selectedId"
         :defs="defs"
         :settings="settings"
+        :siblings="movies"
         @back="requestClose"
         @deleted="onDeleted"
         @changed="refresh"
@@ -214,7 +215,7 @@
       v-if="omdbOpen"
       @close="omdbOpen = false"
       @open-settings="omdbOpen = false; settingsOpen = true"
-      @apply="createFromOmdb"
+      @apply="onCreate"
     />
 
     <!-- The compare step needs the local rows; `movies` is already loaded here,
@@ -226,6 +227,17 @@
       :local-movies="movies"
       @close="conflictOpen = false"
       @resolved="conflictOpen = false; emit('changed')"
+    />
+
+    <ConfirmDialog
+      v-if="dupe"
+      title="Already in this catalog"
+      :message="`“${dupe.existing.original_title || '(untitled)'}” already has the same ${dupeFieldLabel}. Add this film anyway?`"
+      confirm-label="Add anyway"
+      cancel-label="Cancel"
+      :busy="creating"
+      @confirm="confirmDupe"
+      @cancel="dupe = null"
     />
 
     <ConfirmDialog
@@ -259,7 +271,7 @@ import ConfirmDialog from "./ConfirmDialog.vue";
 import ConflictDialog from "./ConflictDialog.vue";
 import {
   DEFAULT_SETTINGS, type AppSettings, COLOR_TAG_COLORS, COLOR_TAG_NAMES,
-  searchScopes, scopeLabel, ALL_SEARCH_FIELDS, countSeries,
+  searchScopes, scopeLabel, ALL_SEARCH_FIELDS, countSeries, findDuplicate, fieldLabel,
 } from "./fields";
 import { pushView, goBack, dropView } from "./nav";
 import { deriveStatus, SHOWS_SYNC_BUTTON, formatTransfer } from "./syncstatus";
@@ -648,22 +660,33 @@ function requestClose() {
   guard(() => goBack());
 }
 
-async function onCreate(patch: Partial<MovieRow> = {}) {
-  creating.value = true;
-  error.value = "";
-  try {
-    const created = await cf.createMovie(props.catalog.id, patch);
-    await refresh(created.content_rev);
-    openDetail(created.id); // jump straight into the editor
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    creating.value = false;
+// Both add paths (the + button and an OMDb apply) route through here so the
+// duplicate check can't be reached around. A blank + click carries no patch, so
+// there is nothing to compare and it never warns.
+const dupe = ref<{ existing: MovieRow; patch: Partial<MovieRow>; posterUrl: string } | null>(null);
+const dupeFieldLabel = computed(() =>
+  fieldLabel(settings.value.duplicate_field, defs.value).toLowerCase(),
+);
+
+function onCreate(patch: Partial<MovieRow> = {}, posterUrl = "") {
+  const existing = findDuplicate(movies.value, patch, settings.value.duplicate_field);
+  if (existing) {
+    dupe.value = { existing, patch, posterUrl };
+    return;
   }
+  void doCreate(patch, posterUrl);
 }
 
-async function createFromOmdb(patch: Partial<MovieRow>, posterUrl: string) {
+async function confirmDupe() {
+  const pending = dupe.value;
+  if (!pending) return;
+  await doCreate(pending.patch, pending.posterUrl);
+  dupe.value = null;
+}
+
+async function doCreate(patch: Partial<MovieRow>, posterUrl: string) {
   creating.value = true;
+  error.value = "";
   try {
     const created = await cf.createMovie(props.catalog.id, patch);
     // The poster update is a second mutation and bumps the rev again — prefer
@@ -679,7 +702,7 @@ async function createFromOmdb(patch: Partial<MovieRow>, posterUrl: string) {
       }
     }
     await refresh(rev);
-    openDetail(created.id);
+    openDetail(created.id); // jump straight into the editor
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {

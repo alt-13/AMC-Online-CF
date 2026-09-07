@@ -107,7 +107,7 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── ConflictDialog.vue  ← both sides moved: pick push/pull, with an opt-in remote compare
 │   ├── OmdbDialog.vue      ← search IMDb, pick a title, fetch OMDb → patch + poster URL
 │   ├── SERIES-RULES.md     ← why "series" is user-configured, and the planned rule kinds
-│   └── SettingsDialog.vue  ← per-user field visibility (desktop/mobile) + search field + series-count rule + OMDb key → user_settings
+│   └── SettingsDialog.vue  ← per-user field visibility (desktop/mobile) + search field + duplicate-warning field + series-count rule + OMDb key → user_settings
 ├── scripts/            ← predev hooks: ensure-dist (assets placeholder) + seed-local-db (auto-seed emulated D1)
 ├── setup.sh            ← one-shot bootstrap: provision D1+R2, inject db id, apply schema, set secrets via stdin, deploy
 ├── wrangler.jsonc      ← Worker config: D1 (DB), R2 (R2), assets (ASSETS) bindings

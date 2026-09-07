@@ -80,6 +80,22 @@
       </div>
 
       <div class="mt-4 flex flex-col gap-2">
+        <span class="text-sm font-semibold text-gold">Duplicate warning</span>
+        <p class="m-0 text-xs text-muted">
+          Adding a film whose value here already exists in the catalog raises a
+          warning first. Title is the default; a URL from a metadata source is
+          the exact match if your catalog carries one. Blank values never match.
+        </p>
+        <Select
+          v-model="duplicateFieldModel"
+          :options="duplicateOptions"
+          optionLabel="label"
+          optionValue="value"
+          class="w-full"
+        />
+      </div>
+
+      <div class="mt-4 flex flex-col gap-2">
         <span class="text-sm font-semibold text-gold">Watched / Checked</span>
         <p class="m-0 text-xs text-muted">
           The .amc format stores a Date Watched and a separate “checked” flag and
@@ -210,7 +226,18 @@ const searchOptions = computed(() => [
   ...searchable.value.map((f) => ({ label: f.label, value: f.key })),
 ]);
 
+// Same "" -> sentinel dance as the search field: "" means "no warning".
+const NO_DUPES = "__off__";
+const duplicateOptions = computed(() => [
+  { label: "Off (never warn)", value: NO_DUPES },
+  ...searchable.value.map((f) => ({ label: f.label, value: f.key })),
+]);
+
 const draft = ref<AppSettings>(structuredClone(DEFAULT_SETTINGS));
+const duplicateFieldModel = computed<string>({
+  get: () => draft.value.duplicate_field || NO_DUPES,
+  set: (v) => { draft.value.duplicate_field = v === NO_DUPES ? "" : v; },
+});
 const searchFieldModel = computed<string>({
   get: () => draft.value.search_field || ALL_FIELDS,
   set: (v) => { draft.value.search_field = v === ALL_FIELDS ? "" : v; },

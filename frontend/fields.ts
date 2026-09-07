@@ -150,13 +150,66 @@ export interface AppSettings {
    *  has both fields and never links them, so which one a catalog means by
    *  "checked" is the user's convention, not something to infer. */
   checked_separate: boolean;
+  /** Which field a newly added film is compared on to warn "already in this
+   *  catalog". "" disables the warning. Titles are the sane default; a catalog
+   *  built from a metadata source may prefer `url`, which is exact. */
+  duplicate_field: string;
 }
 export const DEFAULT_SETTINGS: AppSettings = {
   field_visibility: { desktop: {}, mobile: {} },
   search_field: "",
   series_rule: { kind: "off" },
   checked_separate: false,
+  duplicate_field: "original_title",
 };
+
+// --- duplicate detection ----------------------------------------------------
+
+/** Human label for a settings field key, `custom_<tag>` included. */
+export function fieldLabel(key: string, defs: CustomFieldDefRow[]): string {
+  if (key.startsWith("custom_")) {
+    const tag = key.slice(7);
+    return defs.find((d) => d.tag === tag)?.name || tag;
+  }
+  return FIELD_LABELS[key] ?? key;
+}
+
+/** Read one field off a row by settings key, `custom_<tag>` included. */
+export function fieldValue(row: Partial<MovieRow>, key: string): string {
+  if (key.startsWith("custom_")) return parseCustom(row as MovieRow)[key.slice(7)] ?? "";
+  return String((row as Record<string, unknown>)[key] ?? "");
+}
+
+/** Duplicate check for an EDIT rather than an add: skip the row being edited,
+ *  and warn only when the compared field actually changed — re-saving a film
+ *  that was already a duplicate must not nag on every save. */
+export function findDuplicateOnEdit(
+  rows: MovieRow[],
+  before: Partial<MovieRow>,
+  after: Partial<MovieRow>,
+  key: string,
+  selfId: string,
+): MovieRow | null {
+  if (!key) return null;
+  const norm = (r: Partial<MovieRow>) => fieldValue(r, key).trim().toLowerCase();
+  if (norm(before) === norm(after)) return null;
+  return findDuplicate(rows.filter((r) => r.id !== selfId), after, key);
+}
+
+/** The first existing row that carries the same `key` value as the film about to
+ *  be added, compared trimmed and casefolded. A blank value on either side never
+ *  matches — a catalog is full of empty URLs, and "every film with no URL is a
+ *  duplicate" is noise, not a warning. `key` "" disables the check. */
+export function findDuplicate(
+  rows: MovieRow[],
+  candidate: Partial<MovieRow>,
+  key: string,
+): MovieRow | null {
+  if (!key) return null;
+  const want = fieldValue(candidate, key).trim().toLowerCase();
+  if (!want) return null;
+  return rows.find((r) => fieldValue(r, key).trim().toLowerCase() === want) ?? null;
+}
 
 // --- series counting --------------------------------------------------------
 //
