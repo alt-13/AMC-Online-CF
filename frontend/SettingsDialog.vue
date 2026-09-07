@@ -68,7 +68,7 @@
         </Accordion>
       </section>
 
-      <div class="mt-3 flex flex-col gap-2 px-2">
+      <div class="mt-3 flex flex-col gap-2">
         <span class="text-sm font-semibold text-gold">Search field</span>
         <Select
           v-model="searchFieldModel"
@@ -79,7 +79,7 @@
         />
       </div>
 
-      <div class="mt-4 flex flex-col gap-2 px-2">
+      <div class="mt-4 flex flex-col gap-2">
         <span class="text-sm font-semibold text-gold">Watched / Checked</span>
         <p class="m-0 text-xs text-muted">
           The .amc format stores a Date Watched and a separate “checked” flag and
@@ -94,7 +94,7 @@
         </div>
       </div>
 
-      <div class="mt-4 flex flex-col gap-2 px-2">
+      <div class="mt-4 flex flex-col gap-2">
         <span class="text-sm font-semibold text-gold">Series count</span>
         <p class="m-0 text-xs text-muted">
           The catalog bar can show a “N films / N series” tally. There is no
@@ -139,7 +139,7 @@
         </div>
       </div>
 
-      <div class="mt-4 flex flex-col gap-2 px-2">
+      <div class="mt-4 flex flex-col gap-2">
         <span class="text-sm font-semibold text-gold">OMDb API key</span>
         <p class="m-0 text-xs text-muted">
           Powers "⚡ Fetch → new" (IMDb/OMDb metadata). Get a free key at
