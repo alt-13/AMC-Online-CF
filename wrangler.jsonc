@@ -24,9 +24,12 @@
   "compatibility_date": "2025-01-01",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Served at a custom domain on the account's alpenglut.eu zone. `custom_domain`
-  // makes Cloudflare create the DNS record + edge cert automatically.
-  "routes": [{ "pattern": "amc.alpenglut.eu", "custom_domain": true }],
+  // Optional custom domain. Left commented, the Worker is served on
+  // <name>.<your-subdomain>.workers.dev. `custom_domain: true` makes Cloudflare
+  // create the DNS record + edge cert automatically — the zone must already be
+  // on your account. ./setup.sh uncomments this line and fills in the hostname
+  // you enter at its prompt (same mechanism as database_id above).
+  // "routes": [{ "pattern": "CUSTOM_DOMAIN", "custom_domain": true }],
 
   "d1_databases": [
     {

@@ -88,8 +88,16 @@ and deploys:
 ```
 
 `setup.sh` logs in (or uses `CLOUDFLARE_API_TOKEN`), creates the D1 database + R2
-bucket, writes the `database_id` into `wrangler.jsonc`, applies `schema.sql`, sets
-`AUTH_SECRET` via stdin, builds the frontend, and deploys. It's re-runnable.
+bucket, writes the `database_id` into `wrangler.jsonc`, asks for an optional
+custom domain, applies `schema.sql`, sets `AUTH_SECRET` via stdin, builds the
+frontend, and deploys. It's re-runnable.
+
+**Custom domain.** No hostname is committed: `wrangler.jsonc` ships its `routes`
+line commented out, so an untouched clone deploys to
+`<name>.<your-subdomain>.workers.dev`. Enter a hostname at the setup prompt (or
+uncomment the line yourself) and `custom_domain: true` has Cloudflare create the
+DNS record + edge cert — the zone must already be on your account, and the API
+token needs the three Zone rows in [`CF-PORT.md`](CF-PORT.md#cloudflare-api-token).
 
 Manual equivalent:
 

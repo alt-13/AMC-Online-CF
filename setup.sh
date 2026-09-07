@@ -50,6 +50,27 @@ else
   echo "  already configured in wrangler.jsonc, skipping"
 fi
 
+# --- 1b. custom domain (optional) -----------------------------------------
+# The hostname is NOT in git — wrangler.jsonc ships the "routes" line commented
+# out, so a fresh clone deploys to <name>.<subdomain>.workers.dev. Enter a
+# hostname here and it gets uncommented in your working copy only.
+say "Custom domain (optional)"
+if grep -qE '^[[:space:]]*"routes"' wrangler.jsonc; then
+  echo "  already configured in wrangler.jsonc, skipping"
+else
+  read -r -p "Custom domain, e.g. amc.example.com (Enter = use workers.dev): " domain || true
+  if [ -n "${domain:-}" ]; then
+    sed -i.bak "s|// \"routes\": \[{ \"pattern\": \"CUSTOM_DOMAIN\"|\"routes\": [{ \"pattern\": \"$domain\"|" wrangler.jsonc
+    rm -f wrangler.jsonc.bak
+    if ! grep -qE '^[[:space:]]*"routes"' wrangler.jsonc; then
+      echo "Could not write the domain into wrangler.jsonc — add the routes line by hand."; exit 1
+    fi
+    echo "  routes -> $domain (zone must already be on this account)"
+  else
+    echo "  skipped — serving on <name>.<subdomain>.workers.dev"
+  fi
+fi
+
 # --- 2. schema ------------------------------------------------------------
 say "Applying schema.sql to remote D1"
 $WRANGLER d1 execute "$DB_NAME" --remote --file=schema.sql

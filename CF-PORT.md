@@ -211,7 +211,10 @@ encrypted at rest. See "OMDb key" below.
 ```
 
 `setup.sh` logs in if needed, creates the D1 database + R2 bucket, **writes the
-`database_id` into `wrangler.jsonc`**, applies `schema.sql`, sets `AUTH_SECRET`
+`database_id` into `wrangler.jsonc`**, prompts for an **optional custom domain**
+(`wrangler.jsonc` commits its `routes` line commented out, so no operator's
+hostname is in git and an untouched clone deploys to
+`<name>.<subdomain>.workers.dev`), applies `schema.sql`, sets `AUTH_SECRET`
 and (optionally) `ENCRYPTION_SECRET` **via stdin — never the dashboard**, then
 builds the frontend and deploys. It's re-runnable (existing resources are
 detected and skipped), so it doubles as a rotate-a-secret tool.
