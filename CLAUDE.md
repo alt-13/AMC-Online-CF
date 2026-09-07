@@ -328,6 +328,15 @@ schemes must be defined in both places:
 
 ---
 
+## Git workflow — branching
+
+Fixes and very small features (**1–3 commits**) may commit directly on the
+current branch, **including `main`**. Anything larger gets a feature branch
+first, then a `--ff-only` merge back. When unsure, **ask before committing**.
+Pushing is always a separate, explicit ask.
+
+---
+
 ## Running / testing
 
 Single Vite project (frontend + worker + browser modules, one `package.json`).
