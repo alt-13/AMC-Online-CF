@@ -75,3 +75,18 @@ export function deriveStatus(cat: CatalogRow, inFlight?: TransferState): SyncSta
   // a re-check rather than asserting the cloud file is current.
   return { kind: "unknown", localDirty: pending > 0, pending };
 }
+
+/**
+ * Human label for a transfer in flight, shared by the list chip, the row button
+ * and the workspace tooltip so all three read the same.
+ *
+ * Byte-counting phases ("uploading", "download") read as a percentage — a raw
+ * `12345678/500000000` is noise; the row/poster-counting phases keep done/total.
+ */
+export function formatTransfer(phase: string, done: number, total: number): string {
+  if (!total) return `${phase}…`;
+  if (phase === "uploading" || phase === "download") {
+    return `${phase} ${Math.round((done / total) * 100)}%`;
+  }
+  return `${phase} ${done}/${total}`;
+}

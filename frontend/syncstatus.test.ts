@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveStatus, SHOWS_SYNC_BUTTON, type SyncStatus } from "./syncstatus";
+import { deriveStatus, SHOWS_SYNC_BUTTON, formatTransfer, type SyncStatus } from "./syncstatus";
 import type { CatalogRow } from "./api";
 
 function cat(over: Partial<CatalogRow> = {}): CatalogRow {
@@ -102,5 +102,20 @@ describe("SHOWS_SYNC_BUTTON", () => {
 
   it("covers exactly not-synced, syncing and conflict", () => {
     expect([...SHOWS_SYNC_BUTTON].sort()).toEqual(["conflict", "not-synced", "syncing"]);
+  });
+});
+
+describe("formatTransfer", () => {
+  it("shows byte phases as a percentage", () => {
+    expect(formatTransfer("uploading", 50_000_000, 200_000_000)).toBe("uploading 25%");
+    expect(formatTransfer("download", 1, 3)).toBe("download 33%");
+  });
+
+  it("keeps counts for counting phases", () => {
+    expect(formatTransfer("posters", 3, 10)).toBe("posters 3/10");
+  });
+
+  it("falls back to the bare phase when no total is known", () => {
+    expect(formatTransfer("building", 0, 0)).toBe("building…");
   });
 });

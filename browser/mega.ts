@@ -81,7 +81,13 @@ export async function loginToMega(creds: MegaCredentials): Promise<Storage> {
 // Both expose `.upload(opts, source).complete` at runtime; megajs's folder type
 // declares only a Writable return, so we describe the shape we actually use.
 type Uploader = {
-  upload(opts: unknown, source?: unknown): { complete: Promise<unknown> };
+  upload(
+    opts: unknown,
+    source?: unknown,
+  ): {
+    complete: Promise<unknown>;
+    on(ev: "progress", cb: (p: { bytesUploaded: number; bytesTotal: number }) => void): void;
+  };
 };
 
 /**
@@ -96,6 +102,7 @@ export async function uploadToMega(
   name: string,
   bytes: Uint8Array,
   mtimeSec: number = Math.floor(Date.now() / 1000),
+  onProgress?: (uploaded: number, total: number) => void,
 ): Promise<MegaFile> {
   const c = computeFingerprint(bytes, mtimeSec);
   // megajs's uploadOpts type omits `attributes`, but at runtime it merges any
@@ -107,7 +114,15 @@ export async function uploadToMega(
   // megajs's buffer param is typed BufferString (Buffer | string); a Uint8Array
   // works at runtime. No `Buffer` global is referenced (this module targets the
   // browser).
-  const file = await (target as unknown as Uploader).upload(opts, bytes).complete;
+  // megajs emits "progress" per acknowledged chunk ({bytesUploaded, bytesTotal}),
+  // which is the only signal a multi-hundred-megabyte upload gives — without it
+  // the UI sits frozen for minutes while the POSTs run.
+  const upload = (target as unknown as Uploader).upload(opts, bytes);
+  if (onProgress) {
+    onProgress(0, bytes.byteLength);
+    upload.on("progress", (p) => onProgress(p.bytesUploaded, p.bytesTotal || bytes.byteLength));
+  }
+  const file = await upload.complete;
   return file as unknown as MegaFile;
 }
 

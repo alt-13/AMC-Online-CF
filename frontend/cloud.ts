@@ -65,7 +65,7 @@ export interface MegaAmcFile {
 
 type Phase = "download" | ImportPhase;
 type PullProgress = (done: number, total: number, phase: Phase) => void;
-type PushProgress = (done: number, total: number) => void;
+type PushProgress = (done: number, total: number, phase: string) => void;
 
 // --- reactive state --------------------------------------------------------
 
@@ -154,7 +154,13 @@ interface CloudConnector {
   /** Push to the origin the source_ref locator points at (folder handle + name).
    *  `mtimeSec` is passed through so the caller's precomputed fingerprint and
    *  the uploaded file agree. */
-  pushToLocator(storage: Storage, locator: string, bytes: Uint8Array, mtimeSec?: number): Promise<void>;
+  pushToLocator(
+    storage: Storage,
+    locator: string,
+    bytes: Uint8Array,
+    mtimeSec?: number,
+    onProgress?: (uploaded: number, total: number) => void,
+  ): Promise<void>;
   /** Push to a user-chosen path; return the resulting full source_ref. */
   pushToPath(
     storage: Storage,
@@ -162,6 +168,7 @@ interface CloudConnector {
     fallbackName: string,
     bytes: Uint8Array,
     mtimeSec?: number,
+    onProgress?: (uploaded: number, total: number) => void,
   ): Promise<string>;
 }
 
@@ -192,20 +199,20 @@ const megaConnector: CloudConnector = {
     return file.bytes;
   },
 
-  async pushToLocator(storage, locator, bytes, mtimeSec) {
+  async pushToLocator(storage, locator, bytes, mtimeSec, onProgress) {
     const { handle, name } = splitMegaLocator(locator);
     const folder = folderByHandle(storage, handle);
     if (!folder) throw new Error("the folder this library came from no longer exists on Mega");
-    await replaceInFolder(storage, folder, name, bytes, mtimeSec);
+    await replaceInFolder(storage, folder, name, bytes, mtimeSec, onProgress);
   },
 
-  async pushToPath(storage, path, fallbackName, bytes, mtimeSec) {
+  async pushToPath(storage, path, fallbackName, bytes, mtimeSec, onProgress) {
     const { segments, filename } = splitAmcPath(path);
     const name = filename ?? (fallbackName.toLowerCase().endsWith(".amc") ? fallbackName : `${fallbackName}.amc`);
     const folder = segments.length
       ? await ensureFolderAt(storage, segments)
       : (storage.root as unknown as MegaFile);
-    await replaceInFolder(storage, folder, name, bytes, mtimeSec);
+    await replaceInFolder(storage, folder, name, bytes, mtimeSec, onProgress);
     const handle = folder.nodeId ?? storage.root?.nodeId ?? "";
     return formatMegaSourceRef(handle, name);
   },
@@ -219,11 +226,12 @@ async function replaceInFolder(
   name: string,
   bytes: Uint8Array,
   mtimeSec?: number,
+  onProgress?: (uploaded: number, total: number) => void,
 ): Promise<void> {
   const previous =
     (((folder.children ?? []) as MegaFile[]).find((f) => !f.directory && f.name === name)) ?? null;
   const target = folder === (storage.root as unknown as MegaFile) ? storage : folder;
-  await uploadToMega(target as Storage | MegaFile, name, bytes, mtimeSec);
+  await uploadToMega(target as Storage | MegaFile, name, bytes, mtimeSec, onProgress);
   if (previous) {
     try {
       await (previous as unknown as Deletable).delete(true);
@@ -526,7 +534,7 @@ export async function syncCatalogToOrigin(
         ...session(),
         onProgress: (done, total) => {
           tx.progress(done, total, "posters");
-          onProgress?.(done, total);
+          onProgress?.(done, total, "posters");
         },
       });
 
@@ -538,11 +546,16 @@ export async function syncCatalogToOrigin(
         // Byte-identical to what is already up there. Skip the upload; still
         // advance synced_rev so the badge goes clean.
         tx.progress(1, 1, "unchanged");
+        onProgress?.(1, 1, "unchanged");
       } else {
         tx.progress(0, bytes.byteLength, "uploading");
+        onProgress?.(0, bytes.byteLength, "uploading");
         const mtimeSec = Math.floor(Date.now() / 1000);
         fingerprint = computeFingerprint(bytes, mtimeSec);
-        await connector.pushToLocator(storage!, locator, bytes, mtimeSec);
+        await connector.pushToLocator(storage!, locator, bytes, mtimeSec, (up, total) => {
+          tx.progress(up, total, "uploading");
+          onProgress?.(up, total, "uploading");
+        });
         uploaded = true;
       }
 
@@ -580,13 +593,18 @@ export async function pushAdoptingOrigin(
   try {
     const { bytes, contentRev } = await buildAmcFile(catalog.id, {
       ...session(),
-      onProgress: (done, total) => { tx.progress(done, total, "posters"); onProgress?.(done, total); },
+      onProgress: (done, total) => { tx.progress(done, total, "posters"); onProgress?.(done, total, "posters"); },
     });
     const mtimeSec = Math.floor(Date.now() / 1000);
     const fingerprint = computeFingerprint(bytes, mtimeSec);
     const fallbackName = catalog.name || "catalog";
+    tx.progress(0, bytes.byteLength, "uploading");
+    onProgress?.(0, bytes.byteLength, "uploading");
     const sourceRef = await connectorFor(provider).pushToPath(
-      storage!, path, fallbackName, bytes, mtimeSec,
+      storage!, path, fallbackName, bytes, mtimeSec, (up, total) => {
+        tx.progress(up, total, "uploading");
+        onProgress?.(up, total, "uploading");
+      },
     );
     await cf.setSyncState(catalog.id, {
       synced_rev: contentRev,

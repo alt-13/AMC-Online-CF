@@ -262,7 +262,7 @@ import {
   searchScopes, scopeLabel, ALL_SEARCH_FIELDS, countSeries,
 } from "./fields";
 import { pushView, goBack, dropView } from "./nav";
-import { deriveStatus, SHOWS_SYNC_BUTTON } from "./syncstatus";
+import { deriveStatus, SHOWS_SYNC_BUTTON, formatTransfer } from "./syncstatus";
 import { transfers, syncCatalogToOrigin, RemoteMovedError } from "./cloud";
 
 const props = defineProps<{ catalog: CatalogRow }>();
@@ -309,7 +309,7 @@ const syncButton = computed(() => {
     return {
       icon: "pi pi-spin pi-spinner",
       disabled: true,
-      title: s.total ? `Syncing… ${s.phase} ${s.done}/${s.total}` : "Syncing…",
+      title: `Syncing… ${formatTransfer(s.phase, s.done, s.total)}`,
     };
   }
   if (s.kind === "conflict") {

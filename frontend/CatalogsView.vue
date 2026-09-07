@@ -89,6 +89,14 @@
             @click.stop="onDelete(c)"
           />
         </div>
+        <!-- Only a transfer with a known total gets a bar; the phases without
+             one (login, build) keep the button label alone. -->
+        <ProgressBar
+          v-if="busyId === c.id && busyPct !== null"
+          :value="busyPct"
+          :show-value="false"
+          class="basis-full h-1.5"
+        />
       </li>
     </ul>
 
@@ -118,6 +126,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch, defineAsyncComponent, h } from "vue";
 import Button from "primevue/button";
+import ProgressBar from "primevue/progressbar";
 import CatalogImport from "./CatalogImport.vue";
 import CloudSync from "./CloudSync.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
@@ -159,7 +168,7 @@ const MovieListView = defineAsyncComponent({
 });
 import { cf, downloadAmcFile, session, type CatalogRow, type MovieRow } from "./api";
 import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, reimportFromOrigin, switchProvider, CloudLoginRequiredError, cloudSettings, checkRemoteStates, transfers, anyTransferActive } from "./cloud";
-import { deriveStatus } from "./syncstatus";
+import { deriveStatus, formatTransfer } from "./syncstatus";
 import { pushView, goBack } from "./nav";
 import ConflictDialog from "./ConflictDialog.vue";
 
@@ -249,6 +258,21 @@ async function onWorkspaceChanged() {
 const busyId = ref<string | null>(null);
 const busyKind = ref<"sync" | "export" | "reimport" | null>(null);
 const busyLabel = ref("");
+/** 0-100 while a transfer reports a total, else null (no bar). */
+const busyPct = ref<number | null>(null);
+
+/** One reporter for every busy path: button label + the row's progress bar. */
+function setBusy(done: number, total: number, phase: string) {
+  busyPct.value = total > 0 ? Math.round((done / total) * 100) : null;
+  busyLabel.value = formatTransfer(phase, done, total);
+}
+
+function clearBusy() {
+  busyId.value = null;
+  busyKind.value = null;
+  busyLabel.value = "";
+  busyPct.value = null;
+}
 
 const conflictFor = ref<CatalogRow | null>(null);
 const conflictMovies = ref<MovieRow[]>([]);
@@ -275,16 +299,12 @@ async function onReimport(c: CatalogRow) {
   busyKind.value = "reimport";
   error.value = "";
   try {
-    await reimportFromOrigin(c, (done, total, phase) => {
-      busyLabel.value = total ? `${phase} ${done}/${total}` : `${phase}…`;
-    });
+    await reimportFromOrigin(c, setBusy);
     await refresh();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    busyId.value = null;
-    busyKind.value = null;
-    busyLabel.value = "";
+    clearBusy();
   }
 }
 
@@ -296,9 +316,8 @@ async function onSync(c: CatalogRow) {
   busyLabel.value = "Building…";
   error.value = "";
   try {
-    await syncCatalogToOrigin(c, (d, t) => {
-      busyLabel.value = t ? `Posters ${d}/${t}` : "Uploading…";
-    });
+    await syncCatalogToOrigin(c, setBusy);
+    busyPct.value = null;
     busyLabel.value = "Done ✓";
     await new Promise((r) => setTimeout(r, 1200));
   } catch (e) {
@@ -309,9 +328,7 @@ async function onSync(c: CatalogRow) {
       error.value = e instanceof Error ? e.message : String(e);
     }
   } finally {
-    busyId.value = null;
-    busyKind.value = null;
-    busyLabel.value = "";
+    clearBusy();
   }
 }
 
@@ -358,9 +375,7 @@ async function onExport(c: CatalogRow) {
   busyLabel.value = "Building…";
   error.value = "";
   try {
-    const ref = await pushAdoptingOrigin(c, provider, dest, (d, t) => {
-      busyLabel.value = t ? `Posters ${d}/${t}` : "Uploading…";
-    });
+    const ref = await pushAdoptingOrigin(c, provider, dest, setBusy);
     try {
       await cf.setSourceRef(c.id, ref);
     } catch {
@@ -375,9 +390,7 @@ async function onExport(c: CatalogRow) {
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    busyId.value = null;
-    busyKind.value = null;
-    busyLabel.value = "";
+    clearBusy();
   }
 }
 
@@ -389,16 +402,12 @@ async function downloadLocal(c: CatalogRow) {
   try {
     await downloadAmcFile(c.id, c.name || "catalog", {
       ...session(),
-      onProgress: (d, t) => {
-        busyLabel.value = t ? `Posters ${d}/${t}` : "Building…";
-      },
+      onProgress: (d, t) => setBusy(d, t, "posters"),
     });
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    busyId.value = null;
-    busyKind.value = null;
-    busyLabel.value = "";
+    clearBusy();
   }
 }
 
@@ -424,9 +433,11 @@ async function onDelete(c: CatalogRow) {
   }
 }
 
+/** Full local timestamp (date + hh:mm:ss). A bare date is useless for "synced"
+ *  and "updated": both change several times a day. */
 function fmt(ms: number): string {
   try {
-    return new Date(ms).toLocaleDateString();
+    return new Date(ms).toLocaleString();
   } catch {
     return "";
   }
@@ -454,7 +465,7 @@ function chip(c: CatalogRow): { label: string; icon: string; cls: string } {
       return { label: "local only", icon: "pi pi-desktop", cls: "bg-elevated text-muted" };
     case "syncing":
       return {
-        label: s.total ? `syncing ${s.done}/${s.total}` : "syncing…",
+        label: formatTransfer(s.phase, s.done, s.total),
         icon: "pi pi-spin pi-spinner",
         cls: "bg-elevated text-gold",
       };
