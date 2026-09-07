@@ -94,9 +94,11 @@ frontend, and deploys. It's re-runnable.
 
 **Custom domain.** No hostname is committed: `wrangler.jsonc` ships its `routes`
 line commented out, so an untouched clone deploys to
-`<name>.<your-subdomain>.workers.dev`. Enter a hostname at the setup prompt (or
-uncomment the line yourself) and `custom_domain: true` has Cloudflare create the
-DNS record + edge cert — the zone must already be on your account, and the API
+`<name>.<your-subdomain>.workers.dev`. Attach a hostname either in the dashboard
+(Worker → Settings → Domains & Routes — keeps the repo config clean, and is the
+right choice with deploy-on-push) or by entering it at the setup prompt, which
+uncomments the line so `custom_domain: true` has Cloudflare create the DNS
+record + edge cert — the zone must already be on your account, and the API
 token needs the three Zone rows in [`CF-PORT.md`](CF-PORT.md#cloudflare-api-token).
 
 Manual equivalent:
