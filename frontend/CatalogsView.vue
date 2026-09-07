@@ -17,7 +17,8 @@
         text
         size="small"
         :disabled="checking"
-        :title="checking ? 'Checking the cloud…' : 'Re-check cloud sync status'"
+        v-tooltip.bottom="checking ? 'Checking the cloud…' : 'Re-check cloud sync status'"
+        aria-label="Re-check cloud sync status"
         @click="onRefreshStatus()"
       />
     </div>
@@ -61,7 +62,8 @@
             outlined
             size="small"
             icon="pi pi-cloud-download"
-            title="Re-import from the cloud (replaces this library's contents)"
+            v-tooltip.bottom="'Re-import from the cloud (replaces this library’s contents)'"
+            aria-label="Re-import from the cloud"
             :disabled="!!busyId"
             @click.stop="onReimport(c)"
           />

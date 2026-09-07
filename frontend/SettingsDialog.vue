@@ -1,8 +1,8 @@
 <!--
-  SettingsDialog.vue — the user's settings: field visibility (desktop/mobile),
-  the search field, and the OMDb key. Field visibility is one section of it, not
-  the dialog's subject. Persists the one JSON blob the Worker stores in
-  `user_settings`.
+  SettingsDialog.vue — the user's settings: light/dark mode, field visibility
+  (desktop/mobile), the search field, and the OMDb key. Field visibility is one
+  section of it, not the dialog's subject. Persists the one JSON blob the Worker
+  stores in `user_settings` — except the mode, which is device-local (theme.ts).
   Built on PrimeVue Dialog + Accordion + Checkbox + Select + Password.
 -->
 <template>
@@ -19,6 +19,25 @@
     <!-- scrollbar-gutter keeps the scrollbar's width reserved, so the content
          doesn't reflow the moment a panel expands past 60vh. -->
     <div class="max-h-[60vh] overflow-y-auto [scrollbar-gutter:stable]">
+      <!-- Appearance is the one control here that applies (and persists) on
+           click instead of on Save: it's device-local (localStorage, not
+           `user_settings`), and a theme you can't see until you Save is a worse
+           switch than one that just flips. -->
+      <div class="mb-4 flex flex-col gap-2">
+        <span class="text-sm font-semibold text-gold">Appearance</span>
+        <SelectButton
+          v-model="themeMode"
+          :options="themeOptions"
+          optionLabel="label"
+          optionValue="value"
+          :allowEmpty="false"
+          size="small"
+        />
+        <span class="text-[0.7rem] text-muted">
+          Applies at once, on this device only. “System” follows your OS setting.
+        </span>
+      </div>
+
       <section>
         <span class="text-sm font-semibold text-gold">Field visibility</span>
 
@@ -32,8 +51,8 @@
                  bg-card px-2 pb-2 border-b border-border"
         >
           <span class="text-[0.66rem] uppercase tracking-wide text-muted">Field</span>
-          <i class="pi pi-desktop justify-self-center text-muted" title="Show on desktop" aria-label="Show on desktop" />
-          <i class="pi pi-mobile justify-self-center text-muted" title="Show on mobile" aria-label="Show on mobile" />
+          <i class="pi pi-desktop justify-self-center text-muted" v-tooltip.top="'Show on desktop'" aria-label="Show on desktop" />
+          <i class="pi pi-mobile justify-self-center text-muted" v-tooltip.top="'Show on mobile'" aria-label="Show on mobile" />
         </div>
 
         <Accordion
@@ -230,7 +249,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
 import Dialog from "primevue/dialog";
 import Button from "primevue/button";
 import Checkbox from "primevue/checkbox";
@@ -238,6 +257,7 @@ import Select from "primevue/select";
 import InputNumber from "primevue/inputnumber";
 import InputChips from "primevue/inputchips";
 import Password from "primevue/password";
+import SelectButton from "primevue/selectbutton";
 import Accordion from "primevue/accordion";
 import AccordionPanel from "primevue/accordionpanel";
 import AccordionHeader from "primevue/accordionheader";
@@ -247,6 +267,8 @@ import {
   sectionsFor, DEFAULT_SETTINGS, MAX_MOVIE_NUMBER, DEFAULT_CERTIFICATION_VALUES,
   type AppSettings, type SeriesRule, type FieldSection, type FieldDef,
 } from "./fields";
+
+import { getThemeMode, setThemeMode, type ThemeMode } from "./theme";
 
 const props = defineProps<{ defs: CustomFieldDefRow[] }>();
 const emit = defineEmits<{ (e: "close"): void; (e: "saved", s: AppSettings): void }>();
@@ -319,6 +341,17 @@ const seriesNumberModel = computed<number>({
     draft.value.series_rule = { kind: "number_is", number: v };
   },
 });
+
+const themeOptions = [
+  { label: "System", value: "system" },
+  { label: "Light", value: "light" },
+  { label: "Dark", value: "dark" },
+];
+// A plain ref, not a computed proxy over localStorage: localStorage isn't
+// reactive, so a computed's getter would never re-run and the buttons wouldn't
+// track the click.
+const themeMode = ref<ThemeMode>(getThemeMode());
+watch(themeMode, setThemeMode);
 
 const expanded = ref<string[]>(["main"]);
 const saving = ref(false);

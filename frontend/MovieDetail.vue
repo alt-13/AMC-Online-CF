@@ -59,9 +59,9 @@
               @change="onFile"
             />
             <div class="flex gap-0.5 max-md:hidden">
-              <Button icon="pi pi-upload" text size="small" title="Upload poster" @click="triggerUpload" />
-              <Button icon="pi pi-link" text size="small" title="From URL" @click="fromUrl" />
-              <Button v-if="posterSrc" icon="pi pi-trash" text severity="danger" size="small" title="Remove poster" @click="removePoster" />
+              <Button icon="pi pi-upload" text size="small" v-tooltip.top="'Upload poster'" aria-label="Upload poster" @click="triggerUpload" />
+              <Button icon="pi pi-link" text size="small" v-tooltip.top="'From URL'" aria-label="From URL" @click="fromUrl" />
+              <Button v-if="posterSrc" icon="pi pi-trash" text severity="danger" size="small" v-tooltip.top="'Remove poster'" aria-label="Remove poster" @click="removePoster" />
             </div>
             <p v-if="posterMsg" class="text-[0.7rem] text-muted text-center max-md:hidden">{{ posterMsg }}</p>
           </div>
@@ -92,7 +92,7 @@
                 {{ (form.rating / 10).toFixed(1) }}
                 <span class="font-light text-[0.7rem] text-muted max-md:hidden">score</span>
               </div>
-              <div v-if="form.user_rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-[#7ec8e3]
+              <div v-if="form.user_rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-info
                           max-md:gap-0.5 max-md:px-1.5 max-md:py-0 max-md:text-[0.72rem]">
                 <i class="pi pi-user text-[0.7rem] max-md:text-[0.6rem]" />
                 {{ (form.user_rating / 10).toFixed(1) }}
@@ -113,7 +113,7 @@
                 v-show="showField('checked')"
                 class="flex items-center gap-1 text-[0.78rem] px-2 py-[0.2rem] rounded-[10px] border border-border select-none max-md:hidden"
                 :class="watched ? 'text-success border-success/40' : 'text-muted'"
-                :title="watched
+                v-tooltip.top="watched
                   ? 'Watched — set by Date Watched'
                   : 'Not watched — set a Date Watched to mark it'"
               >
@@ -121,9 +121,10 @@
                 <span>{{ watched ? "Watched" : "Unwatched" }}</span>
               </div>
               <div
-                class="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0 max-md:hidden"
+                class="w-3.5 h-3.5 rounded-full border border-border-hi shrink-0 max-md:hidden"
                 :style="{ background: colorOf(form.color_tag ?? 0) }"
-                :title="colorNameOf(form.color_tag ?? 0)"
+                v-tooltip.top="colorNameOf(form.color_tag ?? 0)"
+                :aria-label="colorNameOf(form.color_tag ?? 0)"
               />
             </div>
           </div>
@@ -144,7 +145,7 @@
           <!-- outlined, not text: these three were `.hbtn` (1px border in the
                label's colour) before the PrimeVue migration, and outlined is
                what the rest of the app uses for a secondary header action. -->
-          <Button icon="pi pi-arrow-left" outlined class="hidden max-md:inline-flex" title="Back to list" @click="$emit('back')" />
+          <Button icon="pi pi-arrow-left" outlined class="hidden max-md:inline-flex" v-tooltip.bottom="'Back to list'" aria-label="Back to list" @click="$emit('back')" />
           <!-- Icon-only on mobile: "Fetch" is the widest of the four labels and
                the bolt glyph is the same one the catalog bar uses for OMDb. -->
           <Button
@@ -152,7 +153,7 @@
             label="Fetch"
             outlined
             class="max-md:gap-0 max-md:[&_.p-button-label]:hidden"
-            title="Fetch from OMDb"
+            v-tooltip.bottom="'Fetch from OMDb'"
             @click="omdbOpen = true"
           />
           <Button
@@ -161,7 +162,7 @@
             :disabled="saving || !dirty"
             @click="save"
           />
-          <Button icon="pi pi-trash" outlined severity="danger" title="Delete film" @click="deleteOpen = true" />
+          <Button icon="pi pi-trash" outlined severity="danger" v-tooltip.bottom="'Delete film'" aria-label="Delete film" @click="deleteOpen = true" />
         </div>
       </div>
 
@@ -301,13 +302,13 @@
               >
                 <template #value="{ value }">
                   <div class="flex items-center gap-2">
-                    <span class="w-3 h-3 rounded-full border border-white/25 shrink-0" :style="{ background: colorOf(value ?? 0) }" />
+                    <span class="w-3 h-3 rounded-full border border-border-hi shrink-0" :style="{ background: colorOf(value ?? 0) }" />
                     <span>{{ colorNameOf(value ?? 0) }}</span>
                   </div>
                 </template>
                 <template #option="{ option }">
                   <div class="flex items-center gap-2">
-                    <span class="w-3 h-3 rounded-full border border-white/25 shrink-0" :style="{ background: option.color }" />
+                    <span class="w-3 h-3 rounded-full border border-border-hi shrink-0" :style="{ background: option.color }" />
                     <span>{{ option.label }}</span>
                   </div>
                 </template>
@@ -329,7 +330,7 @@
               <InputText v-model="form.borrower" class="w-full" size="small" />
             </div>
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('series_number')">
-              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal" title="On-disk catalog number. Duplicates are allowed — many catalogs use it to group a series. How it maps to the films/series count is yours to set in Settings → Series count.">Number (#)</label>
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal" v-tooltip.top="'On-disk catalog number. Duplicates are allowed — many catalogs use it to group a series. How it maps to the films/series count is yours to set in Settings → Series count.'">Number (#)</label>
               <InputText type="number" min="0" :max="MAX_MOVIE_NUMBER" class="w-full" size="small"
                 :modelValue="String(form.number)"
                 @update:modelValue="(v: string | undefined) => setNumber(v ?? '')" />
@@ -453,8 +454,8 @@
                 <Checkbox :binary="true" :modelValue="!!extra.checked"
                   @update:modelValue="(v: boolean) => extra.checked = v ? 1 : 0" @click.stop />
                 <span class="flex-1 min-w-0 text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap">{{ extra.title || `Extra ${idx + 1}` }}</span>
-                <span v-if="extra.tag" class="text-[0.7rem] bg-gold-dim text-gold px-1.5 py-[0.1rem] rounded-lg border border-[rgba(201,168,76,0.3)]">{{ extra.tag }}</span>
-                <Button icon="pi pi-trash" text severity="danger" size="small" title="Remove extra" @click.stop="removeExtra(idx)" />
+                <span v-if="extra.tag" class="text-[0.7rem] bg-gold-dim text-gold px-1.5 py-[0.1rem] rounded-lg border border-gold/30">{{ extra.tag }}</span>
+                <Button icon="pi pi-trash" text severity="danger" size="small" v-tooltip.top="'Remove extra'" aria-label="Remove extra" @click.stop="removeExtra(idx)" />
                 <i class="pi text-muted text-[0.7rem]" :class="openSet.has(idx) ? 'pi-chevron-down' : 'pi-chevron-right'" />
               </div>
               <div v-show="openSet.has(idx)" class="px-2.5 py-3 bg-card">
@@ -541,7 +542,8 @@
         />
         <button
           class="absolute top-4 right-4 inline-flex items-center justify-center w-10 h-10 bg-black/50 text-white border border-white/25 rounded-full text-lg cursor-pointer transition-colors hover:bg-black/80 hover:border-gold hover:text-gold"
-          title="Close"
+          v-tooltip.left="'Close'"
+          aria-label="Close"
           @click="lightboxOpen = false"
         >
           <i class="pi pi-times" />

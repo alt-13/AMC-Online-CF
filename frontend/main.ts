@@ -6,10 +6,12 @@
 
 import { createApp } from "vue";
 import PrimeVue from "primevue/config";
+import Tooltip from "primevue/tooltip";
 import { definePreset } from "@primevue/themes";
 import Aura from "@primevue/themes/aura";
 import "primeicons/primeicons.css";
 import "./theme.css";
+import { applyTheme, watchSystemTheme } from "./theme";
 import App from "./App.vue";
 import { pruneCachedAmc } from "./amccache";
 
@@ -24,6 +26,42 @@ const CinemaPreset = definePreset(Aura, {
       800: "{amber.800}", 900: "{amber.900}", 950: "{amber.950}",
     },
     colorScheme: {
+      // Light mode. Same reason the dark block exists: Aura's stock ramp is a
+      // COOL zinc, and this fork's page is warm paper (`--c-*` in theme.css),
+      // so PrimeVue panels/inputs would read blue-grey against it. Ramp +
+      // pinned foregrounds only — Aura's own light mappings are otherwise
+      // mostly fine (a light ramp is what they assume), so only the component
+      // re-maps below that fight a *mapping* rather than the ramp
+      // (`togglebutton`, `tooltip`, `button.outlined`) carry a light twin.
+      light: {
+        surface: {
+          0: "#fffefa",
+          50: "#f7f3ea", 100: "#f0ebe0", 200: "#e6dfd1", 300: "#ddd5c5",
+          400: "#c3b9a4", 500: "#a89d86", 600: "#8a8070", 700: "#6d6355",
+          800: "#4a4238", 900: "#2b2620", 950: "#1a1712",
+        },
+        // amber.500 under white text is ~2:1 — unusable as a solid button on
+        // paper. Shift primary down the ramp until it carries white text.
+        primary: {
+          color: "{amber.700}", contrastColor: "#fffefa",
+          hoverColor: "{amber.800}", activeColor: "{amber.900}",
+        },
+        content: { background: "#fffefa", borderColor: "#ddd5c5", color: "#241f1a" },
+        text: {
+          color: "#241f1a", hoverColor: "#100d0a",
+          mutedColor: "#6d6355", hoverMutedColor: "#4a4238",
+        },
+        formField: {
+          background: "#fffefa", borderColor: "#ddd5c5", color: "#241f1a",
+          hoverBorderColor: "#c3b9a4", focusBorderColor: "#8a6d1f", placeholderColor: "#6d6355",
+          disabledBackground: "#f0ebe0", disabledColor: "#8a8070", iconColor: "#6d6355",
+        },
+        overlay: {
+          modal: { background: "#fffefa", borderColor: "#ddd5c5" },
+          popover: { background: "#fffefa", borderColor: "#ddd5c5" },
+          select: { background: "#fffefa", borderColor: "#ddd5c5" },
+        },
+      },
       dark: {
         surface: {
           0: "#e8e0d5",
@@ -87,6 +125,46 @@ const CinemaPreset = definePreset(Aura, {
         },
       },
     },
+    // Fourth instance of the ramp problem (Settings → Appearance). A
+    // SelectButton is a row of ToggleButtons, and Aura's dark tokens paint the
+    // UNSELECTED label {surface.400} on a {surface.950} track — light-grey on
+    // near-white with the stock zinc ramp, but #151526 on #080810 here, i.e.
+    // invisible. Only the checked item ({surface.0}) survived. Pin the track,
+    // the pill and all three label states to the palette instead. Light needs
+    // it too, one notch milder: {surface.500} on {surface.100} is ~2.2:1.
+    togglebutton: {
+      colorScheme: {
+        light: {
+          root: {
+            background: "#e6dfd1", checkedBackground: "#e6dfd1", hoverBackground: "#e6dfd1",
+            borderColor: "#e6dfd1", checkedBorderColor: "#e6dfd1",
+            color: "#6d6355", hoverColor: "#241f1a", checkedColor: "#241f1a",
+          },
+          content: { checkedBackground: "#fffefa" },
+          icon: { color: "#6d6355", hoverColor: "#241f1a", checkedColor: "#241f1a" },
+        },
+        dark: {
+          root: {
+            background: "#11111e", checkedBackground: "#11111e", hoverBackground: "#11111e",
+            borderColor: "#11111e", checkedBorderColor: "#11111e",
+            color: "#a09bb4", hoverColor: "#e8e0d5", checkedColor: "#f5efe6",
+          },
+          content: { checkedBackground: "#2a2a48" },
+          icon: { color: "#a09bb4", hoverColor: "#e8e0d5", checkedColor: "#f5efe6" },
+        },
+      },
+    },
+    // Every hint in the app is `v-tooltip`, not a native `title=`: a native
+    // tooltip is painted by the browser from the OS theme, so it ignored the
+    // light scheme entirely and stayed dark-on-dark. Aura's own tooltip is
+    // {surface.700} — fine light, but #0e0e18 on this dark ramp, i.e. flush
+    // with the page — so both schemes get a step that actually separates.
+    tooltip: {
+      colorScheme: {
+        light: { root: { background: "#4a4238", color: "#fffefa" } },
+        dark: { root: { background: "#2a2a48", color: "#f5efe6" } },
+      },
+    },
     inputchips: {
       colorScheme: {
         // `focusColor`, not `color`: the stylesheet reads
@@ -102,6 +180,24 @@ const CinemaPreset = definePreset(Aura, {
     // invisible. Re-map secondary onto the border/elevated steps.
     button: {
       colorScheme: {
+        // Only `outlined` needs a light twin — same rule as dark ("gold icon →
+        // gold border"). Aura light breaks it the same way, one ramp step
+        // lighter than the label ({x.200} border under an {x.500} label), which
+        // on paper is a near-invisible pastel hairline — the Delete film button
+        // read as unbordered next to Fetch. Border = label, every severity.
+        light: {
+          outlined: {
+            primary: { borderColor: "{primary.color}" },
+            secondary: { borderColor: "#6d6355", color: "#4a4238" },
+            success: { borderColor: "{green.500}" },
+            info: { borderColor: "{sky.500}" },
+            warn: { borderColor: "{orange.500}" },
+            help: { borderColor: "{purple.500}" },
+            danger: { borderColor: "{red.500}" },
+            contrast: { borderColor: "{surface.950}" },
+            plain: { borderColor: "{surface.950}" },
+          },
+        },
         dark: {
           root: {
             secondary: {
@@ -141,9 +237,11 @@ const CinemaPreset = definePreset(Aura, {
   },
 });
 
-document.documentElement.classList.add("dark");
+applyTheme();
+watchSystemTheme();
 
 createApp(App)
+  .directive("tooltip", Tooltip)
   .use(PrimeVue, {
     theme: {
       preset: CinemaPreset,

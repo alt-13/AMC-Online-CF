@@ -17,8 +17,9 @@ shared reference only:
   PrimeVue, but themed independently — so the two are **no longer kept
   source-comparable by hand**; only the rendered look is kept in the same cinema
   spirit. They share no code. Styling lives inline in the SFCs; the palette is the
-  Tailwind `@theme` block in `frontend/theme.css` and the PrimeVue `CinemaPreset`
-  (an Aura preset, adapted from the monorepo) is defined in `frontend/main.ts`. The
+  Tailwind `@theme inline` block in `frontend/theme.css` and the PrimeVue
+  `CinemaPreset` (an Aura preset, adapted from the monorepo) is defined in
+  `frontend/main.ts`. Both carry a **light and a dark scheme** — see rule 18. The
   only remaining `<style>` blocks are `MovieDetail.vue`'s lightbox `@keyframes` and
   `MovieListView.vue`'s workspace grid + a small DataTable `:deep()`.
 - The **binary-format reference material**: the Delphi sources
@@ -97,8 +98,9 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── amccache.ts     ← Cache Storage for downloaded .amc blobs (pruned on boot)
 │   ├── nav.ts          ← history-stack helper so hardware Back closes a view, not the app
 │   ├── wakelock.ts     ← hold a screen wake lock across long imports/exports
-│   ├── theme.css       ← Tailwind `@theme` palette + the var(--c-*) back-compat aliases
-│   ├── main.ts         ← app bootstrap + the PrimeVue `CinemaPreset` (Aura preset, dark-only)
+│   ├── theme.css       ← `@theme inline` → the var(--c-*) palette, defined twice (:root = light, .dark = dark)
+│   ├── theme.ts        ← light/dark mode: the `.dark` class on <html>, localStorage, "system" follows the OS
+│   ├── main.ts         ← app bootstrap + apply the theme + the PrimeVue `CinemaPreset` (Aura, light + dark)
 │   ├── CloudSync.vue       ← provider picker + connect + list + import; auto-reconnect
 │   ├── CatalogImport.vue   ← drag/drop upload with poster+row progress
 │   ├── CatalogsView.vue    ← top-level screen: import, list catalogs, export/→Mega, drill into a library
@@ -107,7 +109,7 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── ConflictDialog.vue  ← both sides moved: pick push/pull, with an opt-in remote compare
 │   ├── OmdbDialog.vue      ← search IMDb, pick a title, fetch OMDb → patch + poster URL
 │   ├── SERIES-RULES.md     ← why "series" is user-configured, and the planned rule kinds
-│   └── SettingsDialog.vue  ← per-user field visibility (desktop/mobile) + search field + duplicate-warning field + series-count rule + OMDb key → user_settings
+│   └── SettingsDialog.vue  ← light/dark mode (device-local) + per-user field visibility (desktop/mobile) + search field + duplicate-warning field + series-count rule + OMDb key → user_settings
 ├── scripts/            ← predev hooks: ensure-dist (assets placeholder) + seed-local-db (auto-seed emulated D1)
 ├── setup.sh            ← one-shot bootstrap: provision D1+R2, inject db id, apply schema, set secrets via stdin, deploy
 ├── wrangler.jsonc      ← Worker config: D1 (DB), R2 (R2), assets (ASSETS) bindings
@@ -302,6 +304,27 @@ Corollary: keep it short. A rule that grows past ~15 lines moves into its own
 next to the source it describes when one directory owns it — leaving a two-line
 pointer behind. Delete what stopped being true instead of appending
 next to it.
+
+
+**18. Light/dark mode has ONE switch: the `.dark` class on `<html>`.**
+It drives the palette *and* PrimeVue (`darkModeSelector: ".dark"`), so both
+schemes must be defined in both places:
+
+- `frontend/theme.css` — `@theme inline` maps every `--color-*` onto a
+  `var(--c-*)`, so a utility (`bg-card`) emits the variable, not a resolved
+  hex; `:root` holds the light values and `.dark` the dark ones. `inline` is
+  what makes the cascade able to re-point a utility — drop it and both schemes
+  render the same. Never hardcode a scheme's hex in an SFC; add a `--c-*`.
+- `frontend/main.ts` — `CinemaPreset` needs a `colorScheme.light` too: Aura's
+  stock ramp is cool zinc and this fork's light page is warm paper.
+- `frontend/theme.ts` owns the class. The mode is **device-local**
+  (`localStorage`, not `user_settings`) — one account, two screens, two modes —
+  and `index.html` re-applies it inline before first paint to avoid a flash.
+- Hints are `v-tooltip` (directive registered in `main.ts`), **never a native
+  `title=`**: the browser paints a native tooltip from the OS theme, so it can't
+  follow the page scheme. `title=` is still the right thing on `ConfirmDialog`,
+  where it's a prop, not an attribute. An icon-only control keeps an
+  `aria-label` — the tooltip is not an accessible name.
 
 ---
 

@@ -11,6 +11,16 @@
       href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     />
+    <!-- Apply the saved mode BEFORE first paint — main.ts is a module (deferred),
+         so waiting for it would flash the light palette on every dark load.
+         Mirrors frontend/theme.ts, which re-applies it idempotently. -->
+    <script>
+      try {
+        var t = localStorage.getItem("amc.theme");
+        if (t === "dark" || ((!t || t === "system") && matchMedia("(prefers-color-scheme: dark)").matches))
+          document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="app"></div>

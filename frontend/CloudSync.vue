@@ -81,7 +81,7 @@
 
       <ul v-if="files.length" class="list-none flex flex-col gap-2 mt-1 p-0 m-0">
         <li v-for="f in files" :key="f.name" class="flex items-center gap-2.5">
-          <span class="flex-1 min-w-0 truncate text-text text-sm" :title="f.name">{{ f.name }}</span>
+          <span class="flex-1 min-w-0 truncate text-text text-sm" v-tooltip.top="f.name">{{ f.name }}</span>
           <span class="text-[0.72rem] text-muted flex-shrink-0">{{ human(f.size) }}</span>
           <Button
             size="small"

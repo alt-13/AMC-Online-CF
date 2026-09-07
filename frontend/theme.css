@@ -1,48 +1,81 @@
 @import "tailwindcss";
 @plugin "tailwindcss-primeui";
 
-/* Palette → Tailwind utilities (bg-gold, text-muted, border-border, font-display…). */
+/* Class-based dark mode (Tailwind v4): the `.dark` class on <html> is the ONE
+   switch — it drives both the palette below and PrimeVue's `darkModeSelector`
+   (see main.ts). `frontend/theme.ts` sets it. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Palette → Tailwind utilities (bg-gold, text-muted, border-border…).
+   `inline` matters: it makes every utility emit `var(--c-*)` instead of the
+   resolved value, so the light/dark blocks below can re-point the same utility
+   through the cascade. The raw `--c-*` layer is also what the few remaining
+   <style> blocks (MovieListView's DataTable :deep) already consume. */
+@theme inline {
+  --color-bg:        var(--c-bg);
+  --color-surface:   var(--c-surface);
+  --color-card:      var(--c-card);
+  --color-elevated:  var(--c-elevated);
+  --color-border:    var(--c-border);
+  --color-border-hi: var(--c-border-hi);
+  --color-gold:      var(--c-gold);
+  --color-gold-dim:  var(--c-gold-dim);
+  --color-text:      var(--c-text);
+  --color-muted:     var(--c-muted);
+  --color-danger:    var(--c-danger);
+  --color-success:   var(--c-success);
+  --color-info:      var(--c-info);
+}
+
 @theme {
-  --color-bg:        #0a0a14;
-  --color-surface:   #11111e;
-  --color-card:      #181828;
-  --color-elevated:  #1f1f38;
-  --color-border:    #2a2a48;
-  --color-border-hi: #3a3a60;
-  --color-gold:      #c9a84c;
-  --color-gold-dim:  rgba(201, 168, 76, 0.18);
-  --color-text:      #e8e0d5;
-  --color-muted:     #7e7a90;
-  --color-danger:    #e05252;
-  --color-success:   #4caf7a;
   --font-display: 'Playfair Display', Georgia, serif;
   --font-body:    'DM Sans', system-ui, sans-serif;
 }
 
-/* Back-compat aliases: kept <style> blocks (lightbox, DataTable :deep) still use
-   var(--c-*). These map onto the @theme values so nothing breaks during migration. */
+/* Light — warm paper + a darkened gold, same cinema spirit as dark. The golds,
+   danger/success/info are DIFFERENT hexes per scheme on purpose: the dark
+   values are picked for contrast on near-black and are unreadable on paper. */
 :root {
-  --c-bg: var(--color-bg);
-  --c-surface: var(--color-surface);
-  --c-card: var(--color-card);
-  --c-elevated: var(--color-elevated);
-  --c-border: var(--color-border);
-  --c-border-hi: var(--color-border-hi);
-  --c-gold: var(--color-gold);
-  --c-gold-dim: var(--color-gold-dim);
-  --c-text: var(--color-text);
-  --c-muted: var(--color-muted);
-  --c-danger: var(--color-danger);
-  --c-success: var(--color-success);
+  --c-bg:        #f2eee6;
+  --c-surface:   #e9e3d7;
+  --c-card:      #fffefa;
+  --c-elevated:  #f0ebe0;
+  --c-border:    #ddd5c5;
+  --c-border-hi: #c3b9a4;
+  --c-gold:      #8a6d1f;
+  --c-gold-dim:  rgba(138, 109, 31, 0.14);
+  --c-text:      #241f1a;
+  --c-muted:     #6d6355;
+  --c-danger:    #b3261e;
+  --c-success:   #2e7d52;
+  --c-info:      #1f6f8b;
   --radius: 8px;
+  color-scheme: light;
+}
+
+/* Dark (the original navy/gold palette). */
+.dark {
+  --c-bg:        #0a0a14;
+  --c-surface:   #11111e;
+  --c-card:      #181828;
+  --c-elevated:  #1f1f38;
+  --c-border:    #2a2a48;
+  --c-border-hi: #3a3a60;
+  --c-gold:      #c9a84c;
+  --c-gold-dim:  rgba(201, 168, 76, 0.18);
+  --c-text:      #e8e0d5;
+  --c-muted:     #7e7a90;
+  --c-danger:    #e05252;
+  --c-success:   #4caf7a;
+  --c-info:      #7ec8e3;
   color-scheme: dark;
 }
 
 html, body {
   margin: 0;
   min-height: 100dvh;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--c-bg);
+  color: var(--c-text);
   font-family: var(--font-body);
 }
-#app { min-height: 100dvh; background: var(--color-bg); }
+#app { min-height: 100dvh; background: var(--c-bg); }

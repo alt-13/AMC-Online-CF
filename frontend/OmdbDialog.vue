@@ -84,12 +84,12 @@
         OMDb API key not configured.
         <a class="text-gold" href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">Get one</a>,
         then <Button label="add it in Settings →" link class="p-0 align-baseline" @click="emit('open-settings')" />
-        <i class="pi pi-info-circle text-muted cursor-help ml-1" :title="KEY_INFO" />
+        <i class="pi pi-info-circle text-muted cursor-help ml-1" v-tooltip.top="KEY_INFO" :aria-label="KEY_INFO" />
       </template>
       <template v-else>
         Metadata from IMDb / OMDb. Manage your key in
         <Button label="Settings" link class="p-0 align-baseline" @click="emit('open-settings')" />.
-        <i class="pi pi-info-circle text-muted cursor-help ml-1" :title="KEY_INFO" />
+        <i class="pi pi-info-circle text-muted cursor-help ml-1" v-tooltip.top="KEY_INFO" :aria-label="KEY_INFO" />
       </template>
     </p>
 

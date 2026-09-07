@@ -23,7 +23,7 @@
         <!-- Deliberately `text`, not `outlined`: the catalog bar is chrome, and
              three bordered boxes flanking the title read heavier than the bar
              needs. (The detail header's actions ARE outlined.) -->
-        <Button icon="pi pi-arrow-left" text size="small" title="Back to libraries" @click="$emit('back')" />
+        <Button icon="pi pi-arrow-left" text size="small" v-tooltip.bottom="'Back to libraries'" aria-label="Back to libraries" @click="$emit('back')" />
         <span class="min-w-0 font-display font-bold text-gold text-[1.05rem] tracking-wide truncate">
           {{ catalog.name || "(untitled)" }}
         </span>
@@ -46,11 +46,12 @@
             text
             size="small"
             :disabled="syncButton.disabled"
-            :title="syncButton.title"
+            v-tooltip.bottom="syncButton.title"
+            :aria-label="syncButton.title"
             @click="onSyncClick()"
           />
-          <Button icon="pi pi-cog" text size="small" title="Field settings" @click="settingsOpen = true" />
-          <Button icon="pi pi-bolt" text size="small" title="Fetch from OMDb → new film" @click="omdbOpen = true" />
+          <Button icon="pi pi-cog" text size="small" v-tooltip.bottom="'Field settings'" aria-label="Field settings" @click="settingsOpen = true" />
+          <Button icon="pi pi-bolt" text size="small" v-tooltip.bottom="'Fetch from OMDb → new film'" aria-label="Fetch from OMDb → new film" @click="omdbOpen = true" />
         </div>
       </div>
 
@@ -70,14 +71,15 @@
             <button
               class="inline-flex items-center justify-center bg-transparent border-none cursor-pointer text-xs px-1 leading-none transition-colors"
               :class="searchField ? 'text-gold' : 'text-muted hover:text-text'"
-              :title="searchField ? `Searching: ${activeScopeLabel}` : 'Search scope'"
+              v-tooltip.bottom="searchField ? `Searching: ${activeScopeLabel}` : 'Search scope'"
+              aria-label="Search scope"
               @click.stop="scopeOpen = !scopeOpen"
             >
               <i class="pi pi-filter" />
             </button>
             <div
               v-if="scopeOpen"
-              class="absolute top-[calc(100%+6px)] right-0 z-50 min-w-[190px] max-h-[340px] overflow-y-auto p-1 bg-elevated border border-border rounded-lg shadow-[0_10px_28px_rgba(0,0,0,0.4)]"
+              class="absolute top-[calc(100%+6px)] right-0 z-50 min-w-[190px] max-h-[340px] overflow-y-auto p-1 bg-elevated border border-border rounded-lg shadow-lg"
             >
               <template v-for="g in scopeGroups" :key="g.label || 'all'">
                 <div v-if="g.label" class="px-2 pt-1.5 pb-0.5 text-[0.66rem] font-semibold uppercase tracking-wider text-muted">
@@ -101,7 +103,7 @@
             <i class="pi pi-times" />
           </button>
         </div>
-        <Button icon="pi pi-plus" outlined :disabled="creating" title="New film" @click="onCreate()" />
+        <Button icon="pi pi-plus" outlined :disabled="creating" v-tooltip.bottom="'New film'" aria-label="New film" @click="onCreate()" />
       </div>
 
       <!-- Table -->
@@ -133,7 +135,8 @@
               <span
                 class="block w-1 h-8 rounded-sm"
                 :style="{ background: colorOf(data.color_tag) }"
-                :title="colorNameOf(data.color_tag)"
+                v-tooltip.right="colorNameOf(data.color_tag)"
+                :aria-label="colorNameOf(data.color_tag)"
               />
             </template>
           </Column>
@@ -170,7 +173,7 @@
             <template #body="{ data }"><span class="text-sm font-semibold text-gold tabular-nums text-right block">{{ data.rating > 0 ? (data.rating / 10).toFixed(1) : "" }}</span></template>
           </Column>
           <Column headerStyle="width:1.5rem" bodyStyle="width:1.5rem">
-            <template #body="{ data }"><i v-if="data.checked" class="pi pi-eye text-success text-sm" :title="settings.checked_separate ? 'Checked' : 'Watched'" /></template>
+            <template #body="{ data }"><i v-if="data.checked" class="pi pi-eye text-success text-sm" v-tooltip.left="settings.checked_separate ? 'Checked' : 'Watched'" :aria-label="settings.checked_separate ? 'Checked' : 'Watched'" /></template>
           </Column>
         </DataTable>
       </div>
