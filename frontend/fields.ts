@@ -54,6 +54,7 @@ export const STATIC_SECTIONS: FieldSection[] = [
       { key: "checked", label: "Watched / Checked" },
       { key: "color_tag", label: "Color Tag" },
       { key: "borrower", label: "Borrower" },
+      { key: "series_number", label: "Number (#)" },
     ],
   },
   {
@@ -74,6 +75,11 @@ export const STATIC_SECTIONS: FieldSection[] = [
       { key: "languages", label: "Languages" },
       { key: "subtitles", label: "Subtitles" },
     ],
+  },
+  {
+    key: "extras",
+    label: "Extras",
+    fields: [{ key: "extras", label: "Extras section" }],
   },
 ];
 
