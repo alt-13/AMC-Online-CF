@@ -16,7 +16,9 @@
     :breakpoints="{ '760px': '95vw' }"
     @update:visible="(v: boolean) => { if (!v) close(); }"
   >
-    <div class="max-h-[60vh] overflow-y-auto">
+    <!-- scrollbar-gutter keeps the scrollbar's width reserved, so the content
+         doesn't reflow the moment a panel expands past 60vh. -->
+    <div class="max-h-[60vh] overflow-y-auto [scrollbar-gutter:stable]">
       <section>
         <span class="text-sm font-semibold text-gold">Field visibility</span>
 
