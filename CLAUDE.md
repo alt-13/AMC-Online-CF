@@ -86,13 +86,17 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── amcworker.ts    ← spawn/transfer/terminate one worker per job; runs inline where Worker is absent
 │   ├── pool.ts         ← runPool: bounded-concurrency task pool
 │   ├── sweep.ts        ← sweepAll: client loop that drives the Worker's bounded R2 sweeps
-│   ├── mega.ts         ← megajs login + fingerprinted up/download + folder-path helpers
+│   ├── cloudpath.ts    ← the provider-neutral `.amc` path grammar (splitAmcPath/isAmcName)
+│   ├── mega.ts         ← megajs login + fingerprinted up/download + folder resolution
 │   └── mega-fingerprint.ts ← client-side Mega fingerprint (MEGAsync rejects files without it)
 ├── frontend/
 │   ├── api.ts          ← auth (status/register/login/refresh/logout) + session + metadata client (incl. create/setPictureFromUrl) + omdb + settings + cloud config + re-exports
 │   ├── fields.ts       ← shared field metadata: sections/labels, Delphi-date + colour-tag + custom-value helpers, AppSettings + SeriesRule/countSeries (no store)
-│   ├── cloud.ts        ← bridge: cloud provider ↔ import/export; per-user cloud config + remember-me
-│   ├── cloudref.ts     ← catalog ↔ remote-file reference bookkeeping (source_ref parsing)
+│   ├── connector.ts    ← the CloudConnector seam + provider registry (add a backend = 1 file + 1 line)
+│   ├── connector-mega.ts  ← Mega.nz behind the seam (megajs, folder handles, `c` fingerprint)
+│   ├── connector-drive.ts ← Google Drive behind the seam (REST + GIS token client, resumable upload)
+│   ├── cloud.ts        ← bridge: connector ↔ import/export; per-user cloud config + remember-me. PROVIDER-FREE
+│   ├── cloudref.ts     ← catalog ↔ remote-file reference bookkeeping (source_ref/locator parsing)
 │   ├── syncstatus.ts   ← deriveStatus: the ONE pure sync-status derivation (see SYNC.md)
 │   ├── syncdiff.ts     ← read-only local-vs-remote diff summary for the conflict dialog
 │   ├── amccache.ts     ← Cache Storage for downloaded .amc blobs (pruned on boot)
@@ -379,7 +383,7 @@ npm run build          # → ./dist (served via the `assets` binding)
 npx wrangler dev
 ```
 
-Unit tests (parser round-trips, auth crypto, omdb parsers, mega paths):
+Unit tests (parser round-trips, auth crypto, omdb parsers, mega + drive paths):
 
 ```sh
 npm test               # vitest run

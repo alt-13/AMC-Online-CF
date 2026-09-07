@@ -30,19 +30,36 @@
     <!-- reconnecting from a stored credential -->
     <p v-if="!session.connected && reconnecting" class="basis-full m-0 text-[0.72rem] text-muted">Reconnecting…</p>
 
-    <!-- connect -->
+    <!-- connect: the form the active connector asks for (connector.ts) -->
     <form v-else-if="!session.connected" class="flex flex-wrap gap-2 items-center" @submit.prevent="onConnect">
-      <InputText v-model="email" type="email" placeholder="Email" autocomplete="username" required class="flex-1 min-w-48" />
-      <Password
-        v-model="password"
-        placeholder="Password"
-        required
-        :feedback="false"
-        toggleMask
-        inputClass="w-full"
-        :inputProps="{ autocomplete: 'current-password' }"
-        class="flex-1 min-w-48"
-      />
+      <template v-if="connector?.auth === 'password'">
+        <InputText v-model="email" type="email" placeholder="Email" autocomplete="username" required class="flex-1 min-w-48" />
+        <Password
+          v-model="password"
+          placeholder="Password"
+          required
+          :feedback="false"
+          toggleMask
+          inputClass="w-full"
+          :inputProps="{ autocomplete: 'current-password' }"
+          class="flex-1 min-w-48"
+        />
+      </template>
+      <!-- OAuth: the provider's own popup does the signing in, so all we can be
+           asked for is setup values (Drive's public OAuth client ID). -->
+      <template v-else-if="connector?.auth === 'oauth'">
+        <label v-for="f in connector.oauthFields ?? []" :key="f.key" class="basis-full flex flex-col gap-0.5">
+          <span class="text-[0.7rem] uppercase tracking-wide text-muted">{{ f.label }}</span>
+          <InputText
+            :modelValue="oauthValues[f.key] ?? ''"
+            spellcheck="false"
+            autocapitalize="off"
+            required
+            @update:modelValue="oauthValues[f.key] = ($event ?? '') as string"
+          />
+          <span v-if="f.hint" class="text-[0.7rem] text-muted">{{ withOrigin(f.hint) }}</span>
+        </label>
+      </template>
       <Button :label="busy ? 'Connecting…' : 'Connect'" :disabled="busy" type="submit" />
       <label class="basis-full flex items-center gap-2 text-xs text-muted">
         <Checkbox v-model="remember" :binary="true" />
@@ -50,7 +67,7 @@
       </label>
       <p class="basis-full m-0 text-[0.72rem] text-muted">
         {{ remember
-          ? "Saved encrypted to your own server so you don't log in again — decrypted only in this browser to connect."
+          ? "Saved encrypted to your own server so you don't set this up again — decrypted only in this browser to connect."
           : "Stays in this browser tab only — never saved, never sent to the server." }}
       </p>
     </form>
@@ -130,7 +147,7 @@ import {
   listAmc,
   pull,
 } from "./cloud";
-import { providerList, type CloudAmcFile } from "./connector";
+import { connectorFor, providerList, type CloudAmcFile } from "./connector";
 import { withWakeLock } from "./wakelock";
 import type { ImportPhase } from "../browser/import";
 
@@ -150,6 +167,22 @@ const files = ref<CloudAmcFile[]>([]);
 const importing = ref<string | null>(null);
 const path = ref("");
 const deep = ref(true);
+/** Values for the active connector's oauthFields, keyed by field key. */
+const oauthValues = ref<Record<string, string>>({});
+
+// null only if a stored row names a provider this build has no connector for.
+const connector = computed(() => {
+  try {
+    return connectorFor(settings.active);
+  } catch {
+    return null;
+  }
+});
+
+/** Connector hints spell the deploy's own origin as {origin}. */
+function withOrigin(hint: string): string {
+  return hint.replace("{origin}", location.origin);
+}
 
 const active = computed(() => settings.providers[settings.active] ?? { path: "", hasCredential: false });
 
@@ -197,6 +230,7 @@ onMounted(async () => {
 async function onSwitch(provider: string) {
   error.value = "";
   files.value = [];
+  oauthValues.value = {};
   reconnecting.value = true;
   try {
     await switchProvider(provider);
@@ -214,7 +248,11 @@ async function onConnect() {
   busy.value = true;
   error.value = "";
   try {
-    await connect(settings.active, { email: email.value, password: password.value }, remember.value);
+    const creds =
+      connector.value?.auth === "oauth"
+        ? { ...oauthValues.value }
+        : { email: email.value, password: password.value };
+    await connect(settings.active, creds, remember.value);
     password.value = "";
     path.value = active.value.path;
     refresh();

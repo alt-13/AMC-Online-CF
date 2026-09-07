@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Storage, File as MegaFile } from "megajs";
+import { splitAmcPath } from "./cloudpath";
 import {
-  splitAmcPath,
   folderAt,
   listAmcFiles,
   resolveAmcFile,

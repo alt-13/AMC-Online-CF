@@ -171,6 +171,7 @@ const MovieListView = defineAsyncComponent({
   errorComponent: WorkspaceLoadFailed,
 });
 import { cf, downloadAmcFile, session, type CatalogRow, type MovieRow } from "./api";
+import { providerLabel } from "./connector";
 import { cloudSession, syncCatalogToOrigin, pushAdoptingOrigin, reimportFromOrigin, switchProvider, CloudLoginRequiredError, cloudSettings, checkRemoteStates, transfers, anyTransferActive } from "./cloud";
 import { deriveStatus, formatTransfer } from "./syncstatus";
 import { pushView } from "./nav";
@@ -331,7 +332,7 @@ async function onSync(c: CatalogRow) {
   } catch (e) {
     if (e instanceof CloudLoginRequiredError) {
       await switchProvider(e.provider).catch(() => {});
-      error.value = `Connect ${e.provider} in the Cloud sync panel above, then press Sync again.`;
+      error.value = `Connect ${providerLabel(e.provider)} in the Cloud sync panel above, then press Sync again.`;
     } else {
       error.value = e instanceof Error ? e.message : String(e);
     }
@@ -369,7 +370,7 @@ async function onExport(c: CatalogRow) {
   const provider = cloudSession.provider;
   const suggested = cloudSettings.providers[provider]?.path || `/${(c.name || "catalog")}.amc`;
   const destAsk = await ask({
-    title: `Upload path on ${provider}`,
+    title: `Upload path on ${providerLabel(provider)}`,
     input: true,
     inputValue: suggested,
     inputPlaceholder: "/path/to/library.amc",
@@ -391,7 +392,7 @@ async function onExport(c: CatalogRow) {
         await cf.setSourceRef(c.id, ref); // one retry for a transient blip
       } catch {
         error.value =
-          `Uploaded to ${provider}, but couldn't save the origin. Re-export to the SAME path to avoid a duplicate.`;
+          `Uploaded to ${providerLabel(provider)}, but couldn't save the origin. Re-export to the SAME path to avoid a duplicate.`;
       }
     }
     await refresh(); // re-list so the row now shows Sync ↑

@@ -4,11 +4,11 @@
 // folder handles, and the `c` fingerprint attribute. cloud.ts sees none of it.
 
 import { Storage, File as MegaFile } from "megajs";
+import { isAmcName, splitAmcPath } from "../browser/cloudpath";
 import {
   loginToMega,
   uploadToMega,
   downloadFromMega,
-  splitAmcPath,
   ensureFolderAt,
   folderByHandle,
   listAmcFiles,
@@ -95,7 +95,9 @@ export const megaConnector: CloudConnector = {
     );
   },
 
-  async download(file, onProgress) {
+  // A megajs node carries its own decryption keys, so the session is unused
+  // here — the seam passes it because a REST provider needs its bearer token.
+  async download(_session, file, onProgress) {
     const { bytes } = await downloadFromMega(asNode(file), onProgress);
     return bytes;
   },
@@ -113,7 +115,7 @@ export const megaConnector: CloudConnector = {
     const { segments, filename } = splitAmcPath(path);
     const name =
       filename ??
-      (fallbackName.toLowerCase().endsWith(".amc") ? fallbackName : `${fallbackName}.amc`);
+      (isAmcName(fallbackName) ? fallbackName : `${fallbackName}.amc`);
     const folder = segments.length
       ? await ensureFolderAt(storage, segments)
       : (storage.root as unknown as MegaFile);

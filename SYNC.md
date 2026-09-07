@@ -4,14 +4,24 @@ How a catalog in D1 is kept in step with the `.amc` file it came from in the
 cloud. Read [`CF-PORT.md`](CF-PORT.md) first for the data flow this sits on.
 
 Cloud transfers run **only in the browser** (megajs crypto can't live in a
-Worker, and the Worker never holds a whole `.amc`). The Worker only stores the
-bookkeeping the browser reports.
+Worker, the Worker never holds a whole `.amc`, and Drive's REST API sends
+permissive CORS so no proxy is needed). The Worker only stores the bookkeeping
+the browser reports.
+
+Every provider sits behind **one interface**, `CloudConnector` in
+`frontend/connector.ts` (`connector-mega.ts`, `connector-drive.ts`).
+`frontend/cloud.ts` owns the workflow and is provider-free: sessions, file nodes
+and fingerprints are opaque values it hands straight back to the connector.
+Adding a backend is one `connector-*.ts` plus one line in `CONNECTORS`.
 
 ## The reference: `catalogs.source_ref`
 
-`"<provider>:<provider-specific locator>"`; for Mega the locator is
-`"<folderHandle>:<filename>"`. Split on the **first** colon only — locators and
-filenames keep colons of their own. Pure helpers in `frontend/cloudref.ts`.
+`"<provider>:<provider-specific locator>"`. Both connectors use
+`"<folder handle>:<filename>"` (Mega node handle / Drive folder id) — resolving
+by NAME inside a stable folder is what survives the delete-and-recreate that
+overwrites and users do to a file, so the file's own id is never stored. Split on
+the **first** colon only — locators and filenames keep colons of their own. Pure
+helpers in `frontend/cloudref.ts`.
 A direct-upload catalog has no `source_ref` (status `local-only`) until
 `POST /api/catalog/:id/source-ref` adopts one on its first push.
 
@@ -59,10 +69,24 @@ counts.
 
 ## Fingerprints and the transfer itself
 
-`browser/mega-fingerprint.ts` computes Mega's fingerprint client-side and
+A fingerprint is **opaque**, and only the connector's `sameContent(a, b)`
+compares two. Mega's packs a content CRC next to an mtime, so a byte comparison
+would call a mtime-only touch a change; Drive's is a plain `md5Checksum`. An
+empty fingerprint is never a match — the safe direction. A push RETURNS the
+resulting fingerprint, because only the connector knows what the provider
+stored.
+
+Mega: `browser/mega-fingerprint.ts` computes the fingerprint client-side and
 `browser/mega.ts` injects it as `attributes.c` — MEGAsync rejects files without
-it. Comparison is on **content, ignoring mtime**. Mega chunk offsets must stay on
-MEGA chunk boundaries (no `initialChunkSize` override).
+it. Chunk offsets must stay on MEGA chunk boundaries (no `initialChunkSize`
+override).
+
+Drive: a chunked **resumable** upload (8 MiB, a 256 KiB multiple as Google
+requires), because `fetch` cannot report progress on a single request body and a
+silent multi-hundred-megabyte upload is exactly what the UI must not do. A 308
+reply carries the range Drive actually committed, which may be less than was
+sent, so the next offset comes from that header. A push overwrites the existing
+file **by id**, so its Drive id, share links and comments survive.
 
 Downloaded `.amc` blobs are cached in Cache Storage (`frontend/amccache.ts`,
 pruned on boot); `frontend/cloud.ts` bridges provider ↔ import/export and holds

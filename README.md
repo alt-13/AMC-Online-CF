@@ -35,10 +35,12 @@ that keep `.amc` export byte-exact.
 - Poster from file upload, image URL, or OMDb; JPEG normalization in the browser.
 - OMDb / IMDb metadata lookup ("⚡ Fetch → new").
 - Per-user field-visibility settings (desktop / mobile).
-- **Mega.nz** import/export (fingerprinted so the desktop client accepts uploads);
-  saved credentials are AES-256-GCM encrypted at rest. Sign-in happens straight
-  from your browser, so Mega's "new login" notification email names the browser
-  you are actually using (Safari on an iPhone, Chrome on a desktop, …) — that mail
+- **Mega.nz** and **Google Drive** import/export. Mega uploads carry a correct
+  fingerprint so the desktop client accepts them; Drive needs a one-off OAuth
+  client ID (see [Connecting Google Drive](#connecting-google-drive)). Saved
+  credentials are AES-256-GCM encrypted at rest, and sign-in happens straight
+  from your browser — so Mega's "new login" notification email names the browser
+  you are actually using (Safari on an iPhone, Chrome on a desktop, …). That mail
   is this app connecting, not a stranger.
 - Legacy Windows-1252/1250/1251 (ANSI) catalogs round-trip losslessly.
 
@@ -72,7 +74,7 @@ npx wrangler d1 migrations apply amc --local
 Then open http://localhost:5173 and create the first account (registration is
 first-run only).
 
-Run the tests (parser round-trips, auth crypto, OMDb parsers, Mega paths):
+Run the tests (parser round-trips, auth crypto, OMDb parsers, cloud connectors):
 
 ```sh
 npm test
@@ -112,6 +114,31 @@ npx wrangler secret put AUTH_SECRET           # required (JWT/PBKDF2 signing sec
 npm run build                                 # → ./dist (served via the assets binding)
 npm run deploy                                # applies migrations + wrangler deploy
 ```
+
+### Connecting Google Drive
+
+Drive needs an OAuth **client ID** of your own — it identifies your deploy to
+Google, and there is nothing secret about it (no client secret is used, and no
+Worker secret or redeploy is involved). One-off setup:
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → create (or pick) a
+   project → **APIs & Services → Library** → enable the **Google Drive API**.
+2. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
+   application type **Web application**.
+3. Add your deploy's origin (e.g. `https://amc.example.com`, or
+   `http://localhost:5173` for local dev) under **Authorized JavaScript origins**.
+4. Leave the consent screen in **Testing** and add yourself as a test user. The
+   app asks for the full `drive` scope — it has to see `.amc` files that the
+   desktop Ant Movie Catalog put there, which the narrower `drive.file` scope
+   cannot. Google calls that a restricted scope: fine for your own deploy in
+   Testing, but publishing the client would require Google's verification.
+5. In the app: **Cloud sync → Google Drive**, paste the client ID, tick
+   "keep me signed in" so it is remembered (encrypted, per user), and Connect.
+
+Google's popup does the signing in, so no password of yours ever reaches this
+app. Access tokens live about an hour and are refreshed silently while your
+Google session is alive; if a background remote-check finds no session it simply
+leaves the sync badges as they were until you reconnect.
 
 ### Deploy on push (Cloudflare Workers Builds)
 
@@ -155,7 +182,7 @@ custom-domain setup.
 ```
 amc/        binary parser + model + codepage transcode (browser-side, byte-exact)
 worker/     Cloudflare Worker: /api/* router, auth, crypto, omdb, D1 helpers
-browser/    import/export orchestration + Mega client
+browser/    import/export orchestration + Mega client + path grammar
 frontend/   Vue 3 app (catalogs → movie list → movie detail, dialogs)
 schema.sql  D1 baseline schema      migrations/  incremental deltas
 setup.sh    one-shot provision + deploy       wrangler.jsonc  Worker config

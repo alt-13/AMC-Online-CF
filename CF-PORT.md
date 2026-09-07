@@ -262,25 +262,50 @@ routes it through the polyfilled path.
 Build deps still not added for the Worker itself: `wrangler` and
 `@cloudflare/workers-types` (for `worker/`). See `tsconfig.json`.
 
-## Mega import / export
+## Cloud import / export (Mega.nz, Google Drive)
 
-**Status: implemented** — `browser/mega.ts` (login, fingerprinted upload/download,
-folder-path helpers), `frontend/cloud.ts` (bridge to import/export + the
-per-user cloud config), and `CloudSync.vue` (provider picker + connect + list +
-import) with
-a per-catalog "→ Mega" push button in `CatalogsView.vue`. Both concerns below
-(fingerprint, credentials) are handled: the fingerprint is computed client-side
-(`mega-fingerprint.ts`) and injected as `attributes.c`; login always happens in
-the browser (megajs's crypto can't live in a Worker), and the plaintext password
-is never handled server-side except to encrypt it (see credential storage below).
+**Status: implemented, both providers.** Every transfer runs in the browser —
+that is where the whole `.amc` already is, megajs's crypto can't live in a
+Worker, and both providers send permissive CORS, so the Worker never proxies a
+byte.
 
-The `.amc` needn't sit at the account root: the location is a `"/"`-path
-(the per-user cloud `path`) that can name a folder to list/push into
-(`/Backups`) or one
-specific file (`/Backups/movies.amc`); `resolveAmcFile` deep-searches by filename
-as a fallback. The path input lives in `CloudSync.vue`. Tests:
-`mega-paths.test.ts` (path parsing + navigation), `mega-fingerprint.test.ts`, and
-the gated `mega.integration.test.ts`.
+**One seam, `CloudConnector`** (`frontend/connector.ts`). `frontend/cloud.ts`
+owns the workflow (connect, cache, import, build, push, record sync state) and
+is provider-free: sessions, file nodes and fingerprints are opaque values it
+hands straight back to the connector, and only `sameContent` ever compares two
+fingerprints. Adding a backend is one `connector-*.ts` plus one line in
+`CONNECTORS` — that registry is also what fills the UI's provider switcher.
+`CloudSync.vue` renders whichever connect form the connector declares
+(`auth: "password" | "oauth"`). See [`SYNC.md`](SYNC.md) for the invariants.
+
+The `.amc` needn't sit at the account root: the location is a `"/"`-path (the
+per-user cloud `path`) naming a folder to list/push into (`/Backups`) or one
+specific file (`/Backups/movies.amc`). The grammar is shared
+(`browser/cloudpath.ts`); each connector resolves it its own way.
+
+**Mega** (`connector-mega.ts` over `browser/mega.ts`): email + password login in
+the browser; the fingerprint MEGAsync demands is computed client-side
+(`mega-fingerprint.ts`) and injected as `attributes.c`; a locator is
+`<folder handle>:<filename>` and `resolveAmcFile` deep-searches by filename as a
+fallback. Tests: `mega-paths.test.ts`, `mega-fingerprint.test.ts`, and the gated
+`mega.integration.test.ts`.
+
+**Google Drive** (`connector-drive.ts`): plain REST, no SDK. Auth is Google
+Identity Services' **token client** in the browser — the operator pastes a public
+OAuth **client id** (README: "Connecting Google Drive"), Google's popup does the
+signing in, and no client secret, Worker secret, route or deploy step exists for
+it. Scope is the full `drive`, because `drive.file` cannot see the `.amc` the
+desktop app wrote — the whole point of the import path. A locator is
+`<folder id>:<filename>`; the fingerprint is Drive's `md5Checksum`; uploads are
+chunked **resumable** uploads so a multi-hundred-megabyte push reports progress,
+and they overwrite by file id so the Drive id and its share links survive. Tests:
+`connector-drive.test.ts` (upload chunking/308 resume, query escaping, listing).
+
+Known ceiling: the token client has no refresh token, so a reconnect needs a live
+Google session (and, on a first grant, a user gesture). A background remote-check
+that can't get a token records no verdict and leaves the cached one — the
+deliberate cheap choice; the upgrade is a code exchange in the Worker holding
+`GOOGLE_CLIENT_SECRET`.
 
 ### Cloud config + credential storage (per user)
 
@@ -289,7 +314,8 @@ in the `user_cloud` table — not in `localStorage`, so they follow the account
 across browsers. The Worker exposes three authenticated routes (`worker/index.ts`),
 all keyed on the JWT's user id:
 
-- `GET  /api/cloud` → `{ provider, path, hasCredential }` — never returns the secret.
+- `GET  /api/cloud` → one `{ provider, path, hasCredential, updatedAt }` per row —
+  never returns the secret.
 - `PUT  /api/cloud` → save `provider`/`path`; `credential` omitted/`""` = keep,
   `null` = forget, a string = encrypt + store.
 - `POST /api/cloud/connect` → hands back the **decrypted** credential (404 if none),
@@ -306,9 +332,11 @@ stored as `base64(iv‖ciphertext+tag)`. Tests in `worker/crypto.test.ts`
 is therefore the same person as the account owner, so server-side encrypt-at-rest
 is honest: it protects the credential against a D1 dump or console exposure, and
 the decrypted secret only ever round-trips back to that same user's browser (it
-has to — megajs runs there). Mega has no OAuth/JWT, so the stored blob is
-`{email,password}` JSON; when Drive/Dropbox/S3 land they should use scoped OAuth
-refresh tokens instead. The `remember` checkbox is opt-in — unchecked, the session
+has to — every provider client runs there). The stored blob is provider-shaped
+JSON: Mega has no OAuth, so it is `{email,password}`; Drive's is `{clientId}`,
+which is not a secret at all — the grant itself lives in the user's Google
+session, so there is nothing of Google's to steal from D1. The `remember` checkbox
+is opt-in — unchecked, the session
 stays in tab memory only and nothing is persisted. `CloudSync.vue` auto-reconnects
 on load when a credential is stored, and offers a "Forget saved login" button.
 

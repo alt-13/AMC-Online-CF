@@ -11,25 +11,19 @@
 // attributes, so we compute the fingerprint ourselves (mega-fingerprint.ts) and
 // pass it as `attributes.c`. See mega-fingerprint.test.ts for the verification.
 //
-// This is deliberately written behind a small CloudProvider shape so other
-// backends (Drive/Dropbox/S3, ideally via OAuth so credentials never touch our
-// app) can slot in later — see CF-PORT.md "Versatile cloud sync".
+// This module is the raw megajs layer only. The provider-agnostic seam the app
+// talks to is CloudConnector (frontend/connector.ts); frontend/connector-mega.ts
+// is the adapter between the two.
 
 import { Storage, File as MegaFile } from "megajs";
 import { computeFingerprint } from "./mega-fingerprint";
+import { isAmcName, splitAmcPath } from "./cloudpath";
 
-export interface CloudFile {
+export interface MegaDownload {
   name: string;
   bytes: Uint8Array;
-  /** modification time in whole seconds, if the backend exposes one */
+  /** modification time in whole seconds */
   mtimeSec?: number;
-}
-
-export interface CloudProvider {
-  /** Upload/overwrite the catalog blob. */
-  put(name: string, bytes: Uint8Array, mtimeSec?: number): Promise<void>;
-  /** Fetch the catalog blob by name (or provider-specific handle). */
-  get(name: string): Promise<CloudFile>;
 }
 
 /**
@@ -128,29 +122,8 @@ export async function uploadToMega(
 
 // --- paths -----------------------------------------------------------------
 //
-// Mega has real folders, so a catalog can live at e.g. "/Backups/movies.amc",
-// not just the account root. A path is "/"-separated; a trailing ".amc" segment
-// is treated as the filename, everything before it as the folder chain.
-
-export interface AmcPath {
-  /** folder names from the root, in order (empty = the account root) */
-  segments: string[];
-  /** the ".amc" filename if the path named one, else null */
-  filename: string | null;
-}
-
-/** Parse a "/Folder/Sub/file.amc"-style path (leading/trailing slashes ok). */
-export function splitAmcPath(path: string): AmcPath {
-  const parts = path
-    .split("/")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (parts.length && parts[parts.length - 1].toLowerCase().endsWith(".amc")) {
-    const filename = parts.pop() as string;
-    return { segments: parts, filename };
-  }
-  return { segments: parts, filename: null };
-}
+// The path grammar itself is provider-neutral and lives in cloudpath.ts; what
+// follows is how Mega resolves one.
 
 /** Walk existing folders to the one named by `segments`; null if any is missing. */
 export function folderAt(storage: Storage, segments: string[]): MegaFile | null {
@@ -203,7 +176,7 @@ export function listAmcFiles(storage: Storage, path = "", deep = false): MegaFil
     : ((folder.children ?? []) as MegaFile[]);
   const seen = new Set<string>();
   return pool.filter((f) => {
-    if (f.directory || !(f.name ?? "").toLowerCase().endsWith(".amc")) return false;
+    if (f.directory || !isAmcName(f.name ?? "")) return false;
     const id = f.nodeId ?? f.name ?? "";
     if (seen.has(id)) return false;
     seen.add(id);
@@ -244,12 +217,6 @@ export function resolveAmcFile(storage: Storage, path: string): MegaFile | null 
   return found ?? null;
 }
 
-/** Find a file by name at the account root (first match). */
-export function findInMega(storage: Storage, name: string): MegaFile | null {
-  const children = (storage.root?.children ?? []) as MegaFile[];
-  return children.find((f) => f.name === name) ?? null;
-}
-
 // Minimal view of the Node-style Readable megajs returns in the browser — just
 // the three events we consume. Avoids pulling Node stream types into the app.
 interface DownloadStream {
@@ -267,7 +234,7 @@ interface DownloadStream {
 export async function downloadFromMega(
   fileOrLink: MegaFile | string,
   onProgress?: (loaded: number, total: number) => void,
-): Promise<CloudFile> {
+): Promise<MegaDownload> {
   const file = typeof fileOrLink === "string" ? MegaFile.fromURL(fileOrLink) : fileOrLink;
   if (typeof fileOrLink === "string") await file.loadAttributes();
 
@@ -307,16 +274,3 @@ export async function downloadFromMega(
   return { name: file.name ?? "", bytes, mtimeSec: file.timestamp };
 }
 
-/** Wrap a logged-in Mega session as a generic CloudProvider. */
-export function megaProvider(storage: Storage): CloudProvider {
-  return {
-    put: async (name, bytes, mtimeSec) => {
-      await uploadToMega(storage, name, bytes, mtimeSec);
-    },
-    get: async (name) => {
-      const file = findInMega(storage, name);
-      if (!file) throw new Error(`Mega: "${name}" not found`);
-      return downloadFromMega(file);
-    },
-  };
-}

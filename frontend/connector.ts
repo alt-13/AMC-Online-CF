@@ -23,6 +23,7 @@
 // The connector modules import these types with `import type`, so the cycle
 // back to this file is erased at build time.
 
+import { driveConnector } from "./connector-drive";
 import { megaConnector } from "./connector-mega";
 
 /** Provider-specific login blob. Stored (encrypted) as JSON in user_cloud. */
@@ -70,7 +71,7 @@ export interface CloudConnector {
   /** Same CONTENT? (An mtime-only touch must not count as a change.) */
   sameContent(a: RemoteStat, b: RemoteStat): boolean;
 
-  download(file: CloudAmcFile, onProgress?: ByteProgress): Promise<Uint8Array>;
+  download(session: unknown, file: CloudAmcFile, onProgress?: ByteProgress): Promise<Uint8Array>;
 
   /** Overwrite the file a locator points at. */
   pushToLocator(
@@ -92,12 +93,19 @@ export interface CloudConnector {
 
 const CONNECTORS: Record<string, CloudConnector> = {
   mega: megaConnector,
+  drive: driveConnector,
 };
 
 export function connectorFor(provider: string): CloudConnector {
   const c = CONNECTORS[provider];
   if (!c) throw new Error(`unknown cloud provider "${provider}"`);
   return c;
+}
+
+/** The provider's display name, falling back to its key for an unknown one —
+ *  this is used in user-facing text, so it must never throw. */
+export function providerLabel(provider: string): string {
+  return CONNECTORS[provider]?.label ?? provider;
 }
 
 /** Pickable providers, in switcher order. */

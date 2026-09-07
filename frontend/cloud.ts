@@ -23,7 +23,7 @@ import { buildAmcFile } from "../browser/export";
 import type { ImportPhase } from "../browser/import";
 import { getCachedAmc, putCachedAmc, dropCachedAmc } from "./amccache";
 import { parseSourceRef, pickActiveProvider } from "./cloudref";
-import { connectorFor, type CloudAmcFile, type CloudCredentials } from "./connector";
+import { connectorFor, providerLabel, type CloudAmcFile, type CloudCredentials } from "./connector";
 import type { TransferState } from "./syncstatus";
 import { canSkipUpload, deriveStatus } from "./syncstatus";
 import { sha256Hex } from "../amc/posterkey";
@@ -35,7 +35,7 @@ let storage: unknown = null;
 /** Thrown by syncCatalogToOrigin when the origin provider needs a login first. */
 export class CloudLoginRequiredError extends Error {
   constructor(public provider: string) {
-    super(`Connect ${provider} to sync this library`);
+    super(`Connect ${providerLabel(provider)} to sync this library`);
     this.name = "CloudLoginRequiredError";
   }
 }
@@ -208,7 +208,7 @@ export async function pull(file: CloudAmcFile, onProgress?: PullProgress): Promi
   if (bytes) {
     onProgress?.(bytes.length, bytes.length, "download");
   } else {
-    bytes = await connector.download(file, (loaded, total) => onProgress?.(loaded, total, "download"));
+    bytes = await connector.download(storage, file, (loaded, total) => onProgress?.(loaded, total, "download"));
     if (sourceRef) await putCachedAmc(sourceRef, bytes);
   }
 
@@ -262,7 +262,7 @@ export async function downloadOriginBytes(
   try {
     const file = await connector.resolveLocator(storage, locator);
     if (!file) throw new Error("the cloud file this library came from no longer exists");
-    const bytes = await connector.download(file, onProgress);
+    const bytes = await connector.download(storage, file, onProgress);
     await putCachedAmc(catalog.source_ref, bytes);
     return bytes;
   } finally {
@@ -299,7 +299,7 @@ export async function reimportFromOrigin(
 
     const bytes =
       cachedBytes ??
-      (await connector.download(file, (loaded, total) => {
+      (await connector.download(storage, file, (loaded, total) => {
         tx.progress(loaded, total, "download");
         onProgress?.(loaded, total, "download");
       }));
