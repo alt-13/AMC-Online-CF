@@ -10,8 +10,9 @@ export function parseSourceRef(ref: string): { provider: string; locator: string
 }
 
 /**
- * Both connectors locate a file as "<folder handle>:<filename>" — Mega by node
- * handle, Drive by folder id. Resolving by NAME inside a stable folder is what
+ * Every connector locates a file as "<folder handle>:<filename>" — Mega by
+ * node handle, Drive and OneDrive by folder id. Resolving by NAME inside a stable
+ * folder is what
  * survives the delete-and-recreate that both providers' overwrite paths (and
  * users) do to a file, so neither stores the file's own id.
  *

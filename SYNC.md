@@ -9,7 +9,8 @@ permissive CORS so no proxy is needed). The Worker only stores the bookkeeping
 the browser reports.
 
 Every provider sits behind **one interface**, `CloudConnector` in
-`frontend/connector.ts` (`connector-mega.ts`, `connector-drive.ts`).
+`frontend/connector.ts` (`connector-mega.ts`, `connector-drive.ts`,
+`connector-onedrive.ts`).
 `frontend/cloud.ts` owns the workflow and is provider-free: sessions, file nodes
 and fingerprints are opaque values it hands straight back to the connector.
 Adding a backend is one `connector-*.ts` plus one line in `CONNECTORS`.
@@ -17,7 +18,7 @@ Adding a backend is one `connector-*.ts` plus one line in `CONNECTORS`.
 ## The reference: `catalogs.source_ref`
 
 `"<provider>:<provider-specific locator>"`. Both connectors use
-`"<folder handle>:<filename>"` (Mega node handle / Drive folder id) — resolving
+`"<folder handle>:<filename>"` (Mega node handle / Drive or OneDrive folder id) — resolving
 by NAME inside a stable folder is what survives the delete-and-recreate that
 overwrites and users do to a file, so the file's own id is never stored. Split on
 the **first** colon only — locators and filenames keep colons of their own. Pure
@@ -71,7 +72,8 @@ counts.
 
 A fingerprint is **opaque**, and only the connector's `sameContent(a, b)`
 compares two. Mega's packs a content CRC next to an mtime, so a byte comparison
-would call a mtime-only touch a change; Drive's is a plain `md5Checksum`. An
+would call a mtime-only touch a change; Drive's is a plain `md5Checksum` and
+OneDrive's a `quickXorHash`/`sha256Hash`. An
 empty fingerprint is never a match — the safe direction. A push RETURNS the
 resulting fingerprint, because only the connector knows what the provider
 stored.
@@ -87,6 +89,12 @@ silent multi-hundred-megabyte upload is exactly what the UI must not do. A 308
 reply carries the range Drive actually committed, which may be less than was
 sent, so the next offset comes from that header. A push overwrites the existing
 file **by id**, so its Drive id, share links and comments survive.
+
+OneDrive: the same shape over Graph's upload sessions (9.375 MiB chunks, a 320 KiB
+multiple as Graph requires). A 202 reply carries `nextExpectedRanges`, the range
+Graph actually committed, so the next offset comes from there. A push addresses
+the file by parent + name with `conflictBehavior: replace`, which overwrites in
+place — item id and share links survive.
 
 Downloaded `.amc` blobs are cached in Cache Storage (`frontend/amccache.ts`,
 pruned on boot); `frontend/cloud.ts` bridges provider ↔ import/export and holds

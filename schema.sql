@@ -168,7 +168,7 @@ CREATE INDEX IF NOT EXISTS idx_extras_movie ON movie_extras (movie_id);
 -- operator (who is the user). One row per user.
 CREATE TABLE IF NOT EXISTS user_cloud (
   user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  provider   TEXT NOT NULL DEFAULT 'mega',   -- 'mega' | 'drive' (see frontend/connector.ts)
+  provider   TEXT NOT NULL DEFAULT 'mega',   -- 'mega'|'drive'|'onedrive' (frontend/connector.ts)
   path       TEXT NOT NULL DEFAULT '',       -- e.g. /Backups/movies.amc
   credential TEXT,                            -- base64(iv‖AES-GCM ct), NULL if none
   updated_at INTEGER NOT NULL

@@ -35,9 +35,11 @@ that keep `.amc` export byte-exact.
 - Poster from file upload, image URL, or OMDb; JPEG normalization in the browser.
 - OMDb / IMDb metadata lookup ("⚡ Fetch → new").
 - Per-user field-visibility settings (desktop / mobile).
-- **Mega.nz** and **Google Drive** import/export. Mega uploads carry a correct
-  fingerprint so the desktop client accepts them; Drive needs a one-off OAuth
-  client ID (see [Connecting Google Drive](#connecting-google-drive)). Saved
+- **Mega.nz**, **Google Drive** and **OneDrive** import/export. Mega uploads
+  carry a correct fingerprint so the desktop client accepts them; Drive and
+  OneDrive each need a one-off OAuth client ID (see
+  [Connecting Google Drive](#connecting-google-drive) /
+  [Connecting OneDrive](#connecting-onedrive)). Saved
   credentials are AES-256-GCM encrypted at rest, and sign-in happens straight
   from your browser — so Mega's "new login" notification email names the browser
   you are actually using (Safari on an iPhone, Chrome on a desktop, …). That mail
@@ -48,11 +50,13 @@ that keep `.amc` export byte-exact.
 
 - Node.js 20+
 - A Cloudflare account (for deploy) with Workers, D1, and R2 available.
-- **For Google Drive sync only:** your own Google OAuth client ID — about five
-  minutes in the Google Cloud Console, once per deploy. This is unavoidable:
-  Google binds an OAuth client to specific *authorized JavaScript origins*, and
-  wildcards are not allowed, so no client ID can be shipped that covers your
-  domain. Walkthrough: [Connecting Google Drive](#connecting-google-drive).
+- **For Google Drive or OneDrive sync only:** your own OAuth client ID — about
+  five minutes in the Google Cloud Console / Microsoft Entra admin center, once
+  per deploy. This is unavoidable: both vendors bind an OAuth client to specific
+  origins (Google's *authorized JavaScript origins*, Microsoft's *redirect URIs*)
+  and neither allows a wildcard, so no client ID can be shipped that covers your
+  domain. Walkthroughs: [Connecting Google Drive](#connecting-google-drive),
+  [Connecting OneDrive](#connecting-onedrive).
   **Mega.nz needs none of this** — email and password, nothing to register.
 
 ## Local development
@@ -151,6 +155,30 @@ Google's popup does the signing in, so no password of yours ever reaches this
 app. Access tokens live about an hour and are refreshed silently while your
 Google session is alive; if a background remote-check finds no session it simply
 leaves the sync badges as they were until you reconnect.
+
+### Connecting OneDrive
+
+Same shape as Drive, same five minutes: register an app, paste its client ID once.
+It is public — there is no client secret, no Worker secret and no redeploy.
+
+1. [Microsoft Entra admin center](https://entra.microsoft.com/) →
+   **App registrations → New registration**.
+2. Supported account types: **any organizational directory + personal Microsoft
+   accounts** — that is the `common` authority the app signs in against (pick
+   organization-only if you only ever use a work account).
+3. Add a **Redirect URI** of platform type **Single-page application**, set to your
+   deploy's origin *with a trailing slash* — e.g. `https://amc.example.com/`, or
+   `http://localhost:5173/` for local dev. The SPA platform type is what makes
+   Microsoft issue tokens to a browser over CORS without a secret (PKCE).
+4. Copy the **Application (client) ID** from the overview page.
+5. In the app: **Cloud sync → OneDrive**, paste the client ID, tick "keep me
+   signed in" so it is remembered (encrypted, per user), and Connect.
+
+The app asks for `Files.ReadWrite` (your own OneDrive) and `User.Read` (to show
+which account is connected) — no admin consent needed. Microsoft's popup does
+the signing in, so no password of yours reaches this app. Because no refresh token
+is stored, reconnecting opens that popup again; a background remote-check that
+cannot get a token simply leaves the sync badges as they were until you reconnect.
 
 ### Deploy on push (Cloudflare Workers Builds)
 

@@ -262,11 +262,11 @@ routes it through the polyfilled path.
 Build deps still not added for the Worker itself: `wrangler` and
 `@cloudflare/workers-types` (for `worker/`). See `tsconfig.json`.
 
-## Cloud import / export (Mega.nz, Google Drive)
+## Cloud import / export (Mega.nz, Google Drive, OneDrive)
 
-**Status: implemented, both providers.** Every transfer runs in the browser —
+**Status: implemented, all three providers.** Every transfer runs in the browser —
 that is where the whole `.amc` already is, megajs's crypto can't live in a
-Worker, and both providers send permissive CORS, so the Worker never proxies a
+Worker, and every provider sends permissive CORS, so the Worker never proxies a
 byte.
 
 **One seam, `CloudConnector`** (`frontend/connector.ts`). `frontend/cloud.ts`
@@ -307,6 +307,25 @@ that can't get a token records no verdict and leaves the cached one — the
 deliberate cheap choice; the upgrade is a code exchange in the Worker holding
 `GOOGLE_CLIENT_SECRET`.
 
+**OneDrive** (`connector-onedrive.ts`): Microsoft Graph, plain REST, no SDK —
+**no MSAL**. Auth is the OAuth **code flow with PKCE** done by hand in a popup
+(~50 lines: verifier → SHA-256 challenge → popup to `/authorize` → one
+form POST to `/token`); Microsoft mandates PKCE for SPA-registered redirect URIs
+and issues no client secret, so the pasted **Application (client) ID** is again
+the whole config (README: "Connecting OneDrive"). The redirect URI is the deploy's
+own origin — the popup lands back on `index.html` and is polled same-origin, so
+no callback page has to exist. Scopes: `Files.ReadWrite` + `User.Read`. A locator
+is `<folder id>:<filename>`; the fingerprint is the item's `quickXorHash`
+(business) or `sha256Hash`/`sha1Hash` (personal); uploads are chunked **upload
+sessions** (9.375 MiB, a 320 KiB multiple as Graph requires) addressed by parent +
+name with `conflictBehavior: replace`, so the item id and its share links survive.
+Same known ceiling as Drive, for the same reason (no `offline_access`). Tests:
+`connector-onedrive.test.ts` (chunking/202 resume, path addressing, 404-vs-5xx,
+pagination).
+
+`frontend/cloudstream.ts` holds the one download-stream loop both REST connectors
+use (preallocate to the known size, clamp writes, report progress).
+
 ### Cloud config + credential storage (per user)
 
 Provider, `.amc` path, and an optional saved credential live server-side per user
@@ -333,9 +352,9 @@ is therefore the same person as the account owner, so server-side encrypt-at-res
 is honest: it protects the credential against a D1 dump or console exposure, and
 the decrypted secret only ever round-trips back to that same user's browser (it
 has to — every provider client runs there). The stored blob is provider-shaped
-JSON: Mega has no OAuth, so it is `{email,password}`; Drive's is `{clientId}`,
-which is not a secret at all — the grant itself lives in the user's Google
-session, so there is nothing of Google's to steal from D1. The `remember` checkbox
+JSON: Mega has no OAuth, so it is `{email,password}`; Drive's and OneDrive's is
+`{clientId}`, which is not a secret at all — the grant itself lives in the
+user's Google/Microsoft session, so there is nothing of theirs to steal from D1. The `remember` checkbox
 is opt-in — unchecked, the session
 stays in tab memory only and nothing is persisted. `CloudSync.vue` auto-reconnects
 on load when a credential is stored, and offers a "Forget saved login" button.

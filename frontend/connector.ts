@@ -25,6 +25,7 @@
 
 import { driveConnector } from "./connector-drive";
 import { megaConnector } from "./connector-mega";
+import { onedriveConnector } from "./connector-onedrive";
 
 /** Provider-specific login blob. Stored (encrypted) as JSON in user_cloud. */
 export type CloudCredentials = Record<string, string>;
@@ -94,6 +95,7 @@ export interface CloudConnector {
 const CONNECTORS: Record<string, CloudConnector> = {
   mega: megaConnector,
   drive: driveConnector,
+  onedrive: onedriveConnector,
 };
 
 export function connectorFor(provider: string): CloudConnector {

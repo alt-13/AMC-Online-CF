@@ -27,6 +27,7 @@
 // user; publishing one would need Google's verification.
 
 import { isAmcName, splitAmcPath } from "../browser/cloudpath";
+import { streamToBytes } from "./cloudstream";
 import { formatSourceRef, splitLocator } from "./cloudref";
 import type {
   ByteProgress,
@@ -305,38 +306,7 @@ async function download(
   onProgress?: ByteProgress,
 ): Promise<Uint8Array> {
   const res = await api(s, `${API}/files/${encodeURIComponent(fileId)}?alt=media&${ALL_DRIVES}`);
-  const total = Number(res.headers.get("content-length") ?? 0) || declaredSize;
-  if (!res.body) return new Uint8Array(await res.arrayBuffer());
-
-  // Preallocate to the known size and clamp writes, so peak memory is 1× the
-  // file (matters on a phone) — same shape as the Mega download path.
-  const buf = total > 0 ? new Uint8Array(total) : null;
-  const chunks: Uint8Array[] = [];
-  let loaded = 0;
-  const reader = res.body.getReader();
-  onProgress?.(0, total);
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    if (buf) {
-      const c = loaded + value.length > total ? value.subarray(0, total - loaded) : value;
-      buf.set(c, loaded);
-      loaded += c.length;
-    } else {
-      chunks.push(value);
-      loaded += value.length;
-    }
-    onProgress?.(loaded, total || loaded);
-  }
-  if (buf) return loaded === total ? buf : buf.subarray(0, loaded);
-  const bytes = new Uint8Array(loaded);
-  let off = 0;
-  for (const c of chunks) {
-    bytes.set(c, off);
-    off += c.length;
-  }
-  return bytes;
+  return streamToBytes(res, declaredSize, onProgress);
 }
 
 /**
