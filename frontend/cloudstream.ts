@@ -1,7 +1,7 @@
 // Read a fetch Response body into one Uint8Array, reporting byte progress.
 //
-// Shared by the REST connectors (Drive, OneDrive): both download a whole .amc
-// over plain `fetch`, and both must report progress — a silent
+// Shared by the REST connectors (Drive, OneDrive, Dropbox): each downloads a
+// whole .amc over plain `fetch`, and each must report progress — a silent
 // multi-hundred-megabyte transfer is exactly what the UI must not do.
 //
 // Preallocates to the known size and clamps writes, so peak memory is 1x the

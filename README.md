@@ -35,11 +35,12 @@ that keep `.amc` export byte-exact.
 - Poster from file upload, image URL, or OMDb; JPEG normalization in the browser.
 - OMDb / IMDb metadata lookup ("⚡ Fetch → new").
 - Per-user field-visibility settings (desktop / mobile).
-- **Mega.nz**, **Google Drive** and **OneDrive** import/export. Mega uploads
-  carry a correct fingerprint so the desktop client accepts them; Drive and
-  OneDrive each need a one-off OAuth client ID (see
+- **Mega.nz**, **Google Drive**, **OneDrive** and **Dropbox** import/export. Mega
+  uploads carry a correct fingerprint so the desktop client accepts them; the
+  other three each need a one-off OAuth client ID (see
   [Connecting Google Drive](#connecting-google-drive) /
-  [Connecting OneDrive](#connecting-onedrive)). Saved
+  [Connecting OneDrive](#connecting-onedrive) /
+  [Connecting Dropbox](#connecting-dropbox)). Saved
   credentials are AES-256-GCM encrypted at rest, and sign-in happens straight
   from your browser — so Mega's "new login" notification email names the browser
   you are actually using (Safari on an iPhone, Chrome on a desktop, …). That mail
@@ -50,13 +51,15 @@ that keep `.amc` export byte-exact.
 
 - Node.js 20+
 - A Cloudflare account (for deploy) with Workers, D1, and R2 available.
-- **For Google Drive or OneDrive sync only:** your own OAuth client ID — about
-  five minutes in the Google Cloud Console / Microsoft Entra admin center, once
-  per deploy. This is unavoidable: both vendors bind an OAuth client to specific
-  origins (Google's *authorized JavaScript origins*, Microsoft's *redirect URIs*)
-  and neither allows a wildcard, so no client ID can be shipped that covers your
-  domain. Walkthroughs: [Connecting Google Drive](#connecting-google-drive),
-  [Connecting OneDrive](#connecting-onedrive).
+- **For Google Drive, OneDrive or Dropbox sync only:** your own OAuth client ID —
+  about five minutes in the Google Cloud Console / Microsoft Entra admin center /
+  Dropbox App Console, once per deploy. This is unavoidable: all three vendors
+  bind an OAuth client to specific origins (Google's *authorized JavaScript
+  origins*, Microsoft's and Dropbox's *redirect URIs*) and none allows a
+  wildcard, so no client ID can be shipped that covers your domain. Walkthroughs:
+  [Connecting Google Drive](#connecting-google-drive),
+  [Connecting OneDrive](#connecting-onedrive),
+  [Connecting Dropbox](#connecting-dropbox).
   **Mega.nz needs none of this** — email and password, nothing to register.
 
 ## Local development
@@ -179,6 +182,34 @@ which account is connected) — no admin consent needed. Microsoft's popup does
 the signing in, so no password of yours reaches this app. Because no refresh token
 is stored, reconnecting opens that popup again; a background remote-check that
 cannot get a token simply leaves the sync badges as they were until you reconnect.
+
+### Connecting Dropbox
+
+Same shape as OneDrive, same five minutes: register an app, paste its App key
+once. It is public — there is no app secret, no Worker secret and no redeploy.
+
+1. [Dropbox App Console](https://www.dropbox.com/developers/apps) → **Create app**
+   → **Scoped access** → **Full Dropbox** (App-folder access cannot see the `.amc`
+   the desktop Ant Movie Catalog wrote, which is the point of the import path).
+2. On the **Permissions** tab tick `account_info.read`, `files.metadata.read`,
+   `files.content.read` and `files.content.write`, then **Submit**. Do this
+   *before* connecting — Dropbox bakes the scopes into the token it issues.
+3. On **Settings**, add a **Redirect URI** set to your deploy's origin *with a
+   trailing slash* — e.g. `https://amc.example.com/`, or `http://localhost:5173/`
+   for local dev.
+4. Copy the **App key** from that same page.
+5. In the app: **Cloud sync → Dropbox**, paste the App key, tick "keep me signed
+   in" so it is remembered (encrypted, per user), and Connect.
+
+Dropbox's popup does the signing in, so no password of yours reaches this app.
+Because no refresh token is stored, reconnecting opens that popup again; a
+background remote-check that cannot get a token simply leaves the sync badges as
+they were until you reconnect.
+
+> Dropbox addresses files by path, not by id: if you *rename or move* the remote
+> folder a catalog was imported from, that catalog reads as "remote file gone"
+> and you re-pick it. Renaming the `.amc` itself is fine to do from the app's
+> path setting.
 
 ### Deploy on push (Cloudflare Workers Builds)
 

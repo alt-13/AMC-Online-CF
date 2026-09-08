@@ -2,8 +2,8 @@
 //
 // A path is "/"-separated; a trailing ".amc" segment is the filename, everything
 // before it the folder chain. Every provider has real folders (Mega nodes, Drive
-// and OneDrive folder ids), so a catalog can live at "/Backups/movies.amc" rather
-// than only at the account root.
+// and OneDrive folder ids, Dropbox paths), so a catalog can live at
+// "/Backups/movies.amc" rather than only at the account root.
 
 export interface AmcPath {
   /** folder names from the root, in order (empty = the account root) */

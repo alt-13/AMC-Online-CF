@@ -95,7 +95,9 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── connector.ts    ← the CloudConnector seam + provider registry (add a backend = 1 file + 1 line)
 │   ├── connector-mega.ts  ← Mega.nz behind the seam (megajs, folder handles, `c` fingerprint)
 │   ├── connector-drive.ts ← Google Drive behind the seam (REST + GIS token client, resumable upload)
-│   ├── connector-onedrive.ts ← OneDrive behind the seam (Graph REST + hand-rolled PKCE popup, no MSAL)
+│   ├── connector-onedrive.ts ← OneDrive behind the seam (Graph REST + PKCE popup, no MSAL)
+│   ├── connector-dropbox.ts ← Dropbox behind the seam (REST + PKCE popup, path-addressed, no SDK)
+│   ├── oauthpkce.ts       ← the OAuth code+PKCE popup flow OneDrive and Dropbox share
 │   ├── cloudstream.ts     ← the one progress-reporting download-stream loop both REST connectors share
 │   ├── cloud.ts        ← bridge: connector ↔ import/export; per-user cloud config + remember-me. PROVIDER-FREE
 │   ├── cloudref.ts     ← catalog ↔ remote-file reference bookkeeping (source_ref/locator parsing)

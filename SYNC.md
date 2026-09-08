@@ -10,18 +10,22 @@ the browser reports.
 
 Every provider sits behind **one interface**, `CloudConnector` in
 `frontend/connector.ts` (`connector-mega.ts`, `connector-drive.ts`,
-`connector-onedrive.ts`).
+`connector-onedrive.ts`, `connector-dropbox.ts`).
 `frontend/cloud.ts` owns the workflow and is provider-free: sessions, file nodes
 and fingerprints are opaque values it hands straight back to the connector.
 Adding a backend is one `connector-*.ts` plus one line in `CONNECTORS`.
 
 ## The reference: `catalogs.source_ref`
 
-`"<provider>:<provider-specific locator>"`. Both connectors use
-`"<folder handle>:<filename>"` (Mega node handle / Drive or OneDrive folder id) — resolving
-by NAME inside a stable folder is what survives the delete-and-recreate that
-overwrites and users do to a file, so the file's own id is never stored. Split on
-the **first** colon only — locators and filenames keep colons of their own. Pure
+`"<provider>:<provider-specific locator>"`. Every connector uses
+`"<folder handle>:<filename>"` (Mega node handle / Drive or OneDrive folder id /
+Dropbox parent **path**, `""` at the root) — resolving by NAME inside a stable
+folder is what survives the delete-and-recreate that overwrites and users do to a
+file, so the file's own id is never stored. Dropbox is the one whose folder
+handle is not stable across a rename of that folder: the catalog then reads as
+remote-gone and the user re-picks it (its ids carry a colon, so they cannot be
+the handle). Split on the **first** colon only — locators and filenames keep
+colons of their own. Pure
 helpers in `frontend/cloudref.ts`.
 A direct-upload catalog has no `source_ref` (status `local-only`) until
 `POST /api/catalog/:id/source-ref` adopts one on its first push.
@@ -73,7 +77,7 @@ counts.
 A fingerprint is **opaque**, and only the connector's `sameContent(a, b)`
 compares two. Mega's packs a content CRC next to an mtime, so a byte comparison
 would call a mtime-only touch a change; Drive's is a plain `md5Checksum` and
-OneDrive's a `quickXorHash`/`sha256Hash`. An
+OneDrive's a `quickXorHash`/`sha256Hash`, Dropbox's a `content_hash`. An
 empty fingerprint is never a match — the safe direction. A push RETURNS the
 resulting fingerprint, because only the connector knows what the provider
 stored.
@@ -95,6 +99,13 @@ multiple as Graph requires). A 202 reply carries `nextExpectedRanges`, the range
 Graph actually committed, so the next offset comes from there. A push addresses
 the file by parent + name with `conflictBehavior: replace`, which overwrites in
 place — item id and share links survive.
+
+Dropbox: the same shape over an upload session (8 MiB chunks — any size is legal
+here, so this is purely progress granularity), committed with `mode: overwrite`,
+which replaces in place so the file id and its share links survive. Note that
+Dropbox reports "not there" as **HTTP 409** with an `error_summary`, not a 404;
+the connector keys its "gone" verdict on that summary, so a 5xx still means "no
+verdict" rather than "deleted".
 
 Downloaded `.amc` blobs are cached in Cache Storage (`frontend/amccache.ts`,
 pruned on boot); `frontend/cloud.ts` bridges provider ↔ import/export and holds

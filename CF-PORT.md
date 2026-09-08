@@ -262,9 +262,9 @@ routes it through the polyfilled path.
 Build deps still not added for the Worker itself: `wrangler` and
 `@cloudflare/workers-types` (for `worker/`). See `tsconfig.json`.
 
-## Cloud import / export (Mega.nz, Google Drive, OneDrive)
+## Cloud import / export (Mega.nz, Google Drive, OneDrive, Dropbox)
 
-**Status: implemented, all three providers.** Every transfer runs in the browser —
+**Status: implemented, all four providers.** Every transfer runs in the browser —
 that is where the whole `.amc` already is, megajs's crypto can't live in a
 Worker, and every provider sends permissive CORS, so the Worker never proxies a
 byte.
@@ -323,8 +323,32 @@ Same known ceiling as Drive, for the same reason (no `offline_access`). Tests:
 `connector-onedrive.test.ts` (chunking/202 resume, path addressing, 404-vs-5xx,
 pagination).
 
-`frontend/cloudstream.ts` holds the one download-stream loop both REST connectors
-use (preallocate to the known size, clamp writes, report progress).
+**Dropbox** (`connector-dropbox.ts`): plain REST, no SDK, same PKCE popup as
+OneDrive (`frontend/oauthpkce.ts` — the flow was lifted out of the OneDrive
+connector when the second provider needed it). The pasted **App key** is the
+whole config (README: "Connecting Dropbox"); scopes are `account_info.read` +
+`files.metadata.read` + `files.content.{read,write}`. The fingerprint is Dropbox's
+`content_hash`; uploads always go through a chunked **upload session** (8 MiB,
+free choice — /files/upload caps at 150 MB and chunking is what reports progress)
+committed with `mode: overwrite`, so the file id and its share links survive, and
+Dropbox creates any missing parent folder as part of the commit. Two departures
+from the other REST connectors, both because Dropbox is **path-addressed**:
+
+- a locator's folder handle is the parent **path** (`""` at the root), not a
+  folder id — Dropbox's ids carry a colon, which the `<handle>:<filename>`
+  grammar splits on. Renaming the remote folder therefore breaks the link and the
+  catalog reads as remote-gone; the user re-picks it.
+- "not there" is **HTTP 409** with an `error_summary` naming the route's error,
+  not a 404 — `optional()` keys on that, so a 5xx still propagates as "no verdict"
+  rather than "deleted".
+
+Same known ceiling as Drive and OneDrive (no refresh token). Tests:
+`connector-dropbox.test.ts` (session chunking + overwrite commit, ASCII-escaped
+`Dropbox-API-Arg`, 409-vs-5xx, root-level paths, pagination).
+
+`frontend/cloudstream.ts` holds the one download-stream loop the REST connectors
+use (preallocate to the known size, clamp writes, report progress);
+`frontend/oauthpkce.ts` holds the one PKCE popup flow OneDrive and Dropbox use.
 
 ### Cloud config + credential storage (per user)
 
@@ -352,9 +376,10 @@ is therefore the same person as the account owner, so server-side encrypt-at-res
 is honest: it protects the credential against a D1 dump or console exposure, and
 the decrypted secret only ever round-trips back to that same user's browser (it
 has to — every provider client runs there). The stored blob is provider-shaped
-JSON: Mega has no OAuth, so it is `{email,password}`; Drive's and OneDrive's is
-`{clientId}`, which is not a secret at all — the grant itself lives in the
-user's Google/Microsoft session, so there is nothing of theirs to steal from D1. The `remember` checkbox
+JSON: Mega has no OAuth, so it is `{email,password}`; Drive's, OneDrive's and
+Dropbox's is `{clientId}`, which is not a secret at all — the grant itself lives
+in the user's Google/Microsoft/Dropbox session, so there is nothing of theirs to
+steal from D1. The `remember` checkbox
 is opt-in — unchecked, the session
 stays in tab memory only and nothing is persisted. `CloudSync.vue` auto-reconnects
 on load when a credential is stored, and offers a "Forget saved login" button.

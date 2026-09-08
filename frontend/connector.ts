@@ -24,6 +24,7 @@
 // back to this file is erased at build time.
 
 import { driveConnector } from "./connector-drive";
+import { dropboxConnector } from "./connector-dropbox";
 import { megaConnector } from "./connector-mega";
 import { onedriveConnector } from "./connector-onedrive";
 
@@ -96,6 +97,7 @@ const CONNECTORS: Record<string, CloudConnector> = {
   mega: megaConnector,
   drive: driveConnector,
   onedrive: onedriveConnector,
+  dropbox: dropboxConnector,
 };
 
 export function connectorFor(provider: string): CloudConnector {

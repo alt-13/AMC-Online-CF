@@ -4,15 +4,12 @@
 // no SDK here and the Worker never proxies a byte: the browser already holds the
 // whole .amc and talks to graph.microsoft.com directly.
 //
-// AUTH: the OAuth **authorization code flow with PKCE**, done by hand in a
-// popup, instead of @azure/msal-browser. MSAL is a couple hundred KB of bundle
-// to obtain a string this file gets in ~50 lines: a random verifier, its
-// SHA-256 challenge, a popup to /authorize, then one form POST to /token. No
-// client secret exists (Microsoft mandates PKCE for SPA-registered redirect URIs
-// and issues none), so nothing about OneDrive needs a Worker secret, a route or
-// a deploy step; the **Application (client) ID** the operator pastes is what
-// `remember me` stores in user_cloud, and the grant itself lives in the user's
-// Microsoft session.
+// AUTH: the OAuth **authorization code flow with PKCE** in a popup
+// (`oauthpkce.ts`), instead of @azure/msal-browser — a couple hundred KB of
+// bundle for a string that flow returns. No client secret exists (Microsoft
+// mandates PKCE for SPA-registered redirect URIs and issues none), so the
+// **Application (client) ID** the operator pastes is all that `remember me`
+// stores in user_cloud.
 //
 // ponytail: no refresh token (`offline_access` is not requested). Same ceiling
 // as Drive: a reconnect needs a live Microsoft session and — being a popup — a
@@ -27,6 +24,7 @@
 // sits in the user's own OneDrive.
 
 import { isAmcName, splitAmcPath } from "../browser/cloudpath";
+import { pkceToken } from "./oauthpkce";
 import { streamToBytes } from "./cloudstream";
 import { formatSourceRef, splitLocator } from "./cloudref";
 import type {
@@ -45,105 +43,18 @@ const DRIVE = `${GRAPH}/me/drive`;
 /** Upload chunk. Graph requires a multiple of 320 KiB; this is 9.375 MiB. */
 const CHUNK = 320 * 1024 * 30;
 
-// --- auth (PKCE in a popup) -------------------------------------------------
-
-const b64url = (bytes: Uint8Array) =>
-  btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-const randomB64 = (n: number) => b64url(crypto.getRandomValues(new Uint8Array(n)));
-
-/** The deploy's own origin, which is what must be registered as the SPA
- *  redirect URI (see README, "Connecting OneDrive"). */
-const redirectUri = () => `${location.origin}/`;
-
-/**
- * Wait for the popup to come back to our origin carrying a `code`.
- *
- * Polling rather than postMessage, so no callback page has to exist: the popup
- * lands on our own index.html, which we can read once it is same-origin again
- * (the read throws while it is still on login.microsoftonline.com).
- */
-function awaitCode(popup: Window, state: string): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const stop = () => {
-      clearInterval(poll);
-      clearTimeout(timeout);
-    };
-    const fail = (msg: string) => {
-      stop();
-      popup.close();
-      reject(new Error(msg));
-    };
-    const poll = setInterval(() => {
-      let params: URLSearchParams;
-      try {
-        if (popup.closed) return fail("Microsoft sign-in was cancelled");
-        if (popup.location.origin !== location.origin) return; // still at Microsoft
-        const { hash, search } = popup.location;
-        params = new URLSearchParams(hash.slice(1) || search.slice(1));
-      } catch {
-        return; // cross-origin document — not back yet
-      }
-      const code = params.get("code");
-      const error = params.get("error");
-      if (!code && !error) return;
-      // The state check is the CSRF guard: a code we did not ask for is refused.
-      if (params.get("state") !== state) return fail("Microsoft sign-in state mismatch");
-      if (!code) return fail(params.get("error_description") || error || "Microsoft sign-in failed");
-      stop();
-      popup.close();
-      resolve(code);
-    }, 250);
-    const timeout = setTimeout(() => fail("Microsoft sign-in timed out"), 5 * 60_000);
-  });
-}
+// --- auth (PKCE in a popup, see oauthpkce.ts) --------------------------------
 
 /** One full interactive sign-in: popup → code → access token. */
-async function requestToken(clientId: string, login?: string): Promise<string> {
-  const verifier = randomB64(32);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-  const state = randomB64(16);
-  const authUrl =
-    `${AUTHORITY}/authorize?` +
-    new URLSearchParams({
-      client_id: clientId,
-      response_type: "code",
-      redirect_uri: redirectUri(),
-      response_mode: "fragment",
-      scope: SCOPE,
-      state,
-      code_challenge: b64url(new Uint8Array(digest)),
-      code_challenge_method: "S256",
-      ...(login ? { login_hint: login } : {}),
-    });
-
-  const popup = window.open(authUrl, "onedrive-signin", "width=520,height=680");
-  if (!popup) throw new Error("the Microsoft sign-in popup was blocked — allow popups and retry");
-  const code = await awaitCode(popup, state);
-
-  const res = await fetch(`${AUTHORITY}/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri(),
-      code_verifier: verifier,
-    }),
+const requestToken = (clientId: string, login?: string) =>
+  pkceToken({
+    label: "Microsoft",
+    authorizeUrl: `${AUTHORITY}/authorize`,
+    tokenUrl: `${AUTHORITY}/token`,
+    clientId,
+    scope: SCOPE,
+    authParams: { response_mode: "fragment", ...(login ? { login_hint: login } : {}) },
   });
-  const body = (await res.json().catch(() => ({}))) as {
-    access_token?: string;
-    error_description?: string;
-    error?: string;
-  };
-  if (!res.ok || !body.access_token) {
-    throw new Error(
-      body.error_description || body.error || `Microsoft sign-in failed (${res.status})`,
-    );
-  }
-  return body.access_token;
-}
 
 // --- session + request helper ----------------------------------------------
 
