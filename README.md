@@ -37,7 +37,8 @@ that keep `.amc` export byte-exact.
 - Per-user field-visibility settings (desktop / mobile).
 - **Mega.nz**, **Google Drive**, **OneDrive** and **Dropbox** import/export. Mega
   uploads carry a correct fingerprint so the desktop client accepts them; the
-  other three each need a one-off OAuth client ID (see
+  other three each need a one-off OAuth client ID (plus, for Drive, its client
+  secret — Google's token endpoint demands one) (see
   [Connecting Google Drive](#connecting-google-drive) /
   [Connecting OneDrive](#connecting-onedrive) /
   [Connecting Dropbox](#connecting-dropbox)). Saved
@@ -51,12 +52,12 @@ that keep `.amc` export byte-exact.
 
 - Node.js 20+
 - A Cloudflare account (for deploy) with Workers, D1, and R2 available.
-- **For Google Drive, OneDrive or Dropbox sync only:** your own OAuth client ID —
-  about five minutes in the Google Cloud Console / Microsoft Entra admin center /
-  Dropbox App Console, once per deploy. This is unavoidable: all three vendors
-  bind an OAuth client to specific origins (Google's *authorized JavaScript
-  origins*, Microsoft's and Dropbox's *redirect URIs*) and none allows a
-  wildcard, so no client ID can be shipped that covers your domain. Walkthroughs:
+- **For Google Drive, OneDrive or Dropbox sync only:** your own OAuth client ID
+  (Drive: and its client secret) — about five minutes in the Google Cloud Console
+  / Microsoft Entra admin center / Dropbox App Console, once per deploy. This is
+  unavoidable: all three vendors bind an OAuth client to specific *redirect URIs*
+  and none allows a wildcard, so no client ID can be shipped that covers your
+  domain. Walkthroughs:
   [Connecting Google Drive](#connecting-google-drive),
   [Connecting OneDrive](#connecting-onedrive),
   [Connecting Dropbox](#connecting-dropbox).
@@ -132,37 +133,52 @@ npm run deploy                                # applies migrations + wrangler de
 
 > **Heads up — Drive is not zero-setup.** Before the app can see your Drive you
 > must register an OAuth client in the Google Cloud Console and paste its client
-> ID into the Cloud sync panel once. Hosted services skip this only because the
-> vendor registered *their* one domain; a self-hosted deploy has to register its
-> own, since Google allows no wildcard origins. Budget five minutes. If that is
-> not worth it, use Mega.nz instead — it needs nothing.
+> ID **and secret** into the Cloud sync panel once. Hosted services skip this
+> only because the vendor registered *their* one domain; a self-hosted deploy has
+> to register its own, since Google allows no wildcard redirect URIs. Budget five
+> minutes. If that is not worth it, use Mega.nz instead — it needs nothing.
 
-The client ID identifies your deploy to Google and is **not** a secret (no client
-secret is used, and no Worker secret or redeploy is involved). One-off setup:
+Unlike the other two providers, Google's token endpoint refuses a Web-application
+client that sends no client secret, PKCE or not — so Drive needs both halves.
+There is still no Worker secret and no redeploy: the secret is stored with your
+other saved credentials (AES-256-GCM at rest, per user) and used only from your
+own browser. One-off setup:
 
 1. [Google Cloud Console](https://console.cloud.google.com/) → create (or pick) a
    project → **APIs & Services → Library** → enable the **Google Drive API**.
 2. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
    application type **Web application**.
-3. Add your deploy's origin (e.g. `https://amc.example.com`, or
-   `http://localhost:5173` for local dev) under **Authorized JavaScript origins**.
+3. Add your deploy's origin *with a trailing slash* — e.g.
+   `https://amc.example.com/`, or `http://localhost:5173/` for local dev — under
+   **Authorized redirect URIs** (the app signs in with the OAuth code flow, so
+   the redirect URI is what must match, not just the JavaScript origin).
 4. Leave the consent screen in **Testing** and add yourself as a test user. The
    app asks for the full `drive` scope — it has to see `.amc` files that the
    desktop Ant Movie Catalog put there, which the narrower `drive.file` scope
    cannot. Google calls that a restricted scope: fine for your own deploy in
    Testing, but publishing the client would require Google's verification.
-5. In the app: **Cloud sync → Google Drive**, paste the client ID, tick
-   "keep me signed in" so it is remembered (encrypted, per user), and Connect.
+5. In the app: **Cloud sync → Google Drive**, paste the client ID and the client
+   secret, tick "keep me signed in" so they are remembered (encrypted, per user),
+   and Connect.
 
-Google's popup does the signing in, so no password of yours ever reaches this
-app. Access tokens live about an hour and are refreshed silently while your
-Google session is alive; if a background remote-check finds no session it simply
-leaves the sync badges as they were until you reconnect.
+Google's popup does the signing in, so no password of yours ever reaches this app.
+The grant returns a **refresh token**, so every reconnect after the first — the
+background remote-check included — is silent; the popup comes back only if you
+revoke the app in your Google account.
+
+> A consent screen left in **Testing** expires its refresh tokens after 7 days.
+> If Drive starts asking for the popup roughly weekly, that is why.
+
+> Upgrading from a build before the client secret was required? Drive's stored
+> login has no secret in it, so it cannot reconnect: paste the client ID and
+> secret in the panel once more (and add the redirect URI from step 3, which the
+> old Identity-Services flow did not need).
 
 ### Connecting OneDrive
 
-Same shape as Drive, same five minutes: register an app, paste its client ID once.
-It is public — there is no client secret, no Worker secret and no redeploy.
+Same shape as Drive, same five minutes: register an app, paste its client ID
+once. It is public — and unlike Drive there is no client secret at all, no Worker
+secret and no redeploy.
 
 1. [Microsoft Entra admin center](https://entra.microsoft.com/) →
    **App registrations → New registration**.
@@ -177,11 +193,15 @@ It is public — there is no client secret, no Worker secret and no redeploy.
 5. In the app: **Cloud sync → OneDrive**, paste the client ID, tick "keep me
    signed in" so it is remembered (encrypted, per user), and Connect.
 
-The app asks for `Files.ReadWrite` (your own OneDrive) and `User.Read` (to show
-which account is connected) — no admin consent needed. Microsoft's popup does
-the signing in, so no password of yours reaches this app. Because no refresh token
-is stored, reconnecting opens that popup again; a background remote-check that
-cannot get a token simply leaves the sync badges as they were until you reconnect.
+The app asks for `Files.ReadWrite` (your own OneDrive), `User.Read` (to show
+which account is connected) and `offline_access` (the refresh token) — no admin
+consent needed. Microsoft's popup does the signing in, so no password of yours
+reaches this app. The refresh token keeps every later reconnect silent, the
+background remote-check included.
+
+> Microsoft's browser refresh tokens are **single-use and expire 24 h after
+> issue**. Each renewal stores its replacement, so day-to-day use never sees the
+> popup — but leave the app untouched for more than a day and you sign in again.
 
 ### Connecting Dropbox
 
@@ -202,9 +222,9 @@ once. It is public — there is no app secret, no Worker secret and no redeploy.
    in" so it is remembered (encrypted, per user), and Connect.
 
 Dropbox's popup does the signing in, so no password of yours reaches this app.
-Because no refresh token is stored, reconnecting opens that popup again; a
-background remote-check that cannot get a token simply leaves the sync badges as
-they were until you reconnect.
+The grant is `offline`, so a long-lived, non-rotating refresh token keeps every
+later reconnect silent, the background remote-check included. The popup comes
+back only if you disconnect the app in your Dropbox account settings.
 
 > Dropbox addresses files by path, not by id: if you *rename or move* the remote
 > folder a catalog was imported from, that catalog reads as "remote file gone"

@@ -1,15 +1,18 @@
-// One interactive OAuth sign-in: authorization code + PKCE, in a popup.
+// OAuth for every REST connector: authorization code + PKCE in a popup, plus
+// the silent refresh that keeps a reconnect from needing one.
 //
-// Shared by the connectors whose provider mandates PKCE for a browser app and
-// issues no client secret (OneDrive, Dropbox). Each is a couple hundred KB of
-// vendor SDK away from a string this file produces in ~60 lines: a random
-// verifier, its SHA-256 challenge, a popup to /authorize, one form POST to
-// /token. Google is NOT here — GIS hands out tokens through its own script.
+// Shared by Drive, OneDrive and Dropbox. Each is a couple hundred KB of vendor
+// SDK away from a string this file produces in ~100 lines: a random verifier,
+// its SHA-256 challenge, a popup to /authorize, one form POST to /token, and a
+// refresh_token grant for every token after that.
 //
-// Because there is no secret, nothing about these providers needs a Worker
-// secret, a route or a deploy step; the public client id the operator pastes is
-// all that gets stored, and the grant itself lives in the user's provider
-// session.
+// `oauthConnect` is what a connector calls. It hands back a session whose
+// `request()` refreshes SILENTLY when a refresh token is held and only falls
+// back to the popup when there is none (or the provider rejected it) — which is
+// what makes the background remote-check pass work without a user gesture. The
+// refresh token is written back into the credential blob (encrypted at rest in
+// user_cloud) through `onCredentials`; that write-back is not optional, because
+// Microsoft rotates the token on every use and invalidates the one it replaces.
 
 const b64url = (bytes: Uint8Array) =>
   btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -70,12 +73,48 @@ export interface PkceOptions {
   tokenUrl: string;
   clientId: string;
   scope: string;
-  /** Provider extras for /authorize (response_mode, login_hint, …). */
+  /** Only Google needs one: its token endpoint refuses a Web-application client
+   *  without it, whatever PKCE says. It is the operator's own secret, stored
+   *  encrypted in user_cloud like any other credential. */
+  clientSecret?: string;
+  /** Provider extras for /authorize (response_mode, access_type, …). */
   authParams?: Record<string, string>;
 }
 
-/** Run the whole flow and return an access token. */
-export async function pkceToken(o: PkceOptions): Promise<string> {
+interface TokenSet {
+  access: string;
+  /** "" when the provider issued none (no offline scope, or a refresh grant
+   *  that did not rotate the token). */
+  refresh: string;
+}
+
+/** One POST to /token, whatever the grant. */
+async function tokenRequest(o: PkceOptions, grant: Record<string, string>): Promise<TokenSet> {
+  const res = await fetch(o.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: o.clientId,
+      ...(o.clientSecret ? { client_secret: o.clientSecret } : {}),
+      ...grant,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    access_token?: string;
+    refresh_token?: string;
+    error_description?: string;
+    error?: string;
+  };
+  if (!res.ok || !body.access_token) {
+    throw new Error(
+      body.error_description || body.error || `${o.label} sign-in failed (${res.status})`,
+    );
+  }
+  return { access: body.access_token, refresh: body.refresh_token ?? "" };
+}
+
+/** The interactive half: popup → code → tokens. */
+async function pkceToken(o: PkceOptions): Promise<TokenSet> {
   const verifier = randomB64(32);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
   const state = randomB64(16);
@@ -96,26 +135,63 @@ export async function pkceToken(o: PkceOptions): Promise<string> {
   if (!popup) throw new Error(`the ${o.label} sign-in popup was blocked — allow popups and retry`);
   const code = await awaitCode(popup, state, o.label);
 
-  const res = await fetch(o.tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: o.clientId,
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri(),
-      code_verifier: verifier,
-    }),
+  return tokenRequest(o, {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri(),
+    code_verifier: verifier,
   });
-  const body = (await res.json().catch(() => ({}))) as {
-    access_token?: string;
-    error_description?: string;
-    error?: string;
+}
+
+/** A live provider session. `token` is the current access token; `request()`
+ *  mints a fresh one (silently where possible) and stores it here too. */
+export interface OAuthSession {
+  token: string;
+  request(): Promise<string>;
+}
+
+/**
+ * Open a session from a credential blob, keeping its `refreshToken` current.
+ *
+ * The blob is mutated in place AND reported through `onCredentials`, because a
+ * rotation can happen at any point in a long push, not only at login — and a
+ * rotation that is not persisted logs the user out of the background pass.
+ * `onCredentials` is omitted when the user did not tick "keep me signed in",
+ * which makes the whole thing session-only.
+ */
+export async function oauthConnect(
+  o: PkceOptions,
+  creds: Record<string, string>,
+  onCredentials?: (c: Record<string, string>) => void,
+): Promise<OAuthSession> {
+  const keep = (t: TokenSet) => {
+    if (t.refresh && t.refresh !== creds.refreshToken) {
+      creds.refreshToken = t.refresh;
+      onCredentials?.(creds);
+    }
+    return t.access;
   };
-  if (!res.ok || !body.access_token) {
-    throw new Error(
-      body.error_description || body.error || `${o.label} sign-in failed (${res.status})`,
-    );
-  }
-  return body.access_token;
+  const s: OAuthSession = {
+    token: "",
+    async request() {
+      if (creds.refreshToken) {
+        try {
+          return (s.token = keep(
+            await tokenRequest(o, {
+              grant_type: "refresh_token",
+              refresh_token: creds.refreshToken,
+            }),
+          ));
+        } catch {
+          // Revoked, expired, or offline. Drop it and ask the user — in the
+          // background there is no gesture, so this throws and cloud.ts keeps
+          // the cached verdict (SYNC.md).
+          creds.refreshToken = "";
+        }
+      }
+      return (s.token = keep(await pkceToken(o)));
+    },
+  };
+  await s.request();
+  return s;
 }

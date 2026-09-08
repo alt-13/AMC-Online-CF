@@ -52,14 +52,31 @@ export interface CloudConnector {
   /**
    * What the connect form must collect:
    *  - "password": email + password fields (Mega).
-   *  - "oauth":    a provider popup; `oauthFields` names any extra text input
-   *                the operator must supply first (Drive's OAuth client id).
+   *  - "oauth":    a provider popup; `oauthFields` names any extra input the
+   *                operator must supply first (Drive's client id + secret).
+   *                `secret` renders a masked field.
    */
   readonly auth: "password" | "oauth";
-  readonly oauthFields?: ReadonlyArray<{ key: string; label: string; hint?: string }>;
+  readonly oauthFields?: ReadonlyArray<{
+    key: string;
+    label: string;
+    hint?: string;
+    secret?: boolean;
+  }>;
 
-  /** Open a session. Returns it plus the account identity to show in the UI. */
-  login(creds: CloudCredentials): Promise<{ session: unknown; email: string }>;
+  /**
+   * Open a session. Returns it plus the account identity to show in the UI.
+   *
+   * `onCredentials` is present only when the user asked to be kept signed in: a
+   * connector that learns something worth reusing (an OAuth refresh token — and
+   * Microsoft rotates its on every use) mutates `creds` and reports it, and
+   * cloud.ts re-encrypts the blob. Called at most once per token renewal, which
+   * can happen mid-transfer, not only at login.
+   */
+  login(
+    creds: CloudCredentials,
+    onCredentials?: (creds: CloudCredentials) => void,
+  ): Promise<{ session: unknown; email: string }>;
 
   /** `.amc` files at `path` ("" = account root); `deep` recurses subfolders. */
   listAmc(session: unknown, path: string, deep: boolean): Promise<CloudAmcFile[]>;

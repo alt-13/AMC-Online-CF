@@ -5,19 +5,18 @@
 // and it talks to googleapis.com directly. `fetch` + the resumable upload
 // protocol is the entire implementation.
 //
-// AUTH: Google Identity Services' token client, in the browser, exactly like
-// Mega's login — the operator pastes an OAuth **client id** (public by design)
-// and Google's popup does the rest. No client secret exists, so nothing about
-// Drive needs a Worker secret, a new route, or a deploy step; the client id is
-// what `remember me` stores in user_cloud (encrypted at rest like any other
-// credential blob), and the grant itself lives in the user's Google session.
+// AUTH: the same OAuth **code flow with PKCE** popup as OneDrive and Dropbox
+// (`oauthpkce.ts`), NOT Google Identity Services. GIS' token client hands out
+// one-hour access tokens and no refresh token, so every reconnect needed a live
+// Google session and a user gesture — which the background remote-check pass
+// does not have. `access_type=offline` on the code flow does return a refresh
+// token, so a reconnect is silent, and dropping GIS drops its script tag too.
 //
-// ponytail: no refresh token, so a token request needs the Google session cookie
-// (and, on a first grant, a user gesture). A reconnect from the background
-// remote-check pass can therefore fail; cloud.ts already treats that as "no
-// verdict" and leaves the cached one, and the user reconnects from the panel.
-// Upgrade path if that gets annoying: an authorization-code exchange in the
-// Worker (GOOGLE_CLIENT_SECRET) storing a refresh token instead of the id.
+// Google is the one provider that ALSO needs a client **secret**: its token
+// endpoint refuses a Web-application client without one, whatever PKCE says. It
+// is the operator's own secret for their own deploy, pasted once and stored
+// exactly like the Mega password already is — encrypted at rest in user_cloud,
+// decrypted only into this browser. Still no Worker secret, route or deploy step.
 //
 // SCOPE: the full `drive` scope. `drive.file` only ever sees files this app
 // itself created or the user picked through Google's Picker, which cannot find
@@ -27,6 +26,7 @@
 // user; publishing one would need Google's verification.
 
 import { isAmcName, splitAmcPath } from "../browser/cloudpath";
+import { oauthConnect, type OAuthSession, type PkceOptions } from "./oauthpkce";
 import { streamToBytes } from "./cloudstream";
 import { formatSourceRef, splitLocator } from "./cloudref";
 import type {
@@ -38,7 +38,6 @@ import type {
 } from "./connector";
 
 const SCOPE = "https://www.googleapis.com/auth/drive";
-const GIS_SRC = "https://accounts.google.com/gsi/client";
 const API = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
@@ -48,109 +47,43 @@ const CHUNK = 8 * 1024 * 1024;
 const ALL_DRIVES = "supportsAllDrives=true&includeItemsFromAllDrives=true";
 const FILE_FIELDS = "id,name,size,mimeType,md5Checksum,parents";
 
-// --- Google Identity Services ----------------------------------------------
+// --- auth (PKCE in a popup, see oauthpkce.ts) --------------------------------
 
-interface TokenResponse {
-  access_token?: string;
-  error?: string;
-  error_description?: string;
-}
-interface TokenClient {
-  requestAccessToken(cfg?: { prompt?: string; hint?: string }): void;
-}
-interface Gis {
-  accounts: {
-    oauth2: {
-      initTokenClient(cfg: {
-        client_id: string;
-        scope: string;
-        callback: (r: TokenResponse) => void;
-        error_callback?: (e: { type?: string; message?: string }) => void;
-      }): TokenClient;
-    };
-  };
-}
-declare global {
-  interface Window {
-    google?: Gis;
-  }
-}
-
-let gisLoading: Promise<Gis> | null = null;
-
-/** Load the GIS script once per page. */
-function loadGis(): Promise<Gis> {
-  if (window.google?.accounts?.oauth2) return Promise.resolve(window.google);
-  gisLoading ??= new Promise<Gis>((resolve, reject) => {
-    const el = document.createElement("script");
-    el.src = GIS_SRC;
-    el.async = true;
-    el.onload = () => {
-      const g = window.google;
-      if (g?.accounts?.oauth2) resolve(g);
-      else reject(new Error("Google sign-in loaded but is unavailable"));
-    };
-    el.onerror = () => {
-      gisLoading = null; // let a later attempt retry
-      reject(new Error("could not load Google sign-in (offline, or blocked)"));
-    };
-    document.head.appendChild(el);
-  });
-  return gisLoading;
-}
-
-/** Promise-shaped access-token request. `prompt: ""` asks Google not to show a
- *  consent screen when the grant already exists. */
-type RequestToken = (prompt?: "" | "consent") => Promise<string>;
-
-async function makeTokenSource(clientId: string, hint?: string): Promise<RequestToken> {
-  const gis = await loadGis();
-  let pending: { resolve(t: string): void; reject(e: Error): void } | null = null;
-  const settle = (fn: (p: NonNullable<typeof pending>) => void) => {
-    const p = pending;
-    pending = null;
-    if (p) fn(p);
-  };
-  const client = gis.accounts.oauth2.initTokenClient({
-    client_id: clientId,
-    scope: SCOPE,
-    callback: (r) =>
-      settle((p) =>
-        r.access_token
-          ? p.resolve(r.access_token)
-          : p.reject(new Error(r.error_description || r.error || "Google sign-in was cancelled")),
-      ),
-    error_callback: (e) =>
-      settle((p) => p.reject(new Error(e?.message || "Google sign-in failed"))),
-  });
-  return (prompt = "") =>
-    new Promise<string>((resolve, reject) => {
-      if (pending) return reject(new Error("a Google sign-in is already in progress"));
-      pending = { resolve, reject };
-      client.requestAccessToken({ prompt, hint });
-    });
-}
+const pkceOptions = (clientId: string, clientSecret: string, login?: string): PkceOptions => ({
+  label: "Google",
+  authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+  tokenUrl: "https://oauth2.googleapis.com/token",
+  clientId,
+  clientSecret,
+  scope: SCOPE,
+  authParams: {
+    // offline = issue a refresh token; consent = issue a NEW one even though
+    // this account has granted the scope before (Google omits it otherwise, and
+    // we only run the interactive flow when the stored one is gone).
+    access_type: "offline",
+    prompt: "consent",
+    ...(login ? { login_hint: login } : {}),
+  },
+});
 
 // --- session + request helper ----------------------------------------------
 
-interface DriveSession {
-  token: string;
-  request: RequestToken;
-}
+type DriveSession = OAuthSession;
 
 const asSession = (s: unknown) => s as DriveSession;
 
 /**
  * One Drive request. Retries ONCE on 401 with a fresh token: an access token
  * lives about an hour and a poster-heavy catalog can take longer than that to
- * upload, so expiry mid-transfer is expected rather than exceptional.
+ * upload, so expiry mid-transfer is expected rather than exceptional. The
+ * renewal is a refresh grant, so it is silent (see oauthpkce.ts).
  */
 async function api(s: DriveSession, url: string, init: RequestInit = {}): Promise<Response> {
   const send = () =>
     fetch(url, { ...init, headers: { ...init.headers, Authorization: `Bearer ${s.token}` } });
   let res = await send();
   if (res.status === 401) {
-    s.token = await s.request("");
+    s.token = await s.request();
     res = await send();
   }
   if (!res.ok) throw new DriveError(await driveError(res), res.status);
@@ -393,17 +326,30 @@ export const driveConnector: CloudConnector = {
       label: "OAuth client ID",
       hint:
         "Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID " +
-        "(type: Web application), enable the Google Drive API, and add {origin} to the " +
-        "client's Authorized JavaScript origins. Paste the client ID here — it is public, " +
-        "there is no client secret to keep.",
+        "(type: Web application), enable the Google Drive API, and add {origin}/ to the " +
+        "client's Authorized redirect URIs.",
+    },
+    {
+      key: "clientSecret",
+      label: "Client secret",
+      secret: true,
+      hint:
+        "From the same OAuth client. Google's token endpoint requires it even with " +
+        "PKCE. Stored encrypted on your own server (like a Mega password) and used " +
+        "only by this browser; rotate it in the Console if you ever need to.",
     },
   ],
 
-  async login(creds: CloudCredentials) {
+  async login(creds: CloudCredentials, onCredentials) {
     const clientId = (creds.clientId ?? "").trim();
+    const clientSecret = (creds.clientSecret ?? "").trim();
     if (!clientId) throw new Error("a Google OAuth client ID is required");
-    const request = await makeTokenSource(clientId, creds.email);
-    const session: DriveSession = { token: await request(""), request };
+    if (!clientSecret) throw new Error("a Google OAuth client secret is required");
+    const session = await oauthConnect(
+      pkceOptions(clientId, clientSecret, creds.email),
+      creds,
+      onCredentials,
+    );
     const about = (await (
       await api(session, `${API}/about?fields=${encodeURIComponent("user(emailAddress)")}`)
     ).json()) as { user?: { emailAddress?: string } };

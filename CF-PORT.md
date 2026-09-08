@@ -290,43 +290,41 @@ the browser; the fingerprint MEGAsync demands is computed client-side
 fallback. Tests: `mega-paths.test.ts`, `mega-fingerprint.test.ts`, and the gated
 `mega.integration.test.ts`.
 
-**Google Drive** (`connector-drive.ts`): plain REST, no SDK. Auth is Google
-Identity Services' **token client** in the browser — the operator pastes a public
-OAuth **client id** (README: "Connecting Google Drive"), Google's popup does the
-signing in, and no client secret, Worker secret, route or deploy step exists for
-it. Scope is the full `drive`, because `drive.file` cannot see the `.amc` the
-desktop app wrote — the whole point of the import path. A locator is
+**Google Drive** (`connector-drive.ts`): plain REST, no SDK. Auth is the same
+PKCE popup as the other two (`oauthpkce.ts`) — **not** Google Identity Services,
+whose token client issues no refresh token. The operator pastes the OAuth
+**client id and client secret** (README: "Connecting Google Drive"): Google's
+token endpoint refuses a Web-application client without the secret, whatever PKCE
+says, so it is stored in the credential blob (encrypted at rest, per user,
+exactly like the Mega password) and used only from the browser — still no Worker
+secret, route or deploy step. Scope is the full `drive`, because `drive.file`
+cannot see the `.amc` the desktop app wrote — the whole point of the import path. A locator is
 `<folder id>:<filename>`; the fingerprint is Drive's `md5Checksum`; uploads are
 chunked **resumable** uploads so a multi-hundred-megabyte push reports progress,
 and they overwrite by file id so the Drive id and its share links survive. Tests:
 `connector-drive.test.ts` (upload chunking/308 resume, query escaping, listing).
 
-Known ceiling: the token client has no refresh token, so a reconnect needs a live
-Google session (and, on a first grant, a user gesture). A background remote-check
-that can't get a token records no verdict and leaves the cached one — the
-deliberate cheap choice; the upgrade is a code exchange in the Worker holding
-`GOOGLE_CLIENT_SECRET`.
-
 **OneDrive** (`connector-onedrive.ts`): Microsoft Graph, plain REST, no SDK —
 **no MSAL**. Auth is the OAuth **code flow with PKCE** done by hand in a popup
 (~50 lines: verifier → SHA-256 challenge → popup to `/authorize` → one
 form POST to `/token`); Microsoft mandates PKCE for SPA-registered redirect URIs
-and issues no client secret, so the pasted **Application (client) ID** is again
-the whole config (README: "Connecting OneDrive"). The redirect URI is the deploy's
-own origin — the popup lands back on `index.html` and is polled same-origin, so
-no callback page has to exist. Scopes: `Files.ReadWrite` + `User.Read`. A locator
+and issues no client secret, so the pasted **Application (client) ID** plus the
+refresh token are the whole config (README: "Connecting OneDrive"). The redirect
+URI is the deploy's own origin — the popup lands back on `index.html` and is
+polled same-origin, so no callback page has to exist. Scopes: `Files.ReadWrite` +
+`User.Read` + `offline_access`. A locator
 is `<folder id>:<filename>`; the fingerprint is the item's `quickXorHash`
 (business) or `sha256Hash`/`sha1Hash` (personal); uploads are chunked **upload
 sessions** (9.375 MiB, a 320 KiB multiple as Graph requires) addressed by parent +
-name with `conflictBehavior: replace`, so the item id and its share links survive.
-Same known ceiling as Drive, for the same reason (no `offline_access`). Tests:
-`connector-onedrive.test.ts` (chunking/202 resume, path addressing, 404-vs-5xx,
+name with `conflictBehavior: replace`, so the item id and its share links
+survive. Tests: `connector-onedrive.test.ts` (chunking/202 resume, path addressing, 404-vs-5xx,
 pagination).
 
 **Dropbox** (`connector-dropbox.ts`): plain REST, no SDK, same PKCE popup as
 OneDrive (`frontend/oauthpkce.ts` — the flow was lifted out of the OneDrive
-connector when the second provider needed it). The pasted **App key** is the
-whole config (README: "Connecting Dropbox"); scopes are `account_info.read` +
+connector when the second provider needed it). The pasted **App key** plus the
+refresh token are the whole config (README: "Connecting Dropbox"); scopes are
+`account_info.read` +
 `files.metadata.read` + `files.content.{read,write}`. The fingerprint is Dropbox's
 `content_hash`; uploads always go through a chunked **upload session** (8 MiB,
 free choice — /files/upload caps at 150 MB and chunking is what reports progress)
@@ -342,13 +340,24 @@ from the other REST connectors, both because Dropbox is **path-addressed**:
   not a 404 — `optional()` keys on that, so a 5xx still propagates as "no verdict"
   rather than "deleted".
 
-Same known ceiling as Drive and OneDrive (no refresh token). Tests:
-`connector-dropbox.test.ts` (session chunking + overwrite commit, ASCII-escaped
+Tests: `connector-dropbox.test.ts` (session chunking + overwrite commit, ASCII-escaped
 `Dropbox-API-Arg`, 409-vs-5xx, root-level paths, pagination).
 
 `frontend/cloudstream.ts` holds the one download-stream loop the REST connectors
 use (preallocate to the known size, clamp writes, report progress);
-`frontend/oauthpkce.ts` holds the one PKCE popup flow OneDrive and Dropbox use.
+`frontend/oauthpkce.ts` holds the one OAuth flow all three REST connectors use.
+
+**Silent reconnect (all three REST providers).** Every grant asks for offline
+access — `access_type=offline` (Google), `offline_access` (Microsoft),
+`token_access_type=offline` (Dropbox) — so `oauthConnect` renews with a
+`refresh_token` grant and only opens the popup when there is no stored refresh
+token or the provider refused it. That is what makes the background remote-check
+pass work: it has no user gesture, and a popup needs one. The refresh token lives
+in the credential blob, so the connector reports every renewal back through
+`login`'s `onCredentials` and `cloud.ts` re-encrypts the row — **not** optional,
+because Microsoft's browser refresh tokens are single-use (and expire 24 h after
+issue, which is that provider's remaining ceiling; Google's expire after 7 days
+while the consent screen sits in Testing). Tests: `oauthpkce.test.ts`.
 
 ### Cloud config + credential storage (per user)
 

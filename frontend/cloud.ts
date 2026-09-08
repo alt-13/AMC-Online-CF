@@ -119,14 +119,28 @@ export async function saveActivePath(path: string): Promise<void> {
 
 // --- connect / disconnect --------------------------------------------------
 
+/** Store one provider's credential blob, encrypted at rest by the Worker. Also
+ *  the write-back path for an OAuth refresh token a connector renewed (the
+ *  `path` is left out so the stored one survives). */
+async function saveCredential(provider: string, creds: CloudCredentials): Promise<void> {
+  const c = await cloud.save({ provider, credential: JSON.stringify(creds) });
+  cloudSettings.providers[provider] = { path: c.path, hasCredential: c.hasCredential };
+}
+
 /** Log in to `provider` and hold the session for this tab. If `remember`, send
- *  the credential once to be encrypted-at-rest for future auto-reconnect. */
+ *  the credential to be encrypted-at-rest for future auto-reconnect. */
 export async function connect(
   provider: string,
   creds: CloudCredentials,
   remember = false,
 ): Promise<void> {
-  const s = await connectorFor(provider).login(creds);
+  // With `remember`, the connector may hand back a refreshed credential mid-way
+  // (an OAuth refresh token) — persist each one it reports, then once more at
+  // the end so a provider that reports nothing still gets its row.
+  const s = await connectorFor(provider).login(
+    creds,
+    remember ? (c) => void saveCredential(provider, c).catch(() => {}) : undefined,
+  );
   storage = s.session;
   cloudSession.connected = true;
   cloudSession.provider = provider;
@@ -146,7 +160,11 @@ export async function autoConnect(provider: string): Promise<boolean> {
   try {
     const { credential } = await cloud.connect(provider);
     const creds = JSON.parse(credential) as CloudCredentials;
-    const s = await connectorFor(provider).login(creds);
+    // A credential is stored, so a renewed one belongs there too — Microsoft's
+    // refresh token is single-use, and the next reconnect needs its replacement.
+    const s = await connectorFor(provider).login(creds, (c) =>
+      void saveCredential(provider, c).catch(() => {}),
+    );
     storage = s.session;
     cloudSession.connected = true;
     cloudSession.provider = provider;

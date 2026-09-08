@@ -46,11 +46,22 @@
         />
       </template>
       <!-- OAuth: the provider's own popup does the signing in, so all we can be
-           asked for is setup values (Drive's public OAuth client ID). -->
+           asked for is setup values (Drive's OAuth client ID + secret). -->
       <template v-else-if="connector?.auth === 'oauth'">
         <label v-for="f in connector.oauthFields ?? []" :key="f.key" class="basis-full flex flex-col gap-0.5">
           <span class="text-[0.7rem] uppercase tracking-wide text-muted">{{ f.label }}</span>
+          <Password
+            v-if="f.secret"
+            :modelValue="oauthValues[f.key] ?? ''"
+            required
+            :feedback="false"
+            toggleMask
+            inputClass="w-full"
+            :inputProps="{ autocomplete: 'off', spellcheck: 'false' }"
+            @update:modelValue="oauthValues[f.key] = ($event ?? '') as string"
+          />
           <InputText
+            v-else
             :modelValue="oauthValues[f.key] ?? ''"
             spellcheck="false"
             autocapitalize="off"

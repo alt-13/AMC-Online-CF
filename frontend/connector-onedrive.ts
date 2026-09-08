@@ -11,12 +11,12 @@
 // **Application (client) ID** the operator pastes is all that `remember me`
 // stores in user_cloud.
 //
-// ponytail: no refresh token (`offline_access` is not requested). Same ceiling
-// as Drive: a reconnect needs a live Microsoft session and — being a popup — a
-// user gesture, so a reconnect from the background remote-check pass can fail.
-// cloud.ts treats that as "no verdict" and keeps the cached one; the user
-// reconnects from the panel. Upgrade path: request `offline_access` and persist
-// the (single-use, 24 h) rotating refresh token through user_cloud.
+// `offline_access` is what makes the grant return a refresh token, so a
+// reconnect — including the one the background remote-check pass needs, where
+// there is no user gesture to open a popup with — is silent. Microsoft's SPA
+// refresh tokens are SINGLE-USE and expire 24 h after issue, so every refresh
+// rotates them and the replacement must be persisted (oauthpkce.ts does that
+// through `onCredentials`); leave the app alone for a day and the popup returns.
 //
 // SCOPE: `Files.ReadWrite` (the signed-in user's own OneDrive) + `User.Read` for
 // the account's email in the UI. Not `.All` — nothing here touches other
@@ -24,7 +24,7 @@
 // sits in the user's own OneDrive.
 
 import { isAmcName, splitAmcPath } from "../browser/cloudpath";
-import { pkceToken } from "./oauthpkce";
+import { oauthConnect, type OAuthSession, type PkceOptions } from "./oauthpkce";
 import { streamToBytes } from "./cloudstream";
 import { formatSourceRef, splitLocator } from "./cloudref";
 import type {
@@ -35,7 +35,7 @@ import type {
   RemoteStat,
 } from "./connector";
 
-const SCOPE = "Files.ReadWrite User.Read";
+const SCOPE = "Files.ReadWrite User.Read offline_access";
 /** `common` = work/school AND personal Microsoft accounts. */
 const AUTHORITY = "https://login.microsoftonline.com/common/oauth2/v2.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
@@ -45,24 +45,18 @@ const CHUNK = 320 * 1024 * 30;
 
 // --- auth (PKCE in a popup, see oauthpkce.ts) --------------------------------
 
-/** One full interactive sign-in: popup → code → access token. */
-const requestToken = (clientId: string, login?: string) =>
-  pkceToken({
-    label: "Microsoft",
-    authorizeUrl: `${AUTHORITY}/authorize`,
-    tokenUrl: `${AUTHORITY}/token`,
-    clientId,
-    scope: SCOPE,
-    authParams: { response_mode: "fragment", ...(login ? { login_hint: login } : {}) },
-  });
+const pkceOptions = (clientId: string, login?: string): PkceOptions => ({
+  label: "Microsoft",
+  authorizeUrl: `${AUTHORITY}/authorize`,
+  tokenUrl: `${AUTHORITY}/token`,
+  clientId,
+  scope: SCOPE,
+  authParams: { response_mode: "fragment", ...(login ? { login_hint: login } : {}) },
+});
 
 // --- session + request helper ----------------------------------------------
 
-interface OneDriveSession {
-  token: string;
-  /** Re-run the interactive sign-in (there is no silent refresh — see header). */
-  request: () => Promise<string>;
-}
+type OneDriveSession = OAuthSession;
 
 const asSession = (s: unknown) => s as OneDriveSession;
 
@@ -320,11 +314,10 @@ export const onedriveConnector: CloudConnector = {
     },
   ],
 
-  async login(creds: CloudCredentials) {
+  async login(creds: CloudCredentials, onCredentials) {
     const clientId = (creds.clientId ?? "").trim();
     if (!clientId) throw new Error("a Microsoft Application (client) ID is required");
-    const request = () => requestToken(clientId, creds.email);
-    const session: OneDriveSession = { token: await request(), request };
+    const session = await oauthConnect(pkceOptions(clientId, creds.email), creds, onCredentials);
     const me = (await (await api(session, `${GRAPH}/me`)).json()) as {
       mail?: string;
       userPrincipalName?: string;

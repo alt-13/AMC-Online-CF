@@ -6,15 +6,14 @@
 //
 // AUTH: the OAuth **authorization code flow with PKCE** in a popup
 // (`oauthpkce.ts`), instead of the dropbox JS SDK. Dropbox issues no secret to
-// a PKCE app, so the **App key** the operator pastes is all that `remember me`
-// stores in user_cloud.
+// a PKCE app, so the **App key** the operator pastes plus the refresh token the
+// grant returns are all that `remember me` stores in user_cloud.
 //
-// ponytail: no refresh token (`token_access_type` is left at `online`). Same
-// ceiling as Drive and OneDrive: a reconnect needs a live Dropbox session and —
-// being a popup — a user gesture, so a reconnect from the background
-// remote-check pass can fail. cloud.ts treats that as "no verdict" and keeps the
-// cached one; the user reconnects from the panel. Upgrade path: request
-// `token_access_type=offline` and persist the refresh token through user_cloud.
+// `token_access_type=offline` is what makes that refresh token exist, so a
+// reconnect — including the one the background remote-check pass needs, where
+// there is no user gesture to open a popup with — is silent. Dropbox's refresh
+// tokens are long-lived and do NOT rotate; the popup comes back only if the user
+// revokes the app.
 //
 // SCOPE: metadata + content read/write on the user's own Dropbox, plus
 // `account_info.read` for the email shown in the UI.
@@ -29,7 +28,7 @@
 //  - Endpoint-specific failures are **HTTP 409**, not 404 — see dbxError.
 
 import { isAmcName, splitAmcPath } from "../browser/cloudpath";
-import { pkceToken } from "./oauthpkce";
+import { oauthConnect, type OAuthSession, type PkceOptions } from "./oauthpkce";
 import { streamToBytes } from "./cloudstream";
 import { formatSourceRef, splitLocator } from "./cloudref";
 import type {
@@ -47,22 +46,19 @@ const CONTENT = "https://content.dropboxapi.com/2";
  *  granularity, not an API constraint. */
 const CHUNK = 8 * 1024 * 1024;
 
-const requestToken = (appKey: string) =>
-  pkceToken({
-    label: "Dropbox",
-    authorizeUrl: "https://www.dropbox.com/oauth2/authorize",
-    tokenUrl: "https://api.dropboxapi.com/oauth2/token",
-    clientId: appKey,
-    scope: SCOPE,
-  });
+const pkceOptions = (appKey: string): PkceOptions => ({
+  label: "Dropbox",
+  authorizeUrl: "https://www.dropbox.com/oauth2/authorize",
+  tokenUrl: "https://api.dropboxapi.com/oauth2/token",
+  clientId: appKey,
+  scope: SCOPE,
+  // Without this Dropbox issues a short-lived token and no refresh token.
+  authParams: { token_access_type: "offline" },
+});
 
 // --- session + request helpers ----------------------------------------------
 
-interface DropboxSession {
-  token: string;
-  /** Re-run the interactive sign-in (there is no silent refresh — see header). */
-  request: () => Promise<string>;
-}
+type DropboxSession = OAuthSession;
 
 const asSession = (s: unknown) => s as DropboxSession;
 
@@ -103,7 +99,8 @@ const apiArg = (arg: unknown) =>
   );
 
 /** One request, retried ONCE on 401 with a fresh token: an access token expires
- *  and a poster-heavy catalog can take a long time to push. */
+ *  and a poster-heavy catalog can take a long time to push. The renewal is a
+ *  refresh grant, so it is silent (see oauthpkce.ts). */
 async function send(s: DropboxSession, url: string, init: RequestInit): Promise<Response> {
   const go = () =>
     fetch(url, { ...init, headers: { ...init.headers, Authorization: `Bearer ${s.token}` } });
@@ -277,11 +274,10 @@ export const dropboxConnector: CloudConnector = {
     },
   ],
 
-  async login(creds: CloudCredentials) {
+  async login(creds: CloudCredentials, onCredentials) {
     const appKey = (creds.clientId ?? "").trim();
     if (!appKey) throw new Error("a Dropbox App key is required");
-    const request = () => requestToken(appKey);
-    const session: DropboxSession = { token: await request(), request };
+    const session = await oauthConnect(pkceOptions(appKey), creds, onCredentials);
     const me = await rpc<{ email?: string }>(session, "/users/get_current_account", null);
     return { session, email: me.email ?? "" };
   },
