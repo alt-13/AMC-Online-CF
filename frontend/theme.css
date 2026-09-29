@@ -29,7 +29,7 @@
 
 @theme {
   --font-display: 'Playfair Display', Georgia, serif;
-  --font-body:    'DM Sans', system-ui, sans-serif;
+  --font-body:    'Twemoji Country Flags', 'DM Sans', system-ui, sans-serif;
 }
 
 /* Light — warm paper + a darkened gold, same cinema spirit as dark. The golds,

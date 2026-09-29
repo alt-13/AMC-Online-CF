@@ -5,6 +5,7 @@
 // (create-account on first run, otherwise sign-in) before CatalogsView.
 
 import { createApp } from "vue";
+import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
 import PrimeVue from "primevue/config";
 import Tooltip from "primevue/tooltip";
 import { definePreset } from "@primevue/themes";
@@ -239,6 +240,10 @@ const CinemaPreset = definePreset(Aura, {
 
 applyTheme();
 watchSystemTheme();
+
+// Windows ships no flag emoji glyphs (🇦🇹 renders as "AT"). This injects a
+// flags-only webfont (unicode-range limited) — and only where flags are missing.
+polyfillCountryFlagEmojis();
 
 createApp(App)
   .directive("tooltip", Tooltip)

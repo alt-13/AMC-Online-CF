@@ -1,6 +1,7 @@
 <!--
   SettingsDialog.vue — the user's settings: light/dark mode, field visibility
-  (desktop/mobile), the search field, and the OMDb key. Field visibility is one
+  (desktop/mobile), the search field, the rating source, the streaming region
+  and the OMDb + TMDB keys. Field visibility is one
   section of it, not the dialog's subject. Persists the one JSON blob the Worker
   stores in `user_settings` — except the mode, which is device-local (theme.ts).
   Built on PrimeVue Dialog + Accordion + Checkbox + Select + Password.
@@ -213,27 +214,61 @@
       </div>
 
       <div class="mt-4 flex flex-col gap-2">
-        <span class="text-sm font-semibold text-gold">OMDb API key</span>
+        <span class="text-sm font-semibold text-gold">Rating source</span>
         <p class="m-0 text-xs text-muted">
-          Powers "⚡ Fetch → new" (IMDb/OMDb metadata). Get a free key at
-          <a class="text-gold" href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">omdbapi.com</a>.
+          Which rating a fetch writes into the Rating field. All are stored on the
+          same 0–10 scale (Rotten Tomatoes 93% → 9.3, Metacritic 74 → 7.4). A film
+          the source has no rating for keeps its current value. The movie header
+          shows every rating either way.
+        </p>
+        <Select
+          v-model="draft.rating_source"
+          :options="ratingSourceOptions"
+          optionLabel="label"
+          optionValue="value"
+          class="w-full"
+        />
+      </div>
+
+      <div class="mt-4 flex flex-col gap-2">
+        <span class="text-sm font-semibold text-gold">Streaming region</span>
+        <p class="m-0 text-xs text-muted">
+          Where to look up subscription and free streaming offers (data by
+          JustWatch via TMDB). Defaults to your browser's region.
+        </p>
+        <Select
+          v-model="regionModel"
+          :options="regions"
+          optionLabel="label"
+          optionValue="value"
+          filter
+          filterPlaceholder="Country or code…"
+          class="w-full"
+        />
+      </div>
+
+      <div v-for="k in KEYS" :key="k.which" class="mt-4 flex flex-col gap-2">
+        <span class="text-sm font-semibold text-gold">{{ k.title }}</span>
+        <p class="m-0 text-xs text-muted">
+          {{ k.help }} Get a free key at
+          <a class="text-gold" :href="k.href" target="_blank" rel="noopener">{{ k.site }}</a>.
         </p>
         <Password
-          v-model="omdbInput"
+          v-model="keyInput[k.which]"
           :feedback="false"
           toggleMask
           inputClass="w-full"
           class="w-full"
           :inputProps="{ autocomplete: 'off' }"
-          :placeholder="omdbKey.personal ? 'A key is saved — type to replace it' : 'Paste your OMDb API key…'"
+          :placeholder="keyState[k.which].personal ? 'A key is saved — type to replace it' : `Paste your ${k.name} key…`"
         />
         <div class="flex items-center justify-between gap-2">
-          <span class="text-xs" :class="omdbKey.hasKey ? 'text-gold' : 'text-muted'">
-            {{ omdbKey.personal ? "✓ Your key is saved"
-               : omdbKey.hasKey ? "Using the server's shared key"
-               : "No key set — fetch is disabled" }}
+          <span class="text-xs" :class="keyState[k.which].hasKey ? 'text-gold' : 'text-muted'">
+            {{ keyState[k.which].personal ? "✓ Your key is saved"
+               : keyState[k.which].hasKey ? "Using the server's shared key"
+               : `No key set — ${k.off}` }}
           </span>
-          <Button v-if="omdbKey.personal" label="Remove" text severity="danger" @click="removeKey" />
+          <Button v-if="keyState[k.which].personal" label="Remove" text severity="danger" @click="removeKey(k.which)" />
         </div>
       </div>
     </div>
@@ -262,10 +297,11 @@ import Accordion from "primevue/accordion";
 import AccordionPanel from "primevue/accordionpanel";
 import AccordionHeader from "primevue/accordionheader";
 import AccordionContent from "primevue/accordioncontent";
-import { settings as settingsApi, omdb, type CustomFieldDefRow, type OmdbKeyState } from "./api";
+import { settings as settingsApi, omdb, tmdb, type CustomFieldDefRow, type KeyState } from "./api";
+import { regionOptions, defaultRegion } from "./regions";
 import {
   sectionsFor, DEFAULT_SETTINGS, MAX_MOVIE_NUMBER, DEFAULT_CERTIFICATION_VALUES,
-  type AppSettings, type SeriesRule, type FieldSection, type FieldDef,
+  type AppSettings, type RatingSource, type SeriesRule, type FieldSection, type FieldDef,
 } from "./fields";
 
 import { getThemeMode, setThemeMode, type ThemeMode } from "./theme";
@@ -357,8 +393,36 @@ const expanded = ref<string[]>(["main"]);
 const saving = ref(false);
 const error = ref("");
 
-const omdbKey = ref<OmdbKeyState>({ hasKey: false, personal: false });
-const omdbInput = ref("");
+const ratingSourceOptions: { label: string; value: RatingSource }[] = [
+  { label: "IMDb", value: "imdb" },
+  { label: "Rotten Tomatoes", value: "rt" },
+  { label: "Metacritic", value: "metacritic" },
+];
+const regions = regionOptions();
+// "" means "the browser's region"; show that region selected rather than a
+// blank box, and store whatever the user picks explicitly.
+const regionModel = computed<string>({
+  get: () => draft.value.streaming_region || defaultRegion(),
+  set: (v) => { draft.value.streaming_region = v; },
+});
+
+type Which = "omdb" | "tmdb";
+const KEY_API = { omdb, tmdb };
+const KEYS: { which: Which; title: string; name: string; help: string; site: string; href: string; off: string }[] = [
+  { which: "omdb", title: "OMDb API key", name: "OMDb API", site: "omdbapi.com",
+    href: "https://www.omdbapi.com/apikey.aspx",
+    help: "Powers “⚡ Fetch” (IMDb/OMDb metadata) and the header ratings.",
+    off: "fetch is disabled" },
+  { which: "tmdb", title: "TMDB API key", name: "TMDB API key or read token", site: "themoviedb.org",
+    href: "https://www.themoviedb.org/settings/api",
+    help: "Powers the streaming icons in the movie header. Either the API key or the read access token works.",
+    off: "no streaming icons" },
+];
+const keyState = ref<Record<Which, KeyState>>({
+  omdb: { hasKey: false, personal: false },
+  tmdb: { hasKey: false, personal: false },
+});
+const keyInput = ref<Record<Which, string>>({ omdb: "", tmdb: "" });
 
 onMounted(async () => {
   try {
@@ -366,18 +430,20 @@ onMounted(async () => {
   } catch {
     /* defaults */
   }
-  try {
-    omdbKey.value = await omdb.keyState();
-  } catch {
-    /* leave defaults */
+  for (const k of KEYS) {
+    try {
+      keyState.value[k.which] = await KEY_API[k.which].keyState();
+    } catch {
+      /* leave defaults */
+    }
   }
 });
 
-async function removeKey() {
+async function removeKey(which: Which) {
   error.value = "";
   try {
-    omdbKey.value = await omdb.saveKey(null);
-    omdbInput.value = "";
+    keyState.value[which] = await KEY_API[which].saveKey(null);
+    keyInput.value[which] = "";
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   }
@@ -409,10 +475,12 @@ async function save() {
   saving.value = true;
   error.value = "";
   try {
-    // Only send the OMDb key when the user actually typed one (blank = keep).
-    if (omdbInput.value.trim()) {
-      omdbKey.value = await omdb.saveKey(omdbInput.value.trim());
-      omdbInput.value = "";
+    // Only send a key the user actually typed (blank = keep).
+    for (const k of KEYS) {
+      const typed = keyInput.value[k.which].trim();
+      if (!typed) continue;
+      keyState.value[k.which] = await KEY_API[k.which].saveKey(typed);
+      keyInput.value[k.which] = "";
     }
     const saved = await settingsApi.save(draft.value);
     emit("saved", saved);

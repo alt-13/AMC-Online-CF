@@ -442,6 +442,24 @@ export interface OmdbKeyState {
   hasKey: boolean; // a usable key exists (personal or global fallback)
   personal: boolean; // this user has their own key stored
 }
+export type KeyState = OmdbKeyState;
+
+/** The per-user encrypted key endpoints, same contract for OMDb and TMDB. */
+function keyApi(which: "omdb" | "tmdb") {
+  return {
+    /** Whether a key is available (never returns the key itself). */
+    keyState: () => jget<KeyState>(`/api/${which}/key`),
+    /** Set (string), keep ("" / undefined), or clear (null) the personal key. */
+    saveKey: async (key: string | null): Promise<KeyState> => {
+      const res = await authedFetch(`/api/${which}/key`, {
+        method: "PUT",
+        body: JSON.stringify({ key }),
+      }, { "content-type": "application/json" });
+      if (!res.ok) throw new Error(`save ${which} key -> ${res.status}`);
+      return res.json() as Promise<KeyState>;
+    },
+  };
+}
 
 export const omdb = {
   search: (query: string) =>
@@ -450,18 +468,33 @@ export const omdb = {
   fetch: (ttOrUrl: string) =>
     jget<OmdbResult>(`/api/omdb/fetch?i=${encodeURIComponent(ttOrUrl)}`),
 
-  /** Whether an OMDb key is available (never returns the key itself). */
-  keyState: () => jget<OmdbKeyState>("/api/omdb/key"),
+  ...keyApi("omdb"),
+};
 
-  /** Set (string), keep ("" / undefined), or clear (null) the personal key. */
-  saveKey: async (key: string | null): Promise<OmdbKeyState> => {
-    const res = await authedFetch("/api/omdb/key", {
-      method: "PUT",
-      body: JSON.stringify({ key }),
-    }, { "content-type": "application/json" });
-    if (!res.ok) throw new Error(`save OMDb key -> ${res.status}`);
-    return res.json() as Promise<OmdbKeyState>;
-  },
+export const tmdb = keyApi("tmdb");
+
+// --- ratings + streaming for the header (display-only, cached 7 d) ---------
+
+export interface Provider {
+  id: number;
+  name: string;
+  logo: string;
+  kind: "flatrate" | "free" | "ads";
+}
+
+export interface ExtInfo {
+  ratings: Ratings | null;
+  providers: { link: string; list: Provider[] } | null;
+  region: string;
+  fetched_at: number;
+  missing: ("omdb" | "tmdb")[];
+}
+
+export const extinfo = {
+  get: (tt: string, region: string, refresh = false) =>
+    jget<ExtInfo>(
+      `/api/extinfo?i=${encodeURIComponent(tt)}&region=${encodeURIComponent(region)}${refresh ? "&refresh=1" : ""}`,
+    ),
 };
 
 // --- app settings (field visibility + search field) ------------------------

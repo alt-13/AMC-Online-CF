@@ -425,7 +425,13 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     const now = Date.now();
     if (url.searchParams.get("refresh") !== "1") {
       const hit = await db.getExtInfo(env, t, tt, region);
-      if (hit && isFresh(hit.fetched_at, now)) return json(JSON.parse(hit.data));
+      if (hit && isFresh(hit.fetched_at, now)) {
+        try {
+          return json(JSON.parse(hit.data));
+        } catch {
+          /* corrupt row — refetch and overwrite it below */
+        }
+      }
     }
     const [omdbKey, tmdbKey] = await Promise.all([apiKeyFor(env, t, "omdb"), apiKeyFor(env, t, "tmdb")]);
     if (omdbKey instanceof Response) return omdbKey;
@@ -448,6 +454,7 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     }
     return json(info);
   }
+
   // GET /api/proxy-image?url=  — server-side image fetch so the browser can
   // re-encode a poster it otherwise can't read (IMDb CDN sends no CORS headers).
   // The browser canvas does the JPEG normalisation; the Worker is a dumb proxy.
