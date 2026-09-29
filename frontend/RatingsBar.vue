@@ -23,7 +23,7 @@
       v-else
       class="text-[0.78rem] font-semibold tabular-nums"
       :class="[TONE_CLASS[toneOf(s.key, val(s.key))], { 'opacity-50': val(s.key) === null }]"
-      v-tooltip.top="`${s.name} ${nativeFormat(s.key, val(s.key))}`"
+      v-tooltip.top="val(s.key) === null && noOmdb ? `${s.name} — add an OMDb key in Settings` : `${s.name} ${nativeFormat(s.key, val(s.key))}`"
     >
       <span class="font-light text-muted">{{ s.short }}</span>
       {{ nativeFormat(s.key, val(s.key)) }}
@@ -72,11 +72,12 @@ const chips = computed(() => {
   return props.mobile ? all.slice(0, 1) : all;
 });
 const val = (k: RatingSource) => props.info?.ratings?.[k] ?? null;
+const noOmdb = computed(() => !!props.info?.missing?.includes("omdb"));
 const drift = computed(() => driftOf(props.rating, props.info?.ratings ?? null, props.source));
 const leadTip = computed(() => {
   if (drift.value === null) return "Used for the Rating field · change in Settings";
   const name = RATING_SOURCES.find((s) => s.key === props.source)!.name;
-  return `Edited — ${name} says ${nativeFormat(props.source, drift.value)}`;
+  return `Differs from ${name}: ${nativeFormat(props.source, drift.value)}`;
 });
 // No watch link → no icons: an empty href would reopen the app in a new tab.
 const providers = computed(() => (props.info?.providers?.link ? props.info.providers.list ?? [] : []));

@@ -446,6 +446,7 @@ export type KeyState = OmdbKeyState;
 
 /** The per-user encrypted key endpoints, same contract for OMDb and TMDB. */
 function keyApi(which: "omdb" | "tmdb") {
+  const label = which === "omdb" ? "OMDb" : "TMDB";
   return {
     /** Whether a key is available (never returns the key itself). */
     keyState: () => jget<KeyState>(`/api/${which}/key`),
@@ -455,7 +456,7 @@ function keyApi(which: "omdb" | "tmdb") {
         method: "PUT",
         body: JSON.stringify({ key }),
       }, { "content-type": "application/json" });
-      if (!res.ok) throw new Error(`save ${which} key -> ${res.status}`);
+      if (!res.ok) throw new Error(`save ${label} key -> ${res.status}`);
       return res.json() as Promise<KeyState>;
     },
   };

@@ -382,6 +382,9 @@ dev` boots:
   so it's a no-op (quiet, fast) once seeded. This is why a missing `user_cloud`
   table no longer 500s the Mega sign-in path on a fresh checkout.
 
+After pulling a branch with a new migration, run `npx wrangler d1 migrations apply amc --local`
+(the auto-seed only runs on an empty DB).
+
 To seed the emulated D1 manually (the auto-seed does this for you):
 
 ```sh

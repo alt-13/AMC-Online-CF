@@ -54,7 +54,7 @@ export const TONE_CLASS: Record<Tone, string> = {
 };
 
 /** What the source says now, when it disagrees with the stored Rating (hand
- *  edit, or the source moved since the fetch). null = agrees or nothing to
+ *  edit, or the source was switched / moved since the fetch). null = agrees or nothing to
  *  compare — an unset Rating is not "drift", it was simply never fetched. */
 export function driftOf(stored: number, ratings: Ratings | null, src: RatingSource): number | null {
   const v = ratings?.[src] ?? null;

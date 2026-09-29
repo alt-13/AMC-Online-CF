@@ -643,13 +643,13 @@ let posterGen = 0;
 // so a slow response for the previous film must not land on this one.
 const info = ref<ExtInfo | null>(null);
 let infoGen = 0;
-async function loadInfo() {
+async function loadInfo(refresh = false) {
   const gen = ++infoGen;
   info.value = null;
   const tt = ttOf(form.url);
   if (!tt) return;
   try {
-    const res = await extinfo.get(tt, regionFor(props.settings));
+    const res = await extinfo.get(tt, regionFor(props.settings), refresh);
     if (gen === infoGen) info.value = res;
   } catch {
     /* header keeps its placeholders */
@@ -675,7 +675,9 @@ window.addEventListener("keydown", _keyListener);
 // Reload whenever the selected movie changes (the component instance is reused
 // across row switches — no :key remount).
 watch(() => props.movieId, load, { immediate: true });
-watch(() => props.settings.streaming_region, () => void loadInfo());
+// The list replaces `settings` on save (new object) — refresh the header for a
+// new key, region or rating source.
+watch(() => props.settings, () => void loadInfo());
 
 onBeforeUnmount(() => {
   _mq.removeEventListener("change", _mqListener);
@@ -1099,7 +1101,7 @@ function omdbSeed(): string {
 async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
   Object.assign(form, patch);
   dirty.value = true;
-  void loadInfo();
+  void loadInfo(true); // a cached week-old Rating would show as drift
   if (posterUrl) await applyPosterUrl(posterUrl);
 }
 </script>
