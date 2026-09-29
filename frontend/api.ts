@@ -425,9 +425,17 @@ export interface OmdbSuggestion {
   url: string;
 }
 
+/** All ratings on the stored 0–100 scale (rule 3); null = source has none. */
+export interface Ratings {
+  imdb: number | null;
+  rt: number | null;
+  metacritic: number | null;
+}
+
 export interface OmdbResult {
   patch: Partial<MovieRow>;
   poster_url: string;
+  ratings: Ratings;
 }
 
 export interface OmdbKeyState {

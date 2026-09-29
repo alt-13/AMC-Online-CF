@@ -16,7 +16,7 @@ import type { CatalogRow, CustomFieldDefRow, MovieRow, ImportResult } from "../a
 import * as db from "./db";
 import * as auth from "./auth";
 import { encryptSecret, decryptSecret } from "./crypto";
-import { searchImdb, fetchOmdb, extractTt } from "./omdb";
+import { searchImdb, fetchOmdb, extractTt, type RatingSource } from "./omdb";
 import { newMovieRow } from "./movie-new";
 import { isBlobKey } from "../amc/posterkey";
 
@@ -57,6 +57,33 @@ export function clampPagingParam(
  *  ENCRYPTION_SECRET if provided, else AUTH_SECRET (so existing deploys keep
  *  working, but rotating AUTH_SECRET no longer bricks saved credentials). */
 const cryptoSecret = (env: Env): string => env.ENCRYPTION_SECRET || env.AUTH_SECRET;
+
+// Per-user settings: one opaque JSON blob per user, exactly like pm's
+// settings.json. The shape mirrors AppSettings/DEFAULT_SETTINGS in
+// frontend/fields.ts; the spread in loadSettings is what backfills a new key
+// onto an existing user's blob, so adding one here is all a new setting needs
+// (no migration).
+const DEFAULT_SETTINGS = {
+  field_visibility: { desktop: {}, mobile: {} },
+  search_field: "",
+  series_rule: { kind: "off" },
+  checked_separate: false,
+  duplicate_field: "original_title",
+  rating_source: "imdb" as RatingSource,
+  streaming_region: "",
+};
+
+/** The user's settings with every default backfilled (rule 14) — the same
+ *  spread GET /api/settings returns. */
+async function loadSettings(env: Env, t: string): Promise<typeof DEFAULT_SETTINGS> {
+  const raw = await db.getUserSettings(env, t);
+  if (!raw) return DEFAULT_SETTINGS;
+  try {
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
 
 // --- request router --------------------------------------------------------
 
@@ -316,28 +343,7 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
   }
 
   // ---- app settings (field visibility + search field + series rule) ------
-  // Stored as one opaque JSON blob per user, exactly like pm's settings.json.
-  // The shape mirrors AppSettings/DEFAULT_SETTINGS in frontend/fields.ts; the
-  // spread below is what backfills a new key onto an existing user's blob, so
-  // adding one here is all a new setting needs (no migration).
-  const DEFAULT_SETTINGS = {
-    field_visibility: { desktop: {}, mobile: {} },
-    search_field: "",
-    series_rule: { kind: "off" },
-    checked_separate: false,
-    duplicate_field: "original_title",
-    rating_source: "imdb",
-    streaming_region: "",
-  };
-  if (p === "/api/settings" && m === "GET") {
-    const raw = await db.getUserSettings(env, t);
-    if (!raw) return json(DEFAULT_SETTINGS);
-    try {
-      return json({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) });
-    } catch {
-      return json(DEFAULT_SETTINGS);
-    }
-  }
+  if (p === "/api/settings" && m === "GET") return json(await loadSettings(env, t));
   if (p === "/api/settings" && m === "PUT") {
     const body = await req.json();
     await db.upsertUserSettings(env, t, JSON.stringify(body), Date.now());
@@ -392,7 +398,8 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     }
     if (!apiKey) return err(400, "no OMDb API key — add a free key in Settings");
     try {
-      return json(await fetchOmdb(tt, apiKey));
+      const { rating_source } = await loadSettings(env, t);
+      return json(await fetchOmdb(tt, apiKey, rating_source));
     } catch (e) {
       return err(502, e instanceof Error ? e.message : "OMDb fetch failed");
     }

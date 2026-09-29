@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSuggestions, parseOmdb, extractTt } from "./omdb";
+import { parseSuggestions, parseOmdb, parseRatings, extractTt } from "./omdb";
 import { newMovieRow, todayDelphi } from "./movie-new";
 
 describe("extractTt", () => {
@@ -120,5 +120,46 @@ describe("todayDelphi", () => {
     // 1899-12-31 is day 1.
     expect(todayDelphi(Date.UTC(1899, 11, 31))).toBe(1);
     expect(todayDelphi(Date.UTC(1900, 0, 1))).toBe(2);
+  });
+});
+
+describe("parseRatings — every source on the stored 0–100 scale", () => {
+  const data = {
+    imdbRating: "8.7",
+    Metascore: "73",
+    Ratings: [
+      { Source: "Internet Movie Database", Value: "8.7/10" },
+      { Source: "Rotten Tomatoes", Value: "93%" },
+      { Source: "Metacritic", Value: "74/100" },
+    ],
+  };
+  it("scales IMDb ×10, RT and Metacritic ×1", () => {
+    expect(parseRatings(data)).toEqual({ imdb: 87, rt: 93, metacritic: 74 });
+  });
+  it("uses Metascore when the Ratings array has no Metacritic entry", () => {
+    expect(parseRatings({ Metascore: "9", Ratings: [] }).metacritic).toBe(9);
+  });
+  it("N/A and missing values are null, not 0", () => {
+    expect(parseRatings({ imdbRating: "N/A", Metascore: "N/A" })).toEqual({
+      imdb: null, rt: null, metacritic: null,
+    });
+  });
+});
+
+describe("parseOmdb rating source", () => {
+  const data = {
+    Title: "X",
+    imdbRating: "8.7",
+    Ratings: [{ Source: "Rotten Tomatoes", Value: "93%" }],
+  };
+  it("fills Rating from the chosen source", () => {
+    expect(parseOmdb("tt1", data, "rt").patch.rating).toBe(93);
+    expect(parseOmdb("tt1", data, "imdb").patch.rating).toBe(87);
+  });
+  it("leaves Rating out when the chosen source has no value (no IMDb fallback)", () => {
+    expect("rating" in parseOmdb("tt1", data, "metacritic").patch).toBe(false);
+  });
+  it("always returns all ratings for the header", () => {
+    expect(parseOmdb("tt1", data, "metacritic").ratings).toEqual({ imdb: 87, rt: 93, metacritic: null });
   });
 });
