@@ -82,16 +82,15 @@
               <span v-if="form.director" class="text-[0.72rem] text-muted bg-elevated border border-border px-[0.45rem] py-[0.1rem] rounded-[10px] max-md:hidden">Dir. {{ form.director }}</span>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
-              <!-- On mobile the two score pills lose their "score"/"mine" word
-                   and most of their padding: the star/person glyph already says
-                   which is which, and at full size the pair plus the meta pills
-                   crowded the title out of the header. -->
-              <div v-if="form.rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-gold
-                          max-md:gap-0.5 max-md:px-1.5 max-md:py-0 max-md:text-[0.72rem]">
-                <i class="pi pi-star-fill text-[0.7rem] max-md:text-[0.6rem]" />
-                {{ (form.rating / 10).toFixed(1) }}
-                <span class="font-light text-[0.7rem] text-muted max-md:hidden">score</span>
-              </div>
+              <!-- Score pills live in RatingsBar; the user-rating pill keeps its
+                   compact mobile form (glyph only, little padding) so the meta
+                   pills don't crowd the title out of the header. -->
+              <RatingsBar
+                :rating="form.rating"
+                :source="props.settings.rating_source"
+                :info="info"
+                :mobile="mode === 'mobile'"
+              />
               <div v-if="form.user_rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-info
                           max-md:gap-0.5 max-md:px-1.5 max-md:py-0 max-md:text-[0.72rem]">
                 <i class="pi pi-user text-[0.7rem] max-md:text-[0.6rem]" />
@@ -270,7 +269,8 @@
                 @update:modelValue="(v: string | undefined) => setInt('length', v ?? '')" />
             </div>
             <div class="grid grid-cols-[100px_1fr] items-center gap-1.5 min-h-[26px] max-md:grid-cols-1 max-md:gap-0.5 max-md:min-h-0" v-show="showField('rating')">
-              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal">Rating</label>
+              <label class="text-[0.78rem] text-muted text-right pr-1 whitespace-nowrap max-md:text-left max-md:pr-0 max-md:whitespace-normal"
+                v-tooltip.top="`Filled from ${RATING_NAME[props.settings.rating_source]} on fetch — change in Settings`">Rating</label>
               <InputText type="number" step="0.1" min="0" max="10" class="w-full" size="small"
                 :modelValue="String(ratingDec('rating'))"
                 @update:modelValue="(v: string | undefined) => setRating('rating', v ?? '')" />
@@ -561,13 +561,16 @@ import Select from "primevue/select";
 import Checkbox from "primevue/checkbox";
 import DatePicker from "primevue/datepicker";
 import Button from "primevue/button";
-import { cf, session, type MovieRow, type CustomFieldDefRow, type Extra } from "./api";
+import { cf, session, extinfo, type MovieRow, type CustomFieldDefRow, type Extra, type ExtInfo } from "./api";
+import RatingsBar from "./RatingsBar.vue";
+import { ttOf, RATING_SOURCES } from "./ratings";
+import { regionFor } from "./regions";
 import { sha256Hex, blobKey, isBlobKey } from "../amc/posterkey";
 import OmdbDialog from "./OmdbDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import {
   isVisible, parseCustom, delphiToDate, dateToDelphi, SENTINEL, MAX_MOVIE_NUMBER,
-  COLOR_TAG_COLORS, COLOR_TAG_NAMES, type AppSettings, findDuplicateOnEdit, fieldLabel,
+  COLOR_TAG_COLORS, COLOR_TAG_NAMES, type AppSettings, findDuplicateOnEdit, fieldLabel, isWatched,
 } from "./fields";
 
 const props = defineProps<{
@@ -635,6 +638,25 @@ let objectUrl = "";
 // each call captures its generation and commits only while it is still latest.
 let posterGen = 0;
 
+// Ratings + streaming offers for the header (display-only, cached 7 days by the
+// Worker). Same generation guard as the poster: rows switch without a remount,
+// so a slow response for the previous film must not land on this one.
+const info = ref<ExtInfo | null>(null);
+let infoGen = 0;
+async function loadInfo() {
+  const gen = ++infoGen;
+  info.value = null;
+  const tt = ttOf(form.url);
+  if (!tt) return;
+  try {
+    const res = await extinfo.get(tt, regionFor(props.settings));
+    if (gen === infoGen) info.value = res;
+  } catch {
+    /* header keeps its placeholders */
+  }
+}
+const RATING_NAME = Object.fromEntries(RATING_SOURCES.map((s) => [s.key, s.name])) as Record<string, string>;
+
 const mode = ref<"desktop" | "mobile">(
   window.matchMedia("(max-width: 768px)").matches ? "mobile" : "desktop",
 );
@@ -653,6 +675,7 @@ window.addEventListener("keydown", _keyListener);
 // Reload whenever the selected movie changes (the component instance is reused
 // across row switches — no :key remount).
 watch(() => props.movieId, load, { immediate: true });
+watch(() => props.settings.streaming_region, () => void loadInfo());
 
 onBeforeUnmount(() => {
   _mq.removeEventListener("change", _mqListener);
@@ -682,6 +705,7 @@ async function load() {
     // poster fills in on its own a moment later.
     loading.value = false;
     void loadPoster(m.poster_key);
+    void loadInfo();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
     loading.value = false;
@@ -809,9 +833,7 @@ const dateWatched = computed<Date | null>({
 // What the header badge means. Synced: the stored flag (so a legacy row with no
 // date still reads "Watched"). Separate: the flag is not about watching any
 // more, so only the date can answer.
-const watched = computed(() =>
-  props.settings.checked_separate ? !!num("date_watched") : !!form.checked,
-);
+const watched = computed(() => isWatched(form, props.settings));
 const ratingDec = (k: string) => {
   const v = num(k);
   return v > 0 ? v / 10 : "";
@@ -1077,6 +1099,7 @@ function omdbSeed(): string {
 async function applyOmdb(patch: Partial<MovieRow>, posterUrl: string) {
   Object.assign(form, patch);
   dirty.value = true;
+  void loadInfo();
   if (posterUrl) await applyPosterUrl(posterUrl);
 }
 </script>
