@@ -25,6 +25,7 @@
   --color-danger:    var(--c-danger);
   --color-success:   var(--c-success);
   --color-info:      var(--c-info);
+  --color-warn:      var(--c-warn);
 }
 
 @theme {
@@ -49,6 +50,7 @@
   --c-danger:    #b3261e;
   --c-success:   #2e7d52;
   --c-info:      #1f6f8b;
+  --c-warn:      #9a6a00;
   --radius: 8px;
   color-scheme: light;
 }
@@ -68,6 +70,7 @@
   --c-danger:    #e05252;
   --c-success:   #4caf7a;
   --c-info:      #7ec8e3;
+  --c-warn:      #e8c14a;
   color-scheme: dark;
 }
 
