@@ -191,6 +191,11 @@ export async function putExtInfo(
     .run();
 }
 
+/** Drop a tenant's cached answers (an API key changed → they may be stale). */
+export async function clearExtInfo(env: Env, tenantId: string): Promise<void> {
+  await env.DB.prepare(`DELETE FROM ext_info WHERE tenant_id = ?`).bind(tenantId).run();
+}
+
 // --- catalogs --------------------------------------------------------------
 
 export async function listCatalogs(env: Env, tenantId: string): Promise<CatalogRow[]> {

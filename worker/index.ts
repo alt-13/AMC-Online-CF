@@ -392,8 +392,10 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       const body = (await req.json().catch(() => ({}))) as { key?: string | null };
       if (body.key === null) {
         await db.setApiKey(env, t, col, null, Date.now());
+        await db.clearExtInfo(env, t);
       } else if (body.key) {
         await db.setApiKey(env, t, col, await encryptSecret(body.key.trim(), cryptoSecret(env)), Date.now());
+        await db.clearExtInfo(env, t);
       }
     }
     const stored = await db.getApiKey(env, t, col);
@@ -447,9 +449,10 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
       fetched_at: now,
       missing: (["omdb", "tmdb"] as const).filter((k) => !(k === "omdb" ? omdbKey : tmdbKey)),
     };
-    // Cache only a complete answer: a failed call or a key the user adds later
-    // must not leave a hole in the header for a week.
-    if (omdbKey && tmdbKey && ratings.status === "fulfilled" && providers.status === "fulfilled") {
+    // Cache when every call actually made succeeded (a missing key is no call, so
+    // OMDb-only users cache too); a failed call must not leave a hole for a week.
+    // A key change clears the tenant's rows (PUT .../key), so a new key shows at once.
+    if ((omdbKey || tmdbKey) && ratings.status === "fulfilled" && providers.status === "fulfilled") {
       await db.putExtInfo(env, t, tt, region, JSON.stringify(info), now);
     }
     return json(info);
