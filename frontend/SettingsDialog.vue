@@ -57,7 +57,7 @@
         </div>
 
         <Accordion
-          :value="expanded"
+          v-model:value="expanded"
           multiple
           :dt="{ header: { padding: '0.75rem 0.5rem' }, content: { padding: '0 0 0.75rem 0' } }"
         >
@@ -389,7 +389,24 @@ const themeOptions = [
 const themeMode = ref<ThemeMode>(getThemeMode());
 watch(themeMode, setThemeMode);
 
-const expanded = ref<string[]>(["main"]);
+// Which field-visibility sections are open: device-local UI state, like the theme.
+const EXPANDED_KEY = "amc_settings_expanded";
+function loadExpanded(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? '["main"]');
+    return Array.isArray(v) ? v : ["main"];
+  } catch {
+    return ["main"];
+  }
+}
+const expanded = ref<string[]>(loadExpanded());
+watch(expanded, (v) => {
+  try {
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify(v));
+  } catch {
+    /* non-critical */
+  }
+}, { deep: true }); // Accordion push()es into the array it emits
 const saving = ref(false);
 const error = ref("");
 
