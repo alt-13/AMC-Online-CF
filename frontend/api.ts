@@ -472,7 +472,12 @@ export const omdb = {
   ...keyApi("omdb"),
 };
 
-export const tmdb = keyApi("tmdb");
+export const tmdb = {
+  ...keyApi("tmdb"),
+  /** Every streaming service in a region, for the subscription picker. */
+  services: (region: string) =>
+    jget<Omit<Provider, "kind">[]>(`/api/tmdb/services?region=${encodeURIComponent(region)}`),
+};
 
 // --- ratings + streaming for the header (display-only, cached 7 d) ---------
 

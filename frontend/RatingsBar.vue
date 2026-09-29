@@ -49,9 +49,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { ExtInfo, Provider } from "./api";
-import type { RatingSource } from "./fields";
+import type { AppSettings, RatingSource } from "./fields";
 import {
-  orderedSources, nativeFormat, storedFormat, toneOf, driftOf, TONE_CLASS, RATING_SOURCES,
+  orderedSources, nativeFormat, storedFormat, toneOf, driftOf, TONE_CLASS, RATING_SOURCES, visibleProviders,
 } from "./ratings";
 
 const props = defineProps<{
@@ -59,6 +59,7 @@ const props = defineProps<{
   source: RatingSource;
   info: ExtInfo | null;
   mobile: boolean;
+  filter: Pick<AppSettings, "streaming_mine_only" | "streaming_subs">;
 }>();
 
 const KIND_LABEL: Record<Provider["kind"], string> = {
@@ -80,6 +81,8 @@ const leadTip = computed(() => {
   return `Differs from ${name}: ${nativeFormat(props.source, drift.value)}`;
 });
 // No watch link → no icons: an empty href would reopen the app in a new tab.
-const providers = computed(() => (props.info?.providers?.link ? props.info.providers.list ?? [] : []));
+const providers = computed(() =>
+  props.info?.providers?.link ? visibleProviders(props.info.providers.list ?? [], props.filter) : [],
+);
 const watchLink = computed(() => props.info?.providers?.link ?? "");
 </script>

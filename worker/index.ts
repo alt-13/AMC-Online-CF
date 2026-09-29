@@ -17,7 +17,7 @@ import * as db from "./db";
 import * as auth from "./auth";
 import { encryptSecret, decryptSecret } from "./crypto";
 import { searchImdb, fetchOmdb, extractTt, type RatingSource } from "./omdb";
-import { fetchProviders } from "./tmdb";
+import { fetchProviders, fetchServiceList } from "./tmdb";
 import { isFresh, normRegion, type ExtInfo } from "./extinfo";
 import { newMovieRow } from "./movie-new";
 import { isBlobKey } from "../amc/posterkey";
@@ -73,6 +73,8 @@ const DEFAULT_SETTINGS = {
   duplicate_field: "original_title",
   rating_source: "imdb" as RatingSource,
   streaming_region: "",
+  streaming_mine_only: false,
+  streaming_subs: [] as number[],
 };
 
 /** The user's settings with every default backfilled (rule 14) — the same
@@ -400,6 +402,22 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     }
     const stored = await db.getApiKey(env, t, col);
     return json({ hasKey: !!stored || !!envKey(env, which), personal: !!stored });
+  }
+
+  // GET /api/tmdb/services?region=AT -> every streaming service in the region
+  // ({ id, name, logo }[]) for the Settings subscription picker. Uncached: only
+  // fetched when that picker opens.
+  if (p === "/api/tmdb/services" && m === "GET") {
+    const region = normRegion(url.searchParams.get("region"));
+    if (!region) return err(400, "missing region");
+    const key = await apiKeyFor(env, t, "tmdb");
+    if (key instanceof Response) return key;
+    if (!key) return err(400, "no TMDB key — add one in Settings");
+    try {
+      return json(await fetchServiceList(key, region));
+    } catch (e) {
+      return err(502, e instanceof Error ? e.message : "TMDB fetch failed");
+    }
   }
 
   if (p === "/api/omdb/fetch" && m === "GET") {

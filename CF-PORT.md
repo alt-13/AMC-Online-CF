@@ -51,7 +51,7 @@ touches at most a handful of D1 rows and one poster — so 128 MB is never in pl
 | `worker/auth.ts` | Worker | WebCrypto PBKDF2 password hashing + HS256 JWT + refresh cookie |
 | `worker/crypto.ts` | Worker | AES-256-GCM encrypt/decrypt for saved cloud credentials (HKDF key off `AUTH_SECRET`) |
 | `worker/omdb.ts` | Worker | native IMDb-suggest search + omdbapi.com fetch (personal key or global `OMDB_API_KEY`); `parseRatings` puts every rating on one scale; pure parsers unit-tested |
-| `worker/tmdb.ts` | Worker | TMDB watch providers (JustWatch data): pure `parseFind`/`parseProviders` + `fetchProviders` |
+| `worker/tmdb.ts` | Worker | TMDB watch providers (JustWatch data): pure `parseFind`/`parseProviders`/`parseServiceList` + `fetchProviders`/`fetchServiceList` |
 | `worker/extinfo.ts` | Worker | `ExtInfo` type + 7-day TTL for the display-only ratings/streaming cache (`ext_info`, migration 0005) |
 | `worker/movie-new.ts` | Worker | `newMovieRow` — build a full movie row (schema defaults + patch) for next-number create |
 | `worker/db.ts` | Worker | prepared-statement D1 helpers |
@@ -176,6 +176,7 @@ All routes except `/api/auth/*` require `Authorization: Bearer <access_token>`.
 | `POST /api/catalogs/remote-state` | record a remote-check pass, no download |
 | `GET /api/omdb/key` / `PUT /api/omdb/key` | per-user OMDb key (encrypted at rest) |
 | `GET /api/tmdb/key` / `PUT /api/tmdb/key` | per-user TMDB key (same handling; v3 key or v4 read token) |
+| `GET /api/tmdb/services?region=` | every streaming service in a region (movies + TV, uncached) for the Settings subscription picker |
 | `GET /api/extinfo?i=&region=[&refresh=1]` | every rating + the region's streaming offers for the header; display-only cache, 7 d, `ext_info` |
 | `DELETE /api/poster?key=` | drop one poster object (tenant-scoped) |
 | `GET /api/poster?key=` | stream a poster from R2 (tenant-scoped; fetch with the auth header, not a bare `<img src>` — see `posterObjectUrl`) |

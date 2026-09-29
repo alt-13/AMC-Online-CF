@@ -90,6 +90,7 @@
                 :source="props.settings.rating_source"
                 :info="info"
                 :mobile="mode === 'mobile'"
+                :filter="props.settings"
               />
               <div v-if="form.user_rating > 0" class="flex items-center gap-1 bg-elevated border border-border px-[0.55rem] py-[0.2rem] rounded-xl text-[0.82rem] font-semibold text-info
                           max-md:gap-0.5 max-md:px-1.5 max-md:py-0 max-md:text-[0.72rem]">

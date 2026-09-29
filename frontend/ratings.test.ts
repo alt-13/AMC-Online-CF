@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { orderedSources, nativeFormat, storedFormat, toneOf, driftOf, ttOf } from "./ratings";
+import { orderedSources, nativeFormat, storedFormat, toneOf, driftOf, ttOf, visibleProviders } from "./ratings";
+
+describe("visibleProviders", () => {
+  const P = (id: number, kind: "flatrate" | "free" | "ads") => ({ id, name: "", logo: "", kind });
+  const list = [P(8, "flatrate"), P(2, "flatrate"), P(99, "free"), P(7, "ads")];
+  it("shows everything unless mine-only is on", () => {
+    expect(visibleProviders(list, { streaming_mine_only: false, streaming_subs: [] })).toEqual(list);
+  });
+  it("keeps subscribed services plus every free / ads offer", () => {
+    expect(visibleProviders(list, { streaming_mine_only: true, streaming_subs: [2] }).map((p) => p.id))
+      .toEqual([2, 99, 7]);
+  });
+});
 
 const R = (imdb: number | null, rt: number | null, metacritic: number | null) => ({ imdb, rt, metacritic });
 

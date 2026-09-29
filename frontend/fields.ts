@@ -176,6 +176,11 @@ export interface AppSettings {
   /** ISO 3166-1 alpha-2 region for streaming offers. "" = the browser's region
    *  (see regionFor in regions.ts). */
   streaming_region: string;
+  /** true: the header shows a subscription offer only for a service in
+   *  `streaming_subs`; free / free-with-ads offers always show. false = all. */
+  streaming_mine_only: boolean;
+  /** TMDB provider ids the user subscribes to. */
+  streaming_subs: number[];
 }
 export const DEFAULT_SETTINGS: AppSettings = {
   field_visibility: { desktop: {}, mobile: {} },
@@ -185,6 +190,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   duplicate_field: "original_title",
   rating_source: "imdb",
   streaming_region: "",
+  streaming_mine_only: false,
+  streaming_subs: [],
 };
 
 // --- duplicate detection ----------------------------------------------------

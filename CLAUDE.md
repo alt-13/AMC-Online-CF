@@ -76,7 +76,7 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── auth.ts         ← WebCrypto PBKDF2 password hashing + HS256 JWT + refresh cookie
 │   ├── crypto.ts       ← AES-256-GCM encrypt/decrypt for cloud creds (HKDF key off AUTH_SECRET)
 │   ├── omdb.ts         ← native IMDb-suggest search + omdbapi.com fetch (personal key or global OMDB_API_KEY); `parseRatings` (all sources, one scale) + rating-source pick; pure parsers unit-tested
-│   ├── tmdb.ts         ← TMDB watch providers (JustWatch data): pure parseFind/parseProviders + fetchProviders
+│   ├── tmdb.ts         ← TMDB watch providers (JustWatch data): pure parseFind/parseProviders/parseServiceList + fetchProviders/fetchServiceList
 │   ├── extinfo.ts      ← ExtInfo type + 7-day TTL for the display-only ratings/streaming cache
 │   ├── movie-new.ts    ← newMovieRow: build a full movie row from an edit patch (next-number create)
 │   └── db.ts           ← prepared-statement D1 helpers (Env binding lives here) + user_cloud + user_settings + generic per-user api keys (getApiKey/setApiKey: omdb, tmdb) + ext_info cache (getExtInfo/putExtInfo) + SORT_TITLE_SQL (listMovies MUST order by it verbatim, else idx_movies_sort is ignored; 0004 dropped movies.sort_title)
@@ -122,7 +122,7 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── ConflictDialog.vue  ← both sides moved: pick push/pull, with an opt-in remote compare
 │   ├── OmdbDialog.vue      ← search IMDb, pick a title, fetch OMDb → patch + poster URL
 │   ├── SERIES-RULES.md     ← why "series" is user-configured, and the planned rule kinds
-│   └── SettingsDialog.vue  ← light/dark mode (device-local) + per-user field visibility (desktop/mobile) + search field + duplicate-warning field + series-count rule + rating source + streaming region + OMDb/TMDB keys → user_settings
+│   └── SettingsDialog.vue  ← light/dark mode (device-local) + per-user field visibility (desktop/mobile) + search field + duplicate-warning field + series-count rule + rating source + streaming region + subscriptions filter (`streaming_mine_only`/`streaming_subs`) + OMDb/TMDB keys → user_settings
 ├── scripts/            ← predev hooks: ensure-dist (assets placeholder) + seed-local-db (auto-seed emulated D1)
 ├── setup.sh            ← one-shot bootstrap: provision D1+R2, inject db id, apply schema, set secrets via stdin, deploy
 ├── wrangler.jsonc      ← Worker config: D1 (DB), R2 (R2), assets (ASSETS) bindings

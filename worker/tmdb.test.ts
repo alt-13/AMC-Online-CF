@@ -1,5 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { parseFind, parseProviders, tmdbUrl } from "./tmdb";
+import { parseFind, parseProviders, parseServiceList, tmdbUrl } from "./tmdb";
+
+describe("parseServiceList", () => {
+  it("merges movie + tv lists, each service once, in the region's display order", () => {
+    const movie = { results: [
+      { provider_id: 2, provider_name: "Disney Plus", logo_path: "/d.jpg", display_priorities: { AT: 5 } },
+      { provider_id: 8, provider_name: "Netflix", logo_path: "/n.jpg", display_priorities: { AT: 1 } },
+    ] };
+    const tv = { results: [
+      { provider_id: 8, provider_name: "Netflix", logo_path: "/n.jpg", display_priorities: { AT: 1 } },
+      { provider_id: 99, provider_name: "Pluto", display_priority: 3 },
+    ] };
+    expect(parseServiceList([movie, tv], "AT")).toEqual([
+      { id: 8, name: "Netflix", logo: "https://image.tmdb.org/t/p/w92/n.jpg" },
+      { id: 99, name: "Pluto", logo: "" },
+      { id: 2, name: "Disney Plus", logo: "https://image.tmdb.org/t/p/w92/d.jpg" },
+    ]);
+    expect(parseServiceList([null, {}], "AT")).toEqual([]);
+  });
+});
 import { isFresh, normRegion, EXTINFO_TTL_MS } from "./extinfo";
 
 describe("parseFind", () => {

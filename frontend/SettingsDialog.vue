@@ -245,6 +245,46 @@
           filterPlaceholder="Country or code…"
           class="w-full"
         />
+        <div class="flex items-center gap-2">
+          <Checkbox v-model="draft.streaming_mine_only" :binary="true" inputId="streaming-mine" />
+          <label for="streaming-mine" class="text-sm">
+            Only show services I subscribe to (free ones always show)
+          </label>
+        </div>
+        <!-- Shares `expanded` with the field-visibility accordion, so its
+             open/closed state is remembered the same way. -->
+        <Accordion
+          v-model:value="expanded"
+          multiple
+          :dt="{ header: { padding: '0.5rem' }, content: { padding: '0 0 0.5rem 0' } }"
+        >
+          <AccordionPanel value="subs">
+            <AccordionHeader>
+              <span class="flex items-center gap-2 text-sm">
+                My subscriptions
+                <span class="text-xs text-muted">({{ draft.streaming_subs.length }} selected)</span>
+              </span>
+            </AccordionHeader>
+            <AccordionContent>
+              <p v-if="!keyState.tmdb.hasKey" class="m-0 px-2 text-xs text-muted">
+                Needs a TMDB key (below) to list your region's services.
+              </p>
+              <p v-else-if="servicesError" class="m-0 px-2 text-xs text-danger">
+                Couldn't load services: {{ servicesError }}
+              </p>
+              <p v-else-if="!services" class="m-0 px-2 text-xs text-muted">Loading services…</p>
+              <label
+                v-for="s in services ?? []"
+                :key="s.id"
+                class="flex items-center gap-2 py-1 px-2 hover:bg-elevated rounded-md cursor-pointer"
+              >
+                <Checkbox v-model="draft.streaming_subs" :value="s.id" />
+                <img v-if="s.logo" :src="s.logo" alt="" class="w-5 h-5 rounded" loading="lazy" />
+                <span class="text-sm">{{ s.name }}</span>
+              </label>
+            </AccordionContent>
+          </AccordionPanel>
+        </Accordion>
       </div>
 
       <div v-for="k in KEYS" :key="k.which" class="mt-4 flex flex-col gap-2">
@@ -422,6 +462,26 @@ const regionModel = computed<string>({
   get: () => draft.value.streaming_region || defaultRegion(),
   set: (v) => { draft.value.streaming_region = v; },
 });
+
+// The region's services, fetched when the subscriptions panel is open (and
+// again when the region changes). null = not loaded yet.
+const services = ref<{ id: number; name: string; logo: string }[] | null>(null);
+const servicesError = ref("");
+let servicesFor = "";
+watch([() => expanded.value.includes("subs"), regionModel], async ([open, region]) => {
+  if (!open || region === servicesFor) return;
+  servicesFor = region;
+  services.value = null;
+  servicesError.value = "";
+  try {
+    const list = await tmdb.services(region);
+    if (servicesFor === region) services.value = list;
+  } catch (e) {
+    if (servicesFor !== region) return;
+    servicesFor = ""; // retry on the next open
+    servicesError.value = e instanceof Error ? e.message : String(e);
+  }
+}, { immediate: true });
 
 type Which = "omdb" | "tmdb";
 const KEY_API = { omdb, tmdb };

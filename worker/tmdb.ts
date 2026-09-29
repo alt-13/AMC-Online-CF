@@ -88,3 +88,35 @@ export async function fetchProviders(tt: string, key: string, region: string): P
     region,
   );
 }
+
+export type ServiceInfo = Omit<Provider, "kind">;
+
+/** /watch/providers/{movie|tv}?watch_region= -> the region's services in its
+ *  display order, merged across the given lists, each service once. Feeds the
+ *  "My subscriptions" picker in Settings. */
+export function parseServiceList(lists: unknown[], region: string): ServiceInfo[] {
+  type Raw = RawProvider & { display_priorities?: Record<string, number> };
+  const byId = new Map<number, ServiceInfo & { prio: number }>();
+  for (const data of lists) {
+    const raw = (data as { results?: Raw[] } | null)?.results;
+    for (const p of Array.isArray(raw) ? raw : []) {
+      if (typeof p.provider_id !== "number" || byId.has(p.provider_id)) continue;
+      byId.set(p.provider_id, {
+        id: p.provider_id,
+        name: p.provider_name ?? "",
+        logo: p.logo_path ? LOGO_BASE + p.logo_path : "",
+        prio: p.display_priorities?.[region] ?? p.display_priority ?? 999,
+      });
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.prio - b.prio).map(({ id, name, logo }) => ({ id, name, logo }));
+}
+
+/** Every streaming service TMDB knows in a region (movies + TV). */
+export async function fetchServiceList(key: string, region: string): Promise<ServiceInfo[]> {
+  const q = `?watch_region=${encodeURIComponent(region)}`;
+  return parseServiceList(
+    await Promise.all(["movie", "tv"].map((m) => getJson(...tmdbUrl(`/watch/providers/${m}${q}`, key)))),
+    region,
+  );
+}

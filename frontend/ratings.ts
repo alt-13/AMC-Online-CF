@@ -4,8 +4,8 @@
 // others show their site's own format, so RT's 93 reads "93%", not an
 // IMDb-looking "9.3".
 
-import type { RatingSource } from "./fields";
-import type { Ratings } from "./api";
+import type { AppSettings, RatingSource } from "./fields";
+import type { Provider, Ratings } from "./api";
 
 export interface SourceMeta { key: RatingSource; short: string; name: string }
 
@@ -63,4 +63,15 @@ export function driftOf(stored: number, ratings: Ratings | null, src: RatingSour
 }
 
 /** IMDb id from the URL field — the key ext_info is cached under. */
-export const ttOf = (url: string | null | undefined): string | null => /(tt\d+)/.exec(url ?? "")?.[1] ?? null;
+/** The header's streaming icons under the user's filter: with "mine only" on, a
+ *  subscription offer shows only for a subscribed service; free and
+ *  free-with-ads offers always show. */
+export function visibleProviders(
+  list: Provider[],
+  s: Pick<AppSettings, "streaming_mine_only" | "streaming_subs">,
+): Provider[] {
+  if (!s.streaming_mine_only) return list;
+  return list.filter((p) => p.kind !== "flatrate" || s.streaming_subs.includes(p.id));
+}
+
+export const ttOf =(url: string | null | undefined): string | null => /(tt\d+)/.exec(url ?? "")?.[1] ?? null;
