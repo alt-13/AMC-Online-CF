@@ -17,6 +17,8 @@ import * as db from "./db";
 import * as auth from "./auth";
 import { encryptSecret, decryptSecret } from "./crypto";
 import { searchImdb, fetchOmdb, extractTt, type RatingSource } from "./omdb";
+import { fetchProviders } from "./tmdb";
+import { isFresh, normRegion, type ExtInfo } from "./extinfo";
 import { newMovieRow } from "./movie-new";
 import { isBlobKey } from "../amc/posterkey";
 
@@ -413,6 +415,39 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     }
   }
 
+  // GET /api/extinfo?i=tt…&region=AT[&refresh=1] — every rating + the region's
+  // streaming offers for the header, cached 7 days per tenant/title/region.
+  // Two upstream services at most (OMDb + TMDB), fetch() only — I/O, not CPU.
+  if (p === "/api/extinfo" && m === "GET") {
+    const tt = extractTt(url.searchParams.get("i") ?? "");
+    const region = normRegion(url.searchParams.get("region"));
+    if (!tt || !region) return err(400, "missing tt-id or region");
+    const now = Date.now();
+    if (url.searchParams.get("refresh") !== "1") {
+      const hit = await db.getExtInfo(env, t, tt, region);
+      if (hit && isFresh(hit.fetched_at, now)) return json(JSON.parse(hit.data));
+    }
+    const [omdbKey, tmdbKey] = await Promise.all([apiKeyFor(env, t, "omdb"), apiKeyFor(env, t, "tmdb")]);
+    if (omdbKey instanceof Response) return omdbKey;
+    if (tmdbKey instanceof Response) return tmdbKey;
+    const [ratings, providers] = await Promise.allSettled([
+      omdbKey ? fetchOmdb(tt, omdbKey).then((r) => r.ratings) : Promise.resolve(null),
+      tmdbKey ? fetchProviders(tt, tmdbKey, region) : Promise.resolve(null),
+    ]);
+    const info: ExtInfo = {
+      ratings: ratings.status === "fulfilled" ? ratings.value : null,
+      providers: providers.status === "fulfilled" ? providers.value : null,
+      region,
+      fetched_at: now,
+      missing: (["omdb", "tmdb"] as const).filter((k) => !(k === "omdb" ? omdbKey : tmdbKey)),
+    };
+    // Cache only a complete answer: a failed call or a key the user adds later
+    // must not leave a hole in the header for a week.
+    if (omdbKey && tmdbKey && ratings.status === "fulfilled" && providers.status === "fulfilled") {
+      await db.putExtInfo(env, t, tt, region, JSON.stringify(info), now);
+    }
+    return json(info);
+  }
   // GET /api/proxy-image?url=  — server-side image fetch so the browser can
   // re-encode a poster it otherwise can't read (IMDb CDN sends no CORS headers).
   // The browser canvas does the JPEG normalisation; the Worker is a dumb proxy.
