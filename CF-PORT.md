@@ -47,10 +47,12 @@ touches at most a handful of D1 rows and one poster — so 128 MB is never in pl
 | `amc/index.ts` | — | barrel exports |
 | `migrations/` | D1 | incremental deltas applied with `wrangler d1 migrations apply` |
 | `schema.sql` | D1 | BASELINE tables: `users`, `catalogs`, `custom_field_defs`, `movies`, `movie_extras`, `movies_fts`, `user_cloud`, `user_settings` |
-| `worker/index.ts` | Worker | `/api/*` router: auth + CRUD + create + import commit + export bundle + poster stream + cloud + omdb + settings + proxy-image |
+| `worker/index.ts` | Worker | `/api/*` router: auth + CRUD + create + import commit + export bundle + poster stream + cloud + omdb/tmdb keys + extinfo + settings + proxy-image |
 | `worker/auth.ts` | Worker | WebCrypto PBKDF2 password hashing + HS256 JWT + refresh cookie |
 | `worker/crypto.ts` | Worker | AES-256-GCM encrypt/decrypt for saved cloud credentials (HKDF key off `AUTH_SECRET`) |
-| `worker/omdb.ts` | Worker | native IMDb-suggest search + omdbapi.com fetch (needs `OMDB_API_KEY`); pure parsers unit-tested |
+| `worker/omdb.ts` | Worker | native IMDb-suggest search + omdbapi.com fetch (personal key or global `OMDB_API_KEY`); `parseRatings` puts every rating on one scale; pure parsers unit-tested |
+| `worker/tmdb.ts` | Worker | TMDB watch providers (JustWatch data): pure `parseFind`/`parseProviders` + `fetchProviders` |
+| `worker/extinfo.ts` | Worker | `ExtInfo` type + 7-day TTL for the display-only ratings/streaming cache (`ext_info`, migration 0005) |
 | `worker/movie-new.ts` | Worker | `newMovieRow` — build a full movie row (schema defaults + patch) for next-number create |
 | `worker/db.ts` | Worker | prepared-statement D1 helpers |
 | `browser/import.ts` | browser | `importAmcFile(file, opts)` — parse, upload posters, chunked row commit |
@@ -59,7 +61,8 @@ touches at most a handful of D1 rows and one poster — so 128 MB is never in pl
 | `browser/pool.ts` / `sweep.ts` | browser | bounded-concurrency task pool / client-driven paged R2 sweeps |
 | `browser/mega.ts` + `mega-fingerprint.ts` | browser | megajs login, fingerprinted up/download, folder paths |
 | `frontend/syncstatus.ts` / `syncdiff.ts` / `cloudref.ts` | browser | pure sync-status derivation / conflict diff summary / `source_ref` parsing — see `SYNC.md` |
-| `frontend/api.ts` | browser | auth + session + metadata client (incl. create/setPictureFromUrl) + omdb + settings + cloud + re-exports import/export |
+| `frontend/api.ts` | browser | auth + session + metadata client (incl. create/setPictureFromUrl) + omdb/tmdb keys + extinfo + settings + cloud + re-exports import/export |
+| `frontend/ratings.ts` / `regions.ts` / `RatingsBar.vue` | browser | header rating chips (order, native format, colours, drift) / region list + flags / chips + streaming icons |
 | `frontend/fields.ts` | browser | shared field metadata (sections, labels, Delphi-date + colour-tag + custom-value helpers) — no store |
 | `frontend/CatalogImport.vue` | browser | drag/drop upload with poster+row progress; emits the new catalog id |
 | `frontend/CatalogsView.vue` | browser | top-level screen: import, list libraries, export/→Mega, drill into a library |
@@ -172,10 +175,12 @@ All routes except `/api/auth/*` require `Authorization: Bearer <access_token>`.
 | `POST /api/catalog/:id/sync-state` | record a push outcome (`synced_rev`, hash, fingerprint, size) |
 | `POST /api/catalogs/remote-state` | record a remote-check pass, no download |
 | `GET /api/omdb/key` / `PUT /api/omdb/key` | per-user OMDb key (encrypted at rest) |
+| `GET /api/tmdb/key` / `PUT /api/tmdb/key` | per-user TMDB key (same handling; v3 key or v4 read token) |
+| `GET /api/extinfo?i=&region=[&refresh=1]` | every rating + the region's streaming offers for the header; display-only cache, 7 d, `ext_info` |
 | `DELETE /api/poster?key=` | drop one poster object (tenant-scoped) |
 | `GET /api/poster?key=` | stream a poster from R2 (tenant-scoped; fetch with the auth header, not a bare `<img src>` — see `posterObjectUrl`) |
 | `GET /api/omdb/search?q=` | IMDb title suggestions (no key) |
-| `GET /api/omdb/fetch?i=` | fetch one title's OMDb metadata → `{ patch, poster_url }` (needs `OMDB_API_KEY`; 503 if unset) |
+| `GET /api/omdb/fetch?i=` | fetch one title's OMDb metadata → `{ patch, poster_url }` (needs an OMDb key, personal or global; 503 if neither) |
 | `GET /api/proxy-image?url=` | server-side image fetch (IMDb `Referer` + Chrome UA) to dodge CDN CORS, for poster-from-URL |
 | `GET /api/settings` / `PUT /api/settings` | per-user field-visibility + search-field JSON blob (`user_settings`) |
 
@@ -242,6 +247,10 @@ their own in **Settings → OMDb API key**; it's encrypted at rest in
 `user_settings.omdb_key` and never leaves the server. An operator *may* still set
 a global `OMDB_API_KEY` secret as a shared fallback, but it's optional — the
 deploy needs no OMDb secret at all.
+
+The **TMDB key** (streaming providers in the movie header) works the same way:
+`user_settings.tmdb_key`, optional global `TMDB_API_KEY`; accepts a v3 key or a v4
+read token.
 
 Dev: run `npx wrangler dev` (local D1 + R2 emulation, serves /api on :8787) and
 `npm run dev` (vite on :5173, proxies /api to :8787) side by side.
@@ -448,7 +457,7 @@ settings, poster via upload/URL/OMDb, custom fields, delete). `OmdbDialog` and
   bytes land in R2 — image work stays in the browser, like import/export.
 - **OMDb / IMDb lookup — done (the only metadata source kept for the POC).**
   `GET /api/omdb/search` (IMDb suggestion API, no key) and `GET /api/omdb/fetch`
-  (omdbapi.com, needs `OMDB_API_KEY`) run as plain `fetch()` in the Worker —
+  (omdbapi.com, needs an OMDb key) run as plain `fetch()` in the Worker —
   `worker/omdb.ts`, field mapping unit-tested in `omdb.test.ts`. Fetch returns
   `{ patch, poster_url }`: apply the patch via `updateMovie`, then feed
   `poster_url` to `setPictureFromUrl`.

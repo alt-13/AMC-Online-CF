@@ -69,15 +69,17 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── transcode.ts    ← detectEncoding + toReadable(import)/toRaw(export): legacy bytes ↔ readable D1-safe Unicode (rule 5)
 │   ├── posterkey.ts    ← sha256Hex/blobKey/isBlobKey: content-addressed poster keys (rule 15)
 │   └── mapping.ts      ← catalogToRows (import) / rowsToCatalog (export); the poster→R2 split
-├── schema.sql          ← D1 BASELINE: users, catalogs, custom_field_defs, movies, movie_extras, movies_fts, user_cloud, user_settings
-├── migrations/         ← incremental deltas applied via `wrangler d1 migrations apply` (0001 catalogs.text_encoding, 0002 multi-provider user_cloud, 0003 sync tracking, 0004 sort_title → expression index)
+├── schema.sql          ← D1 BASELINE: users, catalogs, custom_field_defs, movies, movie_extras, movies_fts, user_cloud, user_settings (+ `ext_info` via migration 0005)
+├── migrations/         ← incremental deltas applied via `wrangler d1 migrations apply` (0001 catalogs.text_encoding, 0002 multi-provider user_cloud, 0003 sync tracking, 0004 sort_title → expression index, 0005 tmdb_key + ext_info ratings/streaming cache)
 ├── worker/
-│   ├── index.ts        ← /api/* router: auth gate + CRUD + create + import/export + poster + /api/cloud + sync state + omdb + settings + proxy-image
+│   ├── index.ts        ← /api/* router: auth gate + CRUD + create + import/export + poster + /api/cloud + sync state + omdb/tmdb keys + extinfo + settings + proxy-image
 │   ├── auth.ts         ← WebCrypto PBKDF2 password hashing + HS256 JWT + refresh cookie
 │   ├── crypto.ts       ← AES-256-GCM encrypt/decrypt for cloud creds (HKDF key off AUTH_SECRET)
-│   ├── omdb.ts         ← native IMDb-suggest search + omdbapi.com fetch (needs OMDB_API_KEY); pure parsers unit-tested
+│   ├── omdb.ts         ← native IMDb-suggest search + omdbapi.com fetch (personal key or global OMDB_API_KEY); `parseRatings` (all sources, one scale) + rating-source pick; pure parsers unit-tested
+│   ├── tmdb.ts         ← TMDB watch providers (JustWatch data): pure parseFind/parseProviders + fetchProviders
+│   ├── extinfo.ts      ← ExtInfo type + 7-day TTL for the display-only ratings/streaming cache
 │   ├── movie-new.ts    ← newMovieRow: build a full movie row from an edit patch (next-number create)
-│   └── db.ts           ← prepared-statement D1 helpers (Env binding lives here) + user_cloud + user_settings + SORT_TITLE_SQL (listMovies MUST order by it verbatim, else idx_movies_sort is ignored; 0004 dropped movies.sort_title)
+│   └── db.ts           ← prepared-statement D1 helpers (Env binding lives here) + user_cloud + user_settings + generic per-user api keys (getApiKey/setApiKey: omdb, tmdb) + ext_info cache (getExtInfo/putExtInfo) + SORT_TITLE_SQL (listMovies MUST order by it verbatim, else idx_movies_sort is ignored; 0004 dropped movies.sort_title)
 ├── browser/
 │   ├── import.ts       ← importAmcFile(file, opts): parse, upload posters, chunked row commit
 │   ├── export.ts       ← exportAmcFile/downloadAmcFile: fetch bundle, rebuild, download
@@ -90,8 +92,11 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── mega.ts         ← megajs login + fingerprinted up/download + folder resolution
 │   └── mega-fingerprint.ts ← client-side Mega fingerprint (MEGAsync rejects files without it)
 ├── frontend/
-│   ├── api.ts          ← auth (status/register/login/refresh/logout) + session + metadata client (incl. create/setPictureFromUrl) + omdb + settings + cloud config + re-exports
-│   ├── fields.ts       ← shared field metadata: sections/labels, Delphi-date + colour-tag + custom-value helpers, AppSettings + SeriesRule/countSeries (no store)
+│   ├── api.ts          ← auth (status/register/login/refresh/logout) + session + metadata client (incl. create/setPictureFromUrl) + omdb + tmdb keys + extinfo + settings + cloud config + re-exports
+│   ├── fields.ts       ← shared field metadata: sections/labels, Delphi-date + colour-tag + custom-value helpers, AppSettings + SeriesRule/countSeries + isWatched/filterByWatch (rule 13) (no store)
+│   ├── ratings.ts      ← header rating-chip display logic (order, native format, site colours, drift)
+│   ├── regions.ts      ← ISO 3166-1 region list + flag/label for the streaming-region picker
+│   ├── RatingsBar.vue  ← header rating chips + streaming icons (from GET /api/extinfo)
 │   ├── connector.ts    ← the CloudConnector seam + provider registry (add a backend = 1 file + 1 line)
 │   ├── connector-mega.ts  ← Mega.nz behind the seam (megajs, folder handles, `c` fingerprint)
 │   ├── connector-drive.ts ← Google Drive behind the seam (REST + PKCE popup, resumable upload)
@@ -108,16 +113,16 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── wakelock.ts     ← hold a screen wake lock across long imports/exports
 │   ├── theme.css       ← `@theme inline` → the var(--c-*) palette, defined twice (:root = light, .dark = dark)
 │   ├── theme.ts        ← light/dark mode: the `.dark` class on <html>, localStorage, "system" follows the OS
-│   ├── main.ts         ← app bootstrap + apply the theme + the PrimeVue `CinemaPreset` (Aura, light + dark)
+│   ├── main.ts         ← app bootstrap + apply the theme + the PrimeVue `CinemaPreset` (Aura, light + dark) + country-flag-emoji polyfill (Windows has no flag glyphs)
 │   ├── CloudSync.vue       ← provider picker + connect + list + import; auto-reconnect
 │   ├── CatalogImport.vue   ← drag/drop upload with poster+row progress
 │   ├── CatalogsView.vue    ← top-level screen: import, list catalogs, export/→Mega, drill into a library
-│   ├── MovieListView.vue   ← two-pane workspace for one catalog: virtualized PrimeVue DataTable (search, create, field-settings) + MovieDetail; lazy-loaded chunk
+│   ├── MovieListView.vue   ← two-pane workspace for one catalog: virtualized PrimeVue DataTable (search, watched/watchlist filter, create, field-settings) + MovieDetail; lazy-loaded chunk
 │   ├── MovieDetail.vue     ← edit one movie: poster (upload/URL/OMDb), every field (visibility-aware), custom fields, delete
 │   ├── ConflictDialog.vue  ← both sides moved: pick push/pull, with an opt-in remote compare
 │   ├── OmdbDialog.vue      ← search IMDb, pick a title, fetch OMDb → patch + poster URL
 │   ├── SERIES-RULES.md     ← why "series" is user-configured, and the planned rule kinds
-│   └── SettingsDialog.vue  ← light/dark mode (device-local) + per-user field visibility (desktop/mobile) + search field + duplicate-warning field + series-count rule + OMDb key → user_settings
+│   └── SettingsDialog.vue  ← light/dark mode (device-local) + per-user field visibility (desktop/mobile) + search field + duplicate-warning field + series-count rule + rating source + streaming region + OMDb/TMDB keys → user_settings
 ├── scripts/            ← predev hooks: ensure-dist (assets placeholder) + seed-local-db (auto-seed emulated D1)
 ├── setup.sh            ← one-shot bootstrap: provision D1+R2, inject db id, apply schema, set secrets via stdin, deploy
 ├── wrangler.jsonc      ← Worker config: D1 (DB), R2 (R2), assets (ASSETS) bindings
@@ -152,6 +157,8 @@ ergonomics and **re-expands them to on-disk order on export via
 
 **3. Ratings are stored ×10.** The binary stores ratings as int×10 (86 = 8.6);
 `-1` = unset. The DB keeps them the same way; the Vue form shows 0.0–10.0.
+Every rating source is stored on this scale: IMDb ×10, RT/Metacritic ×1
+(`parseRatings`); a missing source leaves Rating untouched.
 
 **4. Embedded pictures must round-trip with `pic_path=".jpg"`.**
 The Delphi app's `GetPictureStatus()` returns "no picture" when `PicPath` is
@@ -275,6 +282,9 @@ false** = synced) decides.
   is retitled "Checked".
 
 Both modes share the `checked` visibility key (labelled "Watched / Checked").
+
+The watchlist is every entry `isWatched()` (fields.ts) says is unwatched — no
+table; list filter, counts and header all call it.
 
 **14. Per-user settings need no migration.** `user_settings` holds one opaque
 JSON blob. The Worker's `DEFAULT_SETTINGS` in `worker/index.ts` is spread
