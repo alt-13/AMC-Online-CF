@@ -180,7 +180,7 @@ All routes except `/api/auth/*` require `Authorization: Bearer <access_token>`.
 | `DELETE /api/poster?key=` | drop one poster object (tenant-scoped) |
 | `GET /api/poster?key=` | stream a poster from R2 (tenant-scoped; fetch with the auth header, not a bare `<img src>` — see `posterObjectUrl`) |
 | `GET /api/omdb/search?q=` | IMDb title suggestions (no key) |
-| `GET /api/omdb/fetch?i=` | fetch one title's OMDb metadata → `{ patch, poster_url }` (needs an OMDb key, personal or global; 503 if neither) |
+| `GET /api/omdb/fetch?i=` | fetch one title's OMDb metadata → `{ patch, poster_url, ratings }`, Rating from the user's `rating_source` (needs an OMDb key, personal or global; 400 if neither) |
 | `GET /api/proxy-image?url=` | server-side image fetch (IMDb `Referer` + Chrome UA) to dodge CDN CORS, for poster-from-URL |
 | `GET /api/settings` / `PUT /api/settings` | per-user field-visibility + search-field JSON blob (`user_settings`) |
 
