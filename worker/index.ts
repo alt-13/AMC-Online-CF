@@ -85,6 +85,25 @@ async function loadSettings(env: Env, t: string): Promise<typeof DEFAULT_SETTING
   }
 }
 
+type KeyedApi = "omdb" | "tmdb";
+const API_NAME: Record<KeyedApi, string> = { omdb: "OMDb", tmdb: "TMDB" };
+const envKey = (env: Env, which: KeyedApi) =>
+  (which === "omdb" ? env.OMDB_API_KEY : env.TMDB_API_KEY) ?? "";
+
+/** The key a fetch should use: the user's own (decrypted) wins, else the
+ *  operator's optional global secret; "" = none. A Response = the stored key
+ *  can no longer be decrypted (secret rotated without ENCRYPTION_SECRET) — the
+ *  user must re-enter it rather than get a confusing upstream 401. */
+async function apiKeyFor(env: Env, t: string, which: KeyedApi): Promise<string | Response> {
+  const stored = await db.getApiKey(env, t, `${which}_key`);
+  if (!stored) return envKey(env, which);
+  try {
+    return await decryptSecret(stored, cryptoSecret(env));
+  } catch {
+    return err(409, `saved ${API_NAME[which]} key can no longer be decrypted — re-enter it in Settings`);
+  }
+}
+
 // --- request router --------------------------------------------------------
 
 export default {
@@ -352,8 +371,8 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
 
   // ---- OMDb / IMDb lookup (the only metadata source kept for the POC) ------
   // Search needs no key; fetch needs an OMDb key. The key is per-user (set in
-  // Settings, encrypted at rest) so the deploy needs no OMDb secret; a global
-  // env.OMDB_API_KEY still works as a fallback if an operator sets one. Both run
+  // Settings, encrypted at rest; same for TMDB) so the deploy needs no OMDb
+  // secret; a global env.OMDB_API_KEY still works as a fallback if an operator sets one. Both run
   // as plain fetch() in the Worker — no script runner, no transpiler.
   if (p === "/api/omdb/search" && m === "GET") {
     const q = url.searchParams.get("q");
@@ -361,41 +380,30 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     return json(await searchImdb(q));
   }
 
-  // GET /api/omdb/key -> { hasKey } ; never returns the key itself.
-  if (p === "/api/omdb/key" && m === "GET") {
-    const stored = await db.getOmdbKey(env, t);
-    return json({ hasKey: !!stored || !!env.OMDB_API_KEY, personal: !!stored });
-  }
-  // PUT /api/omdb/key { key }  — string = set, "" = keep, null = clear.
-  if (p === "/api/omdb/key" && m === "PUT") {
-    const body = (await req.json().catch(() => ({}))) as { key?: string | null };
-    if (body.key === undefined || body.key === "") {
-      // keep existing
-    } else if (body.key === null) {
-      await db.setOmdbKey(env, t, null, Date.now());
-    } else {
-      await db.setOmdbKey(env, t, await encryptSecret(body.key.trim(), cryptoSecret(env)), Date.now());
+  // GET /api/{omdb|tmdb}/key -> { hasKey, personal } ; never returns the key.
+  // PUT { key } — string = set, "" / undefined = keep, null = clear.
+  const keyRoute = /^\/api\/(omdb|tmdb)\/key$/.exec(p);
+  if (keyRoute && (m === "GET" || m === "PUT")) {
+    const which = keyRoute[1] as KeyedApi;
+    const col = `${which}_key` as const;
+    if (m === "PUT") {
+      const body = (await req.json().catch(() => ({}))) as { key?: string | null };
+      if (body.key === null) {
+        await db.setApiKey(env, t, col, null, Date.now());
+      } else if (body.key) {
+        await db.setApiKey(env, t, col, await encryptSecret(body.key.trim(), cryptoSecret(env)), Date.now());
+      }
     }
-    const stored = await db.getOmdbKey(env, t);
-    return json({ hasKey: !!stored || !!env.OMDB_API_KEY, personal: !!stored });
+    const stored = await db.getApiKey(env, t, col);
+    return json({ hasKey: !!stored || !!envKey(env, which), personal: !!stored });
   }
 
   if (p === "/api/omdb/fetch" && m === "GET") {
     const arg = url.searchParams.get("i") ?? "";
     const tt = extractTt(arg);
     if (!tt) return err(400, "missing or invalid tt-id");
-    // Personal key wins; fall back to a global env key if the operator set one.
-    let apiKey = env.OMDB_API_KEY ?? "";
-    const stored = await db.getOmdbKey(env, t);
-    if (stored) {
-      try {
-        apiKey = await decryptSecret(stored, cryptoSecret(env));
-      } catch {
-        // Key unreadable (secret rotated with no ENCRYPTION_SECRET) — treat as
-        // unset so the user is told to re-enter it, rather than 502'ing on OMDb.
-        return err(409, "saved OMDb key can no longer be decrypted — re-enter it in Settings");
-      }
-    }
+    const apiKey = await apiKeyFor(env, t, "omdb");
+    if (apiKey instanceof Response) return apiKey;
     if (!apiKey) return err(400, "no OMDb API key — add a free key in Settings");
     try {
       const { rating_source } = await loadSettings(env, t);

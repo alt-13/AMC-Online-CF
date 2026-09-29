@@ -186,8 +186,10 @@ CREATE TABLE IF NOT EXISTS user_settings (
   -- secret — the only deploy-time secret is then the Cloudflare token. NULL = use
   -- the optional global OMDB_API_KEY env var, if the operator set one.
   omdb_key   TEXT,
+  -- NOTE: tmdb_key is added by migrations/0005_extinfo.sql, not here.
   updated_at INTEGER NOT NULL
 );
+-- NOTE: ext_info (ratings/streaming cache) is created by migrations/0005_extinfo.sql.
 
 -- Full-text search over the fields people actually search. Populate on import
 -- and keep in sync on edit; optional but cheap and keeps search off the hot path.

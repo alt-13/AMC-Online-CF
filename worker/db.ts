@@ -29,6 +29,8 @@ export interface Env {
    *  secret at all. Set this only to give every user a shared default:
    *  wrangler secret put OMDB_API_KEY  (free key at omdbapi.com). */
   OMDB_API_KEY?: string;
+  /** OPTIONAL global fallback TMDB key, same model as OMDB_API_KEY. */
+  TMDB_API_KEY?: string;
 }
 
 // --- users -----------------------------------------------------------------
@@ -139,26 +141,53 @@ export async function upsertUserSettings(
     .run();
 }
 
-/** The user's encrypted OMDb key (base64 iv‖ciphertext), or null if none set. */
-export async function getOmdbKey(env: Env, userId: string): Promise<string | null> {
-  const row = await env.DB.prepare(`SELECT omdb_key FROM user_settings WHERE user_id = ?`)
+/** The encrypted per-user API-key columns on user_settings. A union, never a
+ *  free string: the column name is interpolated into the SQL. */
+export type ApiKeyColumn = "omdb_key" | "tmdb_key";
+
+export async function getApiKey(env: Env, userId: string, col: ApiKeyColumn): Promise<string | null> {
+  const row = await env.DB.prepare(`SELECT ${col} AS k FROM user_settings WHERE user_id = ?`)
     .bind(userId)
-    .first<{ omdb_key: string | null }>();
-  return row?.omdb_key ?? null;
+    .first<{ k: string | null }>();
+  return row?.k ?? null;
 }
 
-/** Store (or clear, with null) the encrypted OMDb key without touching `data`. */
-export async function setOmdbKey(
+/** Store (or clear, with null) one encrypted API key without touching `data`. */
+export async function setApiKey(
   env: Env,
   userId: string,
+  col: ApiKeyColumn,
   encrypted: string | null,
   now: number,
 ): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO user_settings (user_id, omdb_key, updated_at) VALUES (?,?,?)
-     ON CONFLICT(user_id) DO UPDATE SET omdb_key = excluded.omdb_key, updated_at = excluded.updated_at`,
+    `INSERT INTO user_settings (user_id, ${col}, updated_at) VALUES (?,?,?)
+     ON CONFLICT(user_id) DO UPDATE SET ${col} = excluded.${col}, updated_at = excluded.updated_at`,
   )
     .bind(userId, encrypted, now)
+    .run();
+}
+
+// --- ext_info (display-only ratings/streaming cache) ------------------------
+
+export async function getExtInfo(
+  env: Env, tenantId: string, imdbId: string, region: string,
+): Promise<{ data: string; fetched_at: number } | null> {
+  return env.DB.prepare(
+    `SELECT data, fetched_at FROM ext_info WHERE tenant_id = ? AND imdb_id = ? AND region = ?`,
+  )
+    .bind(tenantId, imdbId, region)
+    .first<{ data: string; fetched_at: number }>();
+}
+
+export async function putExtInfo(
+  env: Env, tenantId: string, imdbId: string, region: string, data: string, now: number,
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO ext_info (tenant_id, imdb_id, region, data, fetched_at) VALUES (?,?,?,?,?)
+     ON CONFLICT(tenant_id, imdb_id, region) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at`,
+  )
+    .bind(tenantId, imdbId, region, data, now)
     .run();
 }
 

@@ -131,7 +131,7 @@ export function parseOmdb(
   // Rating untouched — an IMDb fallback would mix scales without saying so.
   const ratings = parseRatings(data);
   const rating = ratings[source];
-  if (rating !== null) patch.rating = rating;
+  if (rating != null) patch.rating = rating;
 
   setStr("certification", v("Rated"));
   patch.url = `https://www.imdb.com/title/${tt}/`;
