@@ -326,6 +326,8 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     series_rule: { kind: "off" },
     checked_separate: false,
     duplicate_field: "original_title",
+    rating_source: "imdb",
+    streaming_region: "",
   };
   if (p === "/api/settings" && m === "GET") {
     const raw = await db.getUserSettings(env, t);

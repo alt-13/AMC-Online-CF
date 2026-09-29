@@ -144,6 +144,16 @@ export function parseCustom(row: Pick<MovieRow, "custom_values">): Record<string
   }
 }
 
+// --- ratings + watchlist ----------------------------------------------------
+
+/** Which OMDb rating a fetch writes into the Rating field. Every source is
+ *  stored on the same 0–100 integer scale (rule 3) — see parseRatings in
+ *  worker/omdb.ts for the per-source factor. */
+export type RatingSource = "imdb" | "rt" | "metacritic";
+
+/** The movie list's 3-way filter. "watchlist" = every entry not watched. */
+export type WatchFilter = "all" | "watched" | "watchlist";
+
 // --- visibility (absent key = visible; original_title always on) ------------
 export interface AppSettings {
   field_visibility: { desktop: Record<string, boolean>; mobile: Record<string, boolean> };
@@ -160,6 +170,12 @@ export interface AppSettings {
    *  catalog". "" disables the warning. Titles are the sane default; a catalog
    *  built from a metadata source may prefer `url`, which is exact. */
   duplicate_field: string;
+  /** Source a fetch fills Rating from. A film the source has no value for keeps
+   *  its Rating untouched — falling back to IMDb would mix scales silently. */
+  rating_source: RatingSource;
+  /** ISO 3166-1 alpha-2 region for streaming offers. "" = the browser's region
+   *  (see regionFor in regions.ts). */
+  streaming_region: string;
 }
 export const DEFAULT_SETTINGS: AppSettings = {
   field_visibility: { desktop: {}, mobile: {} },
@@ -167,6 +183,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   series_rule: { kind: "off" },
   checked_separate: false,
   duplicate_field: "original_title",
+  rating_source: "imdb",
+  streaming_region: "",
 };
 
 // --- duplicate detection ----------------------------------------------------
@@ -287,6 +305,32 @@ export function countSeries(
       return null;
   }
 }
+
+/** Watched vs. watchlist — the ONE derivation (rule 13). Synced mode reads the
+ *  stored flag, so a legacy row ticked in the Delphi app with no date still
+ *  counts as watched; with `checked_separate` the flag means something else, so
+ *  only the date can answer. `> 0` because an unset date is 0 or the -1
+ *  sentinel. */
+export function isWatched(
+  m: Pick<MovieRow, "checked" | "date_watched">,
+  s: Pick<AppSettings, "checked_separate">,
+): boolean {
+  return s.checked_separate ? m.date_watched > 0 : !!m.checked;
+}
+
+export function filterByWatch<T extends Pick<MovieRow, "checked" | "date_watched">>(
+  rows: T[],
+  f: WatchFilter,
+  s: Pick<AppSettings, "checked_separate">,
+): T[] {
+  if (f === "all") return rows;
+  const want = f === "watched";
+  return rows.filter((m) => isWatched(m, s) === want);
+}
+
+/** Count-tooltip text: "12 films watched · 3 on watchlist". */
+export const watchSplitTip = (noun: string, watched: number, watchlist: number): string =>
+  `${watched} ${noun} watched · ${watchlist} on watchlist`;
 
 export function isVisible(
   s: AppSettings,
