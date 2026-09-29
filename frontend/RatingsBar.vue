@@ -13,7 +13,6 @@
              max-md:gap-0.5 max-md:px-1.5 max-md:py-0 max-md:text-[0.72rem]"
       :class="{ 'opacity-50': rating <= 0 }"
       v-tooltip.top="leadTip"
-      :aria-label="`${s.name} ${storedFormat(rating)}`"
     >
       <i class="pi pi-star-fill text-[0.7rem] max-md:text-[0.6rem]" />
       {{ storedFormat(rating) }}
@@ -79,6 +78,7 @@ const leadTip = computed(() => {
   const name = RATING_SOURCES.find((s) => s.key === props.source)!.name;
   return `Edited — ${name} says ${nativeFormat(props.source, drift.value)}`;
 });
-const providers = computed(() => props.info?.providers?.list ?? []);
+// No watch link → no icons: an empty href would reopen the app in a new tab.
+const providers = computed(() => (props.info?.providers?.link ? props.info.providers.list ?? [] : []));
 const watchLink = computed(() => props.info?.providers?.link ?? "");
 </script>
