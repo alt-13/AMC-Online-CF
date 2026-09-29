@@ -8,6 +8,7 @@
   (same fonts, tokens, row geometry, PrimeIcons glyphs, search bar, footer) — the
   only structural add is the catalog bar (back/title/fields/fetch), which the
   self-hosted app keeps in a global topbar this per-catalog view doesn't have.
+  The toolbar is search · watch filter (all/watched/watchlist) · new.
 
   Two things make a 2880-row catalog usable: PrimeVue DataTable virtual scrolling
   (only the visible rows are in the DOM) and lazy thumbnails (a poster is fetched
@@ -32,8 +33,8 @@
              count) — see `countSeries`: there is no format-level definition to
              fall back on, so no rule means no counts rather than a guess. -->
         <span v-if="!loading && counts" class="flex-1 flex items-center gap-3 shrink min-w-0 text-[0.8rem] text-muted whitespace-nowrap">
-          <span>{{ counts.films }} films</span>
-          <span>{{ counts.series }} series</span>
+          <span v-tooltip.bottom="watchSplitTip('films', countsWatched?.films ?? 0, countsWatchlist?.films ?? 0)">{{ counts.films }} films</span>
+          <span v-tooltip.bottom="watchSplitTip('series', countsWatched?.series ?? 0, countsWatchlist?.series ?? 0)">{{ counts.series }} series</span>
         </span>
         <span v-else class="flex-1" />
         <div class="flex gap-1.5 shrink-0">
@@ -103,6 +104,14 @@
             <i class="pi pi-times" />
           </button>
         </div>
+        <Button
+          :icon="WATCH_FILTER[watchFilter].icon"
+          outlined
+          :class="{ 'bg-gold-dim! text-gold!': watchFilter !== 'all' }"
+          v-tooltip.bottom="WATCH_FILTER[watchFilter].tip"
+          :aria-label="WATCH_FILTER[watchFilter].tip"
+          @click="watchFilter = WATCH_FILTER[watchFilter].next"
+        />
         <Button icon="pi pi-plus" outlined :disabled="creating" v-tooltip.bottom="'New film'" aria-label="New film" @click="onCreate()" />
       </div>
 
@@ -110,7 +119,7 @@
       <div class="flex-1 min-h-0">
         <div v-if="loading" class="flex items-center justify-center gap-2 p-8 text-muted text-sm">Loading catalog…</div>
         <div v-else-if="!filtered.length" class="flex items-center justify-center gap-2 p-8 text-muted text-sm">
-          <i class="pi pi-search" /> No films match "{{ q }}"
+          <i class="pi pi-search" /> {{ q ? `No films match "${q}"` : WATCH_FILTER[watchFilter].empty }}
         </div>
         <DataTable
           v-else
@@ -179,7 +188,10 @@
       </div>
 
       <!-- Count -->
-      <div class="px-3 py-1.5 text-[0.72rem] text-muted border-t border-border shrink-0">
+      <div
+        class="px-3 py-1.5 text-[0.72rem] text-muted border-t border-border shrink-0"
+        v-tooltip.top="watchSplitTip('entries', watchedRows.length, watchlistRows.length)"
+      >
         {{ filtered.length }} / {{ movies.length }} films and series
       </div>
       <p v-if="error" class="text-danger text-[0.82rem] px-3 pb-1.5">{{ error }}</p>
@@ -275,6 +287,7 @@ import ConflictDialog from "./ConflictDialog.vue";
 import {
   DEFAULT_SETTINGS, type AppSettings, COLOR_TAG_COLORS, COLOR_TAG_NAMES,
   searchScopes, scopeLabel, ALL_SEARCH_FIELDS, countSeries, findDuplicate, fieldLabel,
+  filterByWatch, watchSplitTip, type WatchFilter,
 } from "./fields";
 import { pushView, goBack, dropView } from "./nav";
 import { deriveStatus, SHOWS_SYNC_BUTTON, formatTransfer } from "./syncstatus";
@@ -435,12 +448,22 @@ watch(searchInput, (val) => {
   searchTimer = setTimeout(() => { q.value = val; }, 250);
 });
 
+// The 3-way watch filter. The watchlist is every unwatched entry (isWatched,
+// rule 13) — no separate table, so it exports to the .amc like any film.
+// Session-only on purpose: coming back to a catalog should show all of it.
+const watchFilter = ref<WatchFilter>("all");
+const WATCH_FILTER: Record<WatchFilter, { icon: string; tip: string; next: WatchFilter; empty: string }> = {
+  all: { icon: "pi pi-list", tip: "Showing all — click for watched only", next: "watched", empty: "No films yet" },
+  watched: { icon: "pi pi-eye", tip: "Showing watched — click for watchlist", next: "watchlist", empty: "Nothing watched yet" },
+  watchlist: { icon: "pi pi-bookmark", tip: "Showing watchlist — click for all", next: "all", empty: "Your watchlist is empty" },
+};
+
 // A new search should land you on the first match. PrimeVue's VirtualScroller
 // re-init()s when the row count changes but never touches scrollTop (it only
 // gets clamped to the new maximum), so searching from deep in a 2880-row catalog
 // would drop you at the END of the result set. Reset it by hand, after the
 // re-render so the ref is live even when the table was hidden by the empty state.
-watch(q, () => {
+watch([q, watchFilter], () => {
   const root = dt.value?.$el;
   const scroller =
     root?.querySelector<HTMLElement>(".p-virtualscroller") ??
@@ -452,15 +475,25 @@ watch(q, () => {
 // list keeps showing filtered / total). `null` until the user picks a rule.
 const counts = computed(() => countSeries(movies.value, settings.value.series_rule));
 
+// Split for the count tooltips. Each half is counted under the same series rule
+// on its own, so a series with some episodes watched and some not counts once
+// in each half (number_shared) — the tooltip describes entries, not a partition
+// of series.
+const watchedRows = computed(() => filterByWatch(movies.value, "watched", settings.value));
+const watchlistRows = computed(() => filterByWatch(movies.value, "watchlist", settings.value));
+const countsWatched = computed(() => countSeries(watchedRows.value, settings.value.series_rule));
+const countsWatchlist = computed(() => countSeries(watchlistRows.value, settings.value.series_rule));
+
 // Sort by number descending (newest first), matching the self-hosted list, then
 // filter client-side over that order.
 const sorted = computed(() => [...movies.value].sort((a, b) => b.number - a.number));
 
 const filtered = computed(() => {
+  const rows = filterByWatch(sorted.value, watchFilter.value, settings.value);
   const term = q.value.trim().toLowerCase();
-  if (!term) return sorted.value;
+  if (!term) return rows;
   const field = settings.value.search_field;
-  return sorted.value.filter((m) => matches(m, term, field));
+  return rows.filter((m) => matches(m, term, field));
 });
 
 // "All fields" (field === "") scans the full curated field set + every custom
