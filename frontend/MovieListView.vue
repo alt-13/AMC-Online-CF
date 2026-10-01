@@ -53,6 +53,14 @@
           />
           <Button icon="pi pi-cog" text size="small" v-tooltip.bottom="'Field settings'" aria-label="Field settings" @click="settingsOpen = true" />
           <Button icon="pi pi-bolt" text size="small" v-tooltip.bottom="'Fetch from OMDb → new film'" aria-label="Fetch from OMDb → new film" @click="omdbOpen = true" />
+          <!-- Lines + a corner plus, so it doesn't read as the watch filter's
+               pi-list. Desktop only: pasting a list is a keyboard job. -->
+          <Button text size="small" class="max-[760px]:hidden!" v-tooltip.bottom="'Bulk add from a title + year list'" aria-label="Bulk add from a title + year list" @click="bulkOpen = true">
+            <span class="relative inline-flex">
+              <i class="pi pi-align-left" />
+              <i class="pi pi-plus-circle absolute -top-1.5 -right-2 text-[0.6rem] bg-surface rounded-full" />
+            </span>
+          </Button>
         </div>
       </div>
 
@@ -232,6 +240,14 @@
       @open-settings="omdbOpen = false; settingsOpen = true"
       @apply="onCreate"
     />
+    <BulkImportDialog
+      v-if="bulkOpen"
+      :catalog-id="catalog.id"
+      :movies="movies"
+      :duplicate-field="settings.duplicate_field"
+      @close="bulkOpen = false"
+      @changed="(rev) => refresh(rev)"
+    />
 
     <!-- The compare step needs the local rows; `movies` is already loaded here,
          so mounting it costs nothing extra (unlike the catalogs list, which
@@ -282,6 +298,7 @@ import {
 import MovieDetail from "./MovieDetail.vue";
 import SettingsDialog from "./SettingsDialog.vue";
 import OmdbDialog from "./OmdbDialog.vue";
+import BulkImportDialog from "./BulkImportDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import ConflictDialog from "./ConflictDialog.vue";
 import {
@@ -315,6 +332,7 @@ const selectedId = ref<string | null>(null);
 const creating = ref(false);
 const settingsOpen = ref(false);
 const omdbOpen = ref(false);
+const bulkOpen = ref(false);
 
 // --- workspace sync button ---------------------------------------------------
 // A local copy of the catalog's revision counters. The prop is correct on mount

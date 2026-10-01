@@ -121,6 +121,8 @@ export:   browser: GET bundle(D1) → fetch posters(R2) → rowsToCatalog → se
 │   ├── MovieDetail.vue     ← edit one movie: poster (upload/URL/OMDb), every field (visibility-aware), custom fields, delete
 │   ├── ConflictDialog.vue  ← both sides moved: pick push/pull, with an opt-in remote compare
 │   ├── OmdbDialog.vue      ← search IMDb, pick a title, fetch OMDb → patch + poster URL
+│   ├── BulkImportDialog.vue ← paste "title + year" lines → auto-match, fetch + create each; lists what wasn't added
+│   ├── bulk.ts             ← parseBulkList + bestMatch (pure, unit-tested): which IMDb pick a bulk line trusts
 │   ├── SERIES-RULES.md     ← why "series" is user-configured, and the planned rule kinds
 │   └── SettingsDialog.vue  ← light/dark mode (device-local) + per-user field visibility (desktop/mobile) + search field + duplicate-warning field + series-count rule + rating source + streaming region + subscriptions filter (`streaming_mine_only`/`streaming_subs`) + OMDb/TMDB keys → user_settings
 ├── scripts/            ← predev hooks: ensure-dist (assets placeholder) + seed-local-db (auto-seed emulated D1)

@@ -423,6 +423,8 @@ export interface OmdbSuggestion {
   label: string;
   tt: string;
   url: string;
+  year?: number;
+  kind?: string;
 }
 
 /** All ratings on the stored 0–100 scale (rule 3); null = source has none. */

@@ -22,6 +22,8 @@ export interface OmdbSuggestion {
   label: string; // "The Matrix (1999) [tvSeries]"
   tt: string; // "tt0133093"
   url: string; // canonical imdb title url
+  year?: number; // release year, when IMDb gives one
+  kind?: string; // IMDb qid: "movie", "tvSeries", …
 }
 
 export type RatingSource = "imdb" | "rt" | "metacritic";
@@ -66,7 +68,7 @@ export function parseSuggestions(data: unknown): OmdbSuggestion[] {
     let label = title;
     if (item.y) label += ` (${item.y})`;
     if (item.qid && item.qid !== "movie") label += ` [${item.qid}]`;
-    out.push({ label, tt: id, url: `https://www.imdb.com/title/${id}/` });
+    out.push({ label, tt: id, url: `https://www.imdb.com/title/${id}/`, year: item.y, kind: item.qid });
   }
   return out;
 }

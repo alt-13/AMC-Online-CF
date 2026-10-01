@@ -28,6 +28,8 @@ describe("parseSuggestions", () => {
       label: "The Matrix (1999)",
       tt: "tt0133093",
       url: "https://www.imdb.com/title/tt0133093/",
+      year: 1999,
+      kind: "movie",
     });
     // non-"movie" qid is appended in brackets
     expect(picks[1].label).toBe("The Matrix Reloaded (2003) [tvSeries]");
