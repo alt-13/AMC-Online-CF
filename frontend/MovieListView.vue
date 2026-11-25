@@ -20,7 +20,7 @@
     <section class="movie-list flex flex-col min-w-0 min-h-0 h-full bg-surface border-r border-border max-[760px]:border-r-0 max-[760px]:h-[100dvh]">
       <!-- Catalog bar: back to libraries + name + field/fetch actions.
            (Self-hosted keeps these in a global topbar; this view is per-catalog.) -->
-      <div class="flex items-center gap-2 px-3 py-2.5 border-b border-border shrink-0">
+      <div class="@container flex items-center gap-2 px-3 py-2.5 border-b border-border shrink-0">
         <!-- Deliberately `text`, not `outlined`: the catalog bar is chrome, and
              three bordered boxes flanking the title read heavier than the bar
              needs. (The detail header's actions ARE outlined.) -->
@@ -32,14 +32,16 @@
              stated what a "series" means in THIS catalog (Settings → Series
              count) — see `countSeries`: there is no format-level definition to
              fall back on, so no rule means no counts rather than a guess. -->
-        <!-- Stacked 2-col grid (number | label) so it fits narrow/portrait bars;
-             each row is a subgrid so its tooltip covers number + label. -->
+        <!-- Narrow bar (portrait monitors): stacked 2-col grid (number | label),
+             each row a subgrid so its tooltip covers number + label. A wide bar
+             (container ≥ 32rem, the bar's own width — the pane is clamp()ed, not
+             the viewport) keeps the single line. -->
         <span v-if="!loading && counts" class="flex-1 min-w-0">
-          <span class="inline-grid grid-cols-[auto_auto] gap-x-1 text-[0.75rem] leading-tight text-muted whitespace-nowrap">
-            <span class="grid grid-cols-subgrid col-span-2" v-tooltip.bottom="watchSplitTip('films', countsWatched?.films ?? 0, countsWatchlist?.films ?? 0)">
+          <span class="inline-grid grid-cols-[auto_auto] gap-x-1 text-[0.75rem] leading-tight text-muted whitespace-nowrap @lg:flex @lg:gap-3 @lg:text-[0.8rem]">
+            <span class="grid grid-cols-subgrid col-span-2 @lg:flex @lg:gap-1" v-tooltip.bottom="watchSplitTip('films', countsWatched?.films ?? 0, countsWatchlist?.films ?? 0)">
               <span class="text-right tabular-nums">{{ counts.films }}</span><span>films</span>
             </span>
-            <span class="grid grid-cols-subgrid col-span-2" v-tooltip.bottom="watchSplitTip('series', countsWatched?.series ?? 0, countsWatchlist?.series ?? 0)">
+            <span class="grid grid-cols-subgrid col-span-2 @lg:flex @lg:gap-1" v-tooltip.bottom="watchSplitTip('series', countsWatched?.series ?? 0, countsWatchlist?.series ?? 0)">
               <span class="text-right tabular-nums">{{ counts.series }}</span><span>series</span>
             </span>
           </span>
