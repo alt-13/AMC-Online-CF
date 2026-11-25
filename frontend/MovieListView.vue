@@ -32,9 +32,17 @@
              stated what a "series" means in THIS catalog (Settings → Series
              count) — see `countSeries`: there is no format-level definition to
              fall back on, so no rule means no counts rather than a guess. -->
-        <span v-if="!loading && counts" class="flex-1 flex items-center gap-3 shrink min-w-0 text-[0.8rem] text-muted whitespace-nowrap">
-          <span v-tooltip.bottom="watchSplitTip('films', countsWatched?.films ?? 0, countsWatchlist?.films ?? 0)">{{ counts.films }} films</span>
-          <span v-tooltip.bottom="watchSplitTip('series', countsWatched?.series ?? 0, countsWatchlist?.series ?? 0)">{{ counts.series }} series</span>
+        <!-- Stacked 2-col grid (number | label) so it fits narrow/portrait bars;
+             each row is a subgrid so its tooltip covers number + label. -->
+        <span v-if="!loading && counts" class="flex-1 min-w-0">
+          <span class="inline-grid grid-cols-[auto_auto] gap-x-1 text-[0.75rem] leading-tight text-muted whitespace-nowrap">
+            <span class="grid grid-cols-subgrid col-span-2" v-tooltip.bottom="watchSplitTip('films', countsWatched?.films ?? 0, countsWatchlist?.films ?? 0)">
+              <span class="text-right tabular-nums">{{ counts.films }}</span><span>films</span>
+            </span>
+            <span class="grid grid-cols-subgrid col-span-2" v-tooltip.bottom="watchSplitTip('series', countsWatched?.series ?? 0, countsWatchlist?.series ?? 0)">
+              <span class="text-right tabular-nums">{{ counts.series }}</span><span>series</span>
+            </span>
+          </span>
         </span>
         <span v-else class="flex-1" />
         <div class="flex gap-1.5 shrink-0">
